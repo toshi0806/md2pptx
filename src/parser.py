@@ -42,6 +42,8 @@ _RE_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 _RE_ORDERED = re.compile(r"^(\d+)\.\s+(.*)$")        # 1. 2. 3. …（arabicPeriod）
 _RE_PAREN = re.compile(r"^\(\s*(\d+)\s*\)\s+(.*)$")  # (1) (2) …（arabicParenBoth）
 _RE_DIRECTIVE = re.compile(r"^<!--\s*@([\w-]+)\s*:\s*(.*?)\s*-->$")
+# カラム区切り（「2つのコンテンツ」レイアウト）．値を取らない指示．
+_RE_COL = re.compile(r"^<!--\s*@col\s*-->$")
 # 1 行 HTML コメント（ディレクティブ以外のメモ等．無視する）．
 _RE_COMMENT = re.compile(r"^<!--.*-->$")
 # Markdown テーブルの区切り行（例 "| --- | :--: |"）．ヘッダ行の直後に現れる．
@@ -158,6 +160,11 @@ def _parse_body(body: str) -> list[Slide]:
             current = Slide()
         return current
 
+    def add_block(b) -> None:
+        """ブロックを現在のカラム（多カラム時）または blocks へ追加する．"""
+        s = ensure_slide()
+        (s.columns[-1] if s.columns else s.blocks).append(b)
+
     lines = body.split("\n")
     n = len(lines)
     i = 0
@@ -188,6 +195,17 @@ def _parse_body(body: str) -> list[Slide]:
             i += 1
             continue
 
+        # --- カラム区切り（「2つのコンテンツ」）→ 多カラム化（§5.7）----
+        if _RE_COL.match(stripped):
+            s = ensure_slide()
+            if not s.columns:
+                s.layout = 3                 # 2つのコンテンツ レイアウト
+                s.columns = [s.blocks, []]   # 既存ブロックを左カラムへ
+            else:
+                s.columns.append([])
+            i += 1
+            continue
+
         # --- スライド単位ディレクティブ（HTML コメント）-----------
         md = _RE_DIRECTIVE.match(stripped)
         if md:
@@ -210,7 +228,7 @@ def _parse_body(body: str) -> list[Slide]:
                 buf.append(lines[j])
                 j += 1
             if info == "flow":
-                ensure_slide().blocks.append(_parse_flow("\n".join(buf)))
+                add_block(_parse_flow("\n".join(buf)))
             # flow 以外のコードブロックは Phase 3 範囲外（無視）．
             i = j + 1  # 閉じフェンスの次へ（無い場合も末尾へ）
             continue
@@ -228,7 +246,7 @@ def _parse_body(body: str) -> list[Slide]:
                     break  # 別ブロック開始
                 rows.append(_split_row(rs))
                 j += 1
-            ensure_slide().blocks.append(Table(header=header, rows=rows))
+            add_block(Table(header=header, rows=rows))
             i = j
             continue
 
@@ -240,7 +258,7 @@ def _parse_body(body: str) -> list[Slide]:
         # --- 本文行 → Line ---------------------------------------
         line = _parse_content_line(raw)
         if line is not None:
-            ensure_slide().blocks.append(line)
+            add_block(line)
         i += 1
 
     if current is not None:

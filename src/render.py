@@ -570,7 +570,10 @@ class Renderer:
         scale = self._autofit_scale(directives)
         blocks = slide.blocks or []
 
-        if any(isinstance(b, (Table, Flow)) for b in blocks):
+        if slide.columns:
+            self._render_columns(s, slide.columns, default_num_color, scale,
+                                 default_autofit)
+        elif any(isinstance(b, (Table, Flow)) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
                                  self._col_ratios(directives))
         else:
@@ -584,6 +587,23 @@ class Renderer:
         if slide_number:
             self.add_slide_number(s)
         return s
+
+    def _render_columns(self, slide, columns, default_num_color, scale,
+                        default_autofit):
+        """多カラム（「2つのコンテンツ」）：各カラムを idx 1, 2 … へ流す．
+
+        columns[i] を プレースホルダ idx=i+1 へ描画する（idx 0 はタイトル）．
+        当面は Line（箇条書き・採番・no_bullet）のみ対応し，表・図はスキップする．
+        """
+        for ci, col_blocks in enumerate(columns):
+            ph = self._find_placeholder(slide, ci + 1)
+            if ph is None:
+                continue  # レイアウトに該当プレースホルダが無ければスキップ
+            lines = [b for b in col_blocks if isinstance(b, Line)]
+            if lines:
+                tf = ph.text_frame
+                self._fill_lines(tf, lines, default_num_color)
+                self._apply_autofit(tf, scale, default_autofit)
 
     # ----------------------------------------------------- 描画ユーティリティ
     def _append_lines(self, tf, line_blocks, first, default_num_color):

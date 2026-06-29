@@ -119,15 +119,19 @@ class Slide:
         title: スライドタイトル（"## 見出し" 由来）．タイトルなしなら None．
         layout: 使用するスライドレイアウト番号．既定 1（タイトルとコンテンツ）．
         blocks: スライド本文を構成するブロック列．Line / Table / Flow を
-            出現順に保持する（混在可）．
+            出現順に保持する（混在可）．単一カラム時に使用．
         directives: スライド単位の上書き指示（DESIGN.md §5.6）．
             例: {"autonum_color": "tx1", "layout": 5, "autofit": 90}．
+        columns: 多カラム（「2つのコンテンツ」レイアウト）時の各カラムのブロック列．
+            空なら単一カラム（blocks を使用）．非空なら columns[i] が i 番目の
+            カラム内容で，レイアウトは 3 を既定とする（DESIGN.md §5.7）．
     """
 
     title: str | None = None
     layout: int = 1
     blocks: list = field(default_factory=list)
     directives: dict = field(default_factory=dict)
+    columns: list = field(default_factory=list)
 
 
 @dataclass
