@@ -22,9 +22,9 @@ import re
 import yaml
 
 try:  # パッケージ実行・単体実行のどちらでも import できるように
-    from .ir import Deck, Line, Slide, TitleSlide
+    from .ir import Deck, Line, Slide, Table, TitleSlide
 except ImportError:  # pragma: no cover - 単体実行時のフォールバック
-    from ir import Deck, Line, Slide, TitleSlide
+    from ir import Deck, Line, Slide, Table, TitleSlide
 
 
 # ---------------------------------------------------------------- 定数
@@ -42,6 +42,8 @@ _RE_PAREN = re.compile(r"^\(\s*(\d+)\s*\)\s+(.*)$")  # (1) (2) …（arabicParen
 _RE_DIRECTIVE = re.compile(r"^<!--\s*@([\w-]+)\s*:\s*(.*?)\s*-->$")
 # 1 行 HTML コメント（ディレクティブ以外のメモ等．無視する）．
 _RE_COMMENT = re.compile(r"^<!--.*-->$")
+# Markdown テーブルの区切り行（例 "| --- | :--: |"）．ヘッダ行の直後に現れる．
+_RE_TABLE_SEP = re.compile(r"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$")
 
 # 整数として解釈するディレクティブキー（正規化後の名前）．
 _INT_DIRECTIVES = {"layout", "autofit"}
@@ -152,7 +154,11 @@ def _parse_body(body: str) -> list[Slide]:
             current = Slide()
         return current
 
-    for raw in body.split("\n"):
+    lines = body.split("\n")
+    n = len(lines)
+    i = 0
+    while i < n:
+        raw = lines[i]
         stripped = raw.strip()
 
         # --- スライド分割マーカー ---------------------------------
@@ -165,6 +171,7 @@ def _parse_body(body: str) -> list[Slide]:
             # "## 見出し" 以上はコンテンツスライド（レイアウト1）．
             layout = 2 if len(hashes) == 1 else 1
             current = Slide(title=htext or None, layout=layout)
+            i += 1
             continue
 
         if stripped == "---":
@@ -172,6 +179,7 @@ def _parse_body(body: str) -> list[Slide]:
             if current is not None:
                 slides.append(current)
             current = Slide()
+            i += 1
             continue
 
         # --- スライド単位ディレクティブ（HTML コメント）-----------
@@ -179,25 +187,56 @@ def _parse_body(body: str) -> list[Slide]:
         if md:
             slide = ensure_slide()
             _apply_directive(slide, md.group(1), md.group(2))
+            i += 1
             continue
 
         # --- ディレクティブ以外の HTML コメントは無視（メモ等）-----
         if _RE_COMMENT.match(stripped):
+            i += 1
+            continue
+
+        # --- 表（ヘッダ行＋直後の区切り行）→ Table（§5.4）---------
+        if "|" in stripped and i + 1 < n and _RE_TABLE_SEP.match(lines[i + 1].strip()):
+            header = _split_row(stripped)
+            j = i + 2
+            rows: list[list[str]] = []
+            while j < n:
+                rs = lines[j].strip()
+                if not rs or "|" not in rs:
+                    break  # 空行や非テーブル行で表は終わり
+                if rs == "---" or _RE_HEADING.match(lines[j].lstrip()):
+                    break  # 別ブロック開始
+                rows.append(_split_row(rs))
+                j += 1
+            ensure_slide().blocks.append(Table(header=header, rows=rows))
+            i = j
             continue
 
         # --- 空行は段落区切り（Line は作らない）-------------------
         if not stripped:
+            i += 1
             continue
 
         # --- 本文行 → Line ---------------------------------------
         line = _parse_content_line(raw)
         if line is not None:
             ensure_slide().blocks.append(line)
+        i += 1
 
     if current is not None:
         slides.append(current)
 
     return slides
+
+
+def _split_row(s: str) -> list[str]:
+    """Markdown テーブル 1 行をセル列へ分割する（前後の "|" は除去）．"""
+    s = s.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
 
 
 def _apply_directive(slide: Slide, key: str, value: str) -> None:

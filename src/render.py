@@ -27,9 +27,10 @@ import copy
 import sys
 
 from pptx import Presentation
-from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR
 from pptx.enum.dml import MSO_THEME_COLOR
 from pptx.oxml.ns import qn
+from pptx.util import Inches, Pt
 
 try:  # パッケージ実行・単体実行のどちらでも import できるように
     from .ir import Deck, Slide, TitleSlide, Line, Table, Flow
@@ -201,12 +202,66 @@ class Renderer:
                 return ph
         return None
 
+    def render_table(self, slide, table, left, top, width, height, col_ratios=None):
+        """Table ブロックを座標指定で 1 つ描画する（ヘッダ行をアクセント色で着色）．
+
+        ``参照スクリプト`` の表描画を移植・一般化したもの．列幅は既定で均等，
+        ``col_ratios`` を与えると比率配分する．配色はテーマ任せ（ヘッダのみ
+        アクセント色 A2＋背景色 BG の文字）．
+        """
+        nrows = len(table.rows) + (1 if table.header else 0)
+        ncols = max(
+            len(table.header) if table.header else 0,
+            max((len(r) for r in table.rows), default=0),
+        )
+        if nrows == 0 or ncols == 0:
+            return None
+
+        gf = slide.shapes.add_table(nrows, ncols, left, top, width, height)
+        tbl = gf.table
+
+        # 列幅：均等 or 比率指定．
+        if col_ratios and len(col_ratios) == ncols and sum(col_ratios) > 0:
+            tot = float(sum(col_ratios))
+            for ci, r in enumerate(col_ratios):
+                tbl.columns[ci].width = int(width * r / tot)
+        else:
+            cw = int(width / ncols)
+            for ci in range(ncols):
+                tbl.columns[ci].width = cw
+
+        data = ([table.header] if table.header else []) + list(table.rows)
+        # 行数に応じてフォントサイズを調整（多いほど小さく）．
+        fsize = 24 if nrows <= 4 else (18 if nrows <= 7 else 14)
+
+        for ri, row in enumerate(data):
+            is_header = bool(table.header) and ri == 0
+            for ci in range(ncols):
+                cell = tbl.cell(ri, ci)
+                cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+                cell.margin_left = Pt(10)
+                cell.margin_right = Pt(6)
+                cell.margin_top = Pt(2)
+                cell.margin_bottom = Pt(2)
+                pa = cell.text_frame.paragraphs[0]
+                pa.text = row[ci] if ci < len(row) else ""
+                for run in pa.runs:
+                    run.font.size = Pt(fsize)
+                    if is_header:
+                        run.font.bold = True
+                        run.font.color.theme_color = self.BG
+                if is_header:
+                    cell.fill.solid()
+                    cell.fill.fore_color.theme_color = self.A2
+        return gf
+
     # ------------------------------------------------------- content slide
     def render_slide(self, slide: Slide, slide_number=True, default_autofit=True):
         """コンテンツスライドを 1 枚追加して返す．
 
-        ``slide.blocks`` を出現順に処理する．Phase 1 では Line ブロックのみを
-        本文プレースホルダへ描画し，Table / Flow はスキップする（TODO）．
+        ``slide.blocks`` を出現順に処理する．表を含まないスライドは Phase 1 と
+        同じく本文プレースホルダへ Line を流し込み，表を含むスライドは座標スタック
+        配置（テキスト→表→テキスト …）で描画する．Flow は Phase 3 でスキップ．
         """
         directives = slide.directives or {}
         layout_idx = directives.get("layout", slide.layout)
@@ -221,51 +276,148 @@ class Renderer:
 
         # スライド既定の採番色（@autonum-color）．Line.num_color が優先．
         default_num_color = directives.get("autonum_color")
+        scale = self._autofit_scale(directives)
+        blocks = slide.blocks or []
 
-        body = self._body_placeholder(s)
-        line_blocks = [b for b in slide.blocks if isinstance(b, Line)]
-
-        if body is not None and line_blocks:
-            tf = body.text_frame
-            first = True
-            for blk in line_blocks:
-                p = tf.paragraphs[0] if first else tf.add_paragraph()
-                first = False
-                p.level = blk.level
-                p.text = blk.text
-                if blk.kind == "autonum":
-                    fmt = blk.num_style or "arabicPeriod"
-                    color = blk.num_color or default_num_color
-                    self.set_autonum(p, fmt, color=color)
-                elif blk.kind == "plain":
-                    self.no_bullet(p)
-                # kind == "bullet" はテーマ既定のまま
-
-            # autofit 適用．数値でない @autofit は警告して既定挙動へフォールバック．
-            autofit = directives.get("autofit")
-            scale = None
-            if autofit is not None:
-                try:
-                    scale = float(autofit)
-                except (TypeError, ValueError):
-                    sys.stderr.write(
-                        f"md2pptx: warning: ignoring non-numeric @autofit "
-                        f"value {autofit!r}\n"
-                    )
-            if scale is not None:
-                self.fit_body(tf, scale=scale)
-            elif default_autofit:
-                self.fit_body(tf)
-
-        # Table / Flow ブロックは Phase 2 / 3 で対応（ここではスキップ）．
-        for blk in slide.blocks:
-            if isinstance(blk, (Table, Flow)):
-                # TODO(Phase 2/3): Table=add_table（ヘッダ着色）, Flow=flow.py レイアウタ
-                continue
+        if any(isinstance(b, Table) for b in blocks):
+            self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
+                                 self._col_ratios(directives))
+        else:
+            line_blocks = [b for b in blocks if isinstance(b, Line)]
+            body = self._body_placeholder(s)
+            if body is not None and line_blocks:
+                tf = body.text_frame
+                self._fill_lines(tf, line_blocks, default_num_color)
+                self._apply_autofit(tf, scale, default_autofit)
 
         if slide_number:
             self.add_slide_number(s)
         return s
+
+    # ----------------------------------------------------- 描画ユーティリティ
+    def _fill_lines(self, tf, line_blocks, default_num_color):
+        """Line 列を text_frame の段落として流し込む（採番／no_bullet を適用）．"""
+        first = True
+        for blk in line_blocks:
+            p = tf.paragraphs[0] if first else tf.add_paragraph()
+            first = False
+            p.level = blk.level
+            p.text = blk.text
+            if blk.kind == "autonum":
+                fmt = blk.num_style or "arabicPeriod"
+                color = blk.num_color or default_num_color
+                self.set_autonum(p, fmt, color=color)
+            elif blk.kind == "plain":
+                self.no_bullet(p)
+            # kind == "bullet" はテーマ既定のまま
+
+    def _autofit_scale(self, directives):
+        """@autofit ディレクティブを縮小率へ解釈する（非数値は警告して None）．"""
+        autofit = directives.get("autofit")
+        if autofit is None:
+            return None
+        try:
+            return float(autofit)
+        except (TypeError, ValueError):
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring non-numeric @autofit value "
+                f"{autofit!r}\n"
+            )
+            return None
+
+    def _apply_autofit(self, tf, scale, default_autofit):
+        """縮小率指定があれば焼き込み，無ければ既定の自動調整を設定する．"""
+        if scale is not None:
+            self.fit_body(tf, scale=scale)
+        elif default_autofit:
+            self.fit_body(tf)
+
+    def _col_ratios(self, directives):
+        """@col-widths ディレクティブ（"45,55" 等）を比率リストへ解釈する．"""
+        v = directives.get("col_widths")
+        if not v:
+            return None
+        try:
+            return [float(x) for x in str(v).replace("，", ",").split(",")]
+        except ValueError:
+            return None
+
+    def _content_rect(self, slide):
+        """本文領域の矩形 (left, top, width, height) を返す（座標配置の基準）．"""
+        ph = self._body_placeholder(slide)
+        if ph is not None and None not in (ph.left, ph.top, ph.width, ph.height):
+            return (ph.left, ph.top, ph.width, ph.height)
+        try:
+            for lph in slide.slide_layout.placeholders:
+                if lph.placeholder_format.idx == 1 and None not in (
+                    lph.left, lph.top, lph.width, lph.height
+                ):
+                    return (lph.left, lph.top, lph.width, lph.height)
+        except Exception:
+            pass
+        # 既定：タイトル下の本文相当領域．
+        return (Inches(0.6), Inches(1.7), self.SW - Inches(1.2),
+                self.SH - Inches(2.3))
+
+    def _render_text_box(self, slide, lines, left, top, width, height,
+                         default_num_color, scale, default_autofit):
+        """テキストセグメントを座標指定のテキストボックスへ描画する．"""
+        tb = slide.shapes.add_textbox(left, top, width, height)
+        tf = tb.text_frame
+        self._fill_lines(tf, lines, default_num_color)
+        self._apply_autofit(tf, scale, default_autofit)
+        return tb
+
+    def _render_stacked(self, slide, blocks, default_num_color, scale,
+                        default_autofit, col_ratios):
+        """表を含むスライドを，テキストと表のセグメントへ分けて縦に積む．
+
+        本文プレースホルダの矩形を内容領域とし，テキストはテキストボックス，
+        表は座標指定のテーブルとして重ならないように上から配置する．
+        """
+        left, top, width, height = self._content_rect(slide)
+
+        # 座標配置するため空の本文プレースホルダは取り除く．
+        body = self._body_placeholder(slide)
+        if body is not None:
+            body._element.getparent().remove(body._element)
+
+        # ブロックをテキスト／表のセグメントへ（出現順を保つ）．
+        segments = []
+        cur_lines = []
+        for b in blocks:
+            if isinstance(b, Line):
+                cur_lines.append(b)
+            elif isinstance(b, Table):
+                if cur_lines:
+                    segments.append(("text", cur_lines))
+                    cur_lines = []
+                segments.append(("table", b))
+            # Flow は Phase 3 で対応（ここでは無視）．
+        if cur_lines:
+            segments.append(("text", cur_lines))
+        if not segments:
+            return
+
+        def weight(seg):
+            if seg[0] == "text":
+                return max(1, len(seg[1]))
+            t = seg[1]
+            return max(2, len(t.rows) + (1 if t.header else 0))
+
+        weights = [weight(s) for s in segments]
+        total = float(sum(weights))
+        gap = Pt(6)
+        avail = height - gap * (len(segments) - 1)
+        y = top
+        for seg, w in zip(segments, weights):
+            seg_h = int(avail * w / total)
+            if seg[0] == "text":
+                self._render_text_box(slide, seg[1], left, y, width, seg_h,
+                                      default_num_color, scale, default_autofit)
+            else:
+                self.render_table(slide, seg[1], left, y, width, seg_h, col_ratios)
+            y += seg_h + gap
 
     # ------------------------------------------------------------- deck
     def render(self, deck: Deck):
