@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""フロー図 DSL（``` ```flow ``` ブロック）のパーサ＋レイアウタ（md2pptx Phase 3）．
+
+DESIGN.md §5.5 の独自 DSL を解釈し，ir.Flow（FlowNode / FlowEdge）へ変換する
+``parse_flow`` と，描画用の座標プラン（純粋な EMU 計算）を返す ``plan_flow`` を
+提供する．python-pptx には依存しない（描画は render.py の責務）．
+
+DSL 例::
+
+    direction: lr
+    [theme.thmx | テーマ]
+    -PR-> [base.pptx | 土台]
+    -PR-> [out.pptx | スライド]
+    -> [… | ]
+    caption: 配色・フォントはテーマ、内容は Markdown
+    note(top): テーマと Markdown を入力に pptx を生成
+    note(bottom): → テーマを差し替えるだけで見た目が一新できる
+"""
+from __future__ import annotations
+
+import re
+
+try:  # パッケージ実行・単体実行のどちらでも import できるように
+    from .ir import Flow, FlowNode, FlowEdge
+except ImportError:  # pragma: no cover - 単体実行時のフォールバック
+    from ir import Flow, FlowNode, FlowEdge
+
+
+EMU = 914400  # 1 インチ = 914400 EMU
+
+
+def _emu(inch):
+    return int(inch * EMU)
+
+
+# 省略記号として扱うラベル．
+_ELLIPSIS = {"…", "...", "‥"}
+
+# 設定行（key: value 形式）．
+_RE_SETTING = re.compile(r"^(direction|caption|note\(top\)|note\(bottom\))\s*:\s*(.*)$")
+# ノード "[ラベル | サブ]" の直後に "{color}" を許す．
+_RE_NODE = re.compile(r"\[([^\]]*)\](?:\{([\w-]+)\})?")
+# エッジ "->" / "-PR->"．先頭の '-' から '->' まで．
+_RE_EDGE = re.compile(r"-(?:([^>]+?)-)?>")
+
+
+# ---------------------------------------------------------------- パース
+
+def parse_flow(text: str) -> Flow:
+    """``` ```flow ``` ブロック本文を Flow（IR）へ変換する．"""
+    flow = Flow()
+    body_parts = []  # ノード／エッジを含む行（設定行以外）
+
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        m = _RE_SETTING.match(line)
+        if m:
+            key, val = m.group(1), m.group(2).strip()
+            if key == "direction":
+                flow.direction = "tb" if val.lower().startswith("tb") else "lr"
+            elif key == "caption":
+                flow.caption = val or None
+            elif key == "note(top)":
+                flow.note_top = val or None
+            elif key == "note(bottom)":
+                flow.note_bottom = val or None
+            continue
+        body_parts.append(line)
+
+    tokens = _tokenize(" ".join(body_parts))
+    _build(flow, tokens)
+    return flow
+
+
+def _tokenize(s: str):
+    """ノード／エッジのトークン列を返す（出現順）．"""
+    tokens = []
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c == "[":
+            j = s.find("]", i)
+            if j < 0:
+                break
+            inner = s[i + 1:j]
+            i = j + 1
+            color = None
+            if i < n and s[i] == "{":
+                k = s.find("}", i)
+                if k >= 0:
+                    color = s[i + 1:k]
+                    i = k + 1
+            tokens.append(("node", inner, color))
+            continue
+        if c == "-":
+            m = _RE_EDGE.match(s, i)
+            if m:
+                tokens.append(("edge", (m.group(1) or "").strip() or None))
+                i = m.end()
+                continue
+        i += 1  # 解釈できない文字は読み飛ばす
+    return tokens
+
+
+def _build(flow: Flow, tokens) -> None:
+    """トークン列（node / edge の交互）から nodes / edges を構築する．"""
+    pending_label = None
+    have_pending_edge = False
+    prev_idx = None
+
+    for tok in tokens:
+        if tok[0] == "node":
+            node = _make_node(tok[1], tok[2])
+            flow.nodes.append(node)
+            idx = len(flow.nodes) - 1
+            if have_pending_edge and prev_idx is not None:
+                flow.edges.append(FlowEdge(src=prev_idx, dst=idx, label=pending_label))
+            prev_idx = idx
+            have_pending_edge = False
+            pending_label = None
+        else:  # edge
+            have_pending_edge = True
+            pending_label = tok[1]
+
+
+def _make_node(inner: str, color) -> FlowNode:
+    parts = inner.split("|", 1)
+    label = parts[0].strip()
+    sublabel = parts[1].strip() if len(parts) > 1 else None
+    if sublabel == "":
+        sublabel = None
+    kind = "ellipsis" if label in _ELLIPSIS else "box"
+    return FlowNode(label=label, sublabel=sublabel, kind=kind, color=color)
+
+
+# ---------------------------------------------------------------- レイアウト
+
+def plan_flow(flow: Flow, left, top, width, height):
+    """Flow を矩形領域 (left, top, width, height) に配置する座標プランを返す．
+
+    戻り値は描画指示の dict（座標はすべて EMU 整数）::
+
+        {
+          "boxes":  [(FlowNode, l, t, w, h), ...],   # 角丸四角ノード
+          "ellipses": [(label, l, t, w, h), ...],    # "…" ノード
+          "arrows": [(x1, y1, x2, y2), ...],         # 矢印
+          "labels": [(text, l, t, w, h), ...],       # 矢印ラベル
+          "captions": [(text, l, t, w, h, role), ...],  # note_top/caption/note_bottom
+        }
+    """
+    plan = {"boxes": [], "ellipses": [], "arrows": [], "labels": [], "captions": []}
+    nodes = flow.nodes
+    if not nodes:
+        return plan
+
+    # note_top / note_bottom（地の文）は本文プレースホルダ側で描く（render 側で処理）．
+    # ここでは図本体＋キャプションのみを領域内に配置する．
+    strip_h = _emu(0.5)
+    band_top = top
+    band_h = height - (strip_h if flow.caption else 0)
+    if band_h < _emu(0.8):
+        band_h = _emu(0.8)
+
+    if flow.direction == "tb":
+        _plan_vertical(plan, flow, left, band_top, width, band_h)
+    else:
+        _plan_horizontal(plan, flow, left, band_top, width, band_h)
+
+    if flow.caption:
+        cy = band_top + band_h
+        plan["captions"].append((flow.caption, left, cy, width, strip_h, "caption"))
+    return plan
+
+
+def _plan_horizontal(plan, flow, left, band_top, width, band_h):
+    nodes = flow.nodes
+    n = len(nodes)
+    gx = _emu(0.5)
+    bw = (width - (n - 1) * gx) // n
+    bw = max(_emu(1.1), min(_emu(2.4), bw))
+    bh = min(_emu(1.4), int(band_h * 0.7))
+    total = n * bw + (n - 1) * gx
+    startx = left + (width - total) // 2
+    by = band_top + (band_h - bh) // 2
+
+    centers = []
+    for i, node in enumerate(nodes):
+        bl = startx + i * (bw + gx)
+        if node.kind == "ellipsis":
+            plan["ellipses"].append((node.label or "…", bl, by, bw, bh))
+        else:
+            plan["boxes"].append((node, bl, by, bw, bh))
+        centers.append((bl, bl + bw // 2, bl + bw, by + bh // 2))
+
+    for e in flow.edges:
+        if not (0 <= e.src < n and 0 <= e.dst < n):
+            continue
+        a, b = centers[e.src], centers[e.dst]
+        ay = a[3]
+        plan["arrows"].append((a[2], ay, b[0], ay))
+        if e.label:
+            mx = (a[2] + b[0]) // 2
+            plan["labels"].append(
+                (e.label, mx - _emu(0.5), by - _emu(0.5), _emu(1.0), _emu(0.45)))
+
+
+def _plan_vertical(plan, flow, left, band_top, width, band_h):
+    nodes = flow.nodes
+    n = len(nodes)
+    gy = _emu(0.35)
+    bh = (band_h - (n - 1) * gy) // n
+    bh = max(_emu(0.6), min(_emu(1.2), bh))
+    bw = min(_emu(3.2), int(width * 0.5))
+    bx = left + (width - bw) // 2
+    total = n * bh + (n - 1) * gy
+    starty = band_top + (band_h - total) // 2
+
+    centers = []
+    for i, node in enumerate(nodes):
+        bt = starty + i * (bh + gy)
+        if node.kind == "ellipsis":
+            plan["ellipses"].append((node.label or "…", bx, bt, bw, bh))
+        else:
+            plan["boxes"].append((node, bx, bt, bw, bh))
+        centers.append((bx + bw // 2, bt, bt + bh))
+
+    for e in flow.edges:
+        if not (0 <= e.src < n and 0 <= e.dst < n):
+            continue
+        a, b = centers[e.src], centers[e.dst]
+        cx = a[0]
+        plan["arrows"].append((cx, a[2], cx, b[1]))
+        if e.label:
+            my = (a[2] + b[1]) // 2
+            plan["labels"].append(
+                (e.label, cx + _emu(0.2), my - _emu(0.22), _emu(1.2), _emu(0.45)))

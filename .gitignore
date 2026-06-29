@@ -7,4 +7,6 @@ __pycache__/
 
 # Generated output (build artifacts)
 example.pptx
+example.pdf
 *-slide.pptx
+*.pdf

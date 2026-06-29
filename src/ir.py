@@ -57,23 +57,58 @@ class Table:
 
 
 @dataclass
+class FlowNode:
+    """フロー図のノード（box または省略記号）．
+
+    Attributes:
+        label: 主ラベル（[ラベル | サブラベル] の前半）．
+        sublabel: 副ラベル（後半）．無ければ None．
+        kind: "box"（角丸四角）または "ellipsis"（"…" 単独の省略記号）．
+        color: テーマ色名の個別指定（例 "accent6"）．None なら自動割当．
+    """
+
+    label: str = ""
+    sublabel: str | None = None
+    kind: str = "box"
+    color: str | None = None
+
+
+@dataclass
+class FlowEdge:
+    """フロー図のエッジ（ノード間の矢印）．
+
+    Attributes:
+        src: 始点ノードの index（Flow.nodes 内）．
+        dst: 終点ノードの index．
+        label: 矢印上のラベル（-PR-> の "PR"）．無ければ None．
+    """
+
+    src: int = 0
+    dst: int = 0
+    label: str | None = None
+
+
+@dataclass
 class Flow:
     """フロー図ブロック（```flow フェンス由来．DESIGN.md §5.5）．
 
-    box / arrow による横並び（または縦並び）のフロー図を宣言的に表す．
-    Phase 3 で本格対応するが，IR としては先に型を定義しておく．
+    box / arrow による横並び（lr）または縦並び（tb）のフロー図を宣言的に表す．
 
     Attributes:
-        nodes: ノード列．各ノードは box（[ラベル | サブラベル]）または
-            省略記号 note（"…" 単独）を表す．要素表現はパーサ／レイアウタ
-            (flow.py) の取り決めに従う．
-        edges: エッジ列．矢印（->）と任意のラベル（-PR-> 等）を表す．
+        direction: 並び方向．"lr"（左→右，既定）/ "tb"（上→下）．
+        nodes: FlowNode の列（出現順）．
+        edges: FlowEdge の列（隣接ノードを結ぶ）．
         caption: 図下キャプション．無ければ None．
+        note_top: 図の上に置く注記．無ければ None．
+        note_bottom: 図の下に置く注記．無ければ None．
     """
 
+    direction: str = "lr"
     nodes: list = field(default_factory=list)
     edges: list = field(default_factory=list)
     caption: str | None = None
+    note_top: str | None = None
+    note_bottom: str | None = None
 
 
 @dataclass

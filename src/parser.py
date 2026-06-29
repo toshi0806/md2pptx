@@ -23,8 +23,10 @@ import yaml
 
 try:  # パッケージ実行・単体実行のどちらでも import できるように
     from .ir import Deck, Line, Slide, Table, TitleSlide
+    from .flow import parse_flow as _parse_flow
 except ImportError:  # pragma: no cover - 単体実行時のフォールバック
     from ir import Deck, Line, Slide, Table, TitleSlide
+    from flow import parse_flow as _parse_flow
 
 
 # ---------------------------------------------------------------- 定数
@@ -193,6 +195,20 @@ def _parse_body(body: str) -> list[Slide]:
         # --- ディレクティブ以外の HTML コメントは無視（メモ等）-----
         if _RE_COMMENT.match(stripped):
             i += 1
+            continue
+
+        # --- フェンスドコードブロック（```flow … ```）→ Flow（§5.5）--
+        if stripped.startswith("```"):
+            info = stripped[3:].strip().lower()
+            j = i + 1
+            buf: list[str] = []
+            while j < n and lines[j].strip() != "```":
+                buf.append(lines[j])
+                j += 1
+            if info == "flow":
+                ensure_slide().blocks.append(_parse_flow("\n".join(buf)))
+            # flow 以外のコードブロックは Phase 3 範囲外（無視）．
+            i = j + 1  # 閉じフェンスの次へ（無い場合も末尾へ）
             continue
 
         # --- 表（ヘッダ行＋直後の区切り行）→ Table（§5.4）---------

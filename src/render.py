@@ -24,18 +24,22 @@ content_slide）を Renderer のメソッドへ移植し，self.prs / self.layou
 from __future__ import annotations
 
 import copy
+import math
 import sys
 
 from pptx import Presentation
-from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR
+from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
 from pptx.enum.dml import MSO_THEME_COLOR
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 try:  # パッケージ実行・単体実行のどちらでも import できるように
     from .ir import Deck, Slide, TitleSlide, Line, Table, Flow
+    from .flow import plan_flow
 except ImportError:  # pragma: no cover - 単体実行時のフォールバック
     from ir import Deck, Slide, TitleSlide, Line, Table, Flow
+    from flow import plan_flow
 
 
 class Renderer:
@@ -59,6 +63,19 @@ class Renderer:
         self.GOLD = MSO_THEME_COLOR.ACCENT_1     # 金
         self.BG = MSO_THEME_COLOR.BACKGROUND_1   # 背景（白）
         self.TX = MSO_THEME_COLOR.TEXT_1         # 本文色（黒）
+
+        # フロー図 box の自動配色（テーマアクセント色を順番に割当）．
+        self._box_palette = [self.T2, self.A6, self.A6, self.GOLD, self.A2]
+        # テーマ色名（DSL の {accent6} 等）→ MSO_THEME_COLOR の対応表．
+        self._theme_map = {
+            "accent1": MSO_THEME_COLOR.ACCENT_1, "accent2": MSO_THEME_COLOR.ACCENT_2,
+            "accent3": MSO_THEME_COLOR.ACCENT_3, "accent4": MSO_THEME_COLOR.ACCENT_4,
+            "accent5": MSO_THEME_COLOR.ACCENT_5, "accent6": MSO_THEME_COLOR.ACCENT_6,
+            "tx1": MSO_THEME_COLOR.TEXT_1, "tx2": MSO_THEME_COLOR.TEXT_2,
+            "bg1": MSO_THEME_COLOR.BACKGROUND_1, "bg2": MSO_THEME_COLOR.BACKGROUND_2,
+        }
+        # 本文スタイルのレベル別フォントサイズ（pt）のキャッシュ（None=未取得）．
+        self._body_levels = None
 
         # レイアウト解決．title=0 / content=1 / section=2．
         layouts = self.prs.slide_layouts
@@ -153,6 +170,56 @@ class Renderer:
                 return ph
         return None
 
+    def _body_font_levels(self):
+        """本文スタイルのレベル別フォントサイズ（pt）のリストを返す（lvl1 始まり）．
+
+        スライドマスターの ``p:txStyles/p:bodyStyle/a:lvl{n}pPr/a:defRPr@sz``
+        を lvl1 から順に読み取る．表・図が標準サイズで収まらないとき，下位レベルの
+        小さいサイズへ段階的に切り替えるために用いる．取得できなければ既定 [18]．
+        """
+        if self._body_levels is not None:
+            return self._body_levels
+        levels = []
+        try:
+            master = self.prs.slide_masters[0]
+            body = master.element.find(
+                qn("p:txStyles") + "/" + qn("p:bodyStyle"))
+            if body is not None:
+                for lvl in range(1, 10):
+                    el = body.find(
+                        qn("a:lvl%dpPr" % lvl) + "/" + qn("a:defRPr"))
+                    if el is not None and el.get("sz"):
+                        levels.append(int(el.get("sz")) / 100.0)
+        except Exception:
+            pass
+        if not levels:
+            levels = [18.0]
+        self._body_levels = levels
+        return levels
+
+    def _body_font_size(self):
+        """本文プレースホルダの標準フォントサイズ（pt．lvl1）を返す．"""
+        return self._body_font_levels()[0]
+
+    @staticmethod
+    def _text_width_pt(text, font_pt):
+        """テキストの概算表示幅（pt）．全角は font_pt，半角は約 0.55×で見積もる．"""
+        w = 0.0
+        for ch in text or "":
+            w += font_pt if ord(ch) > 0x2E80 else font_pt * 0.55
+        return w
+
+    def _fit_font(self, fits_at):
+        """レベル別サイズを大きい順に試し，``fits_at(size)`` が真の最大サイズを返す．
+
+        どのレベルでも収まらなければ最小レベル（最後）のサイズを返す（ベストエフォート）．
+        """
+        levels = self._body_font_levels()
+        for sz in levels:
+            if fits_at(sz):
+                return sz
+        return levels[-1]
+
     def content_slide(self, title, items):
         """タイトル＋箇条書きの基本スライドを 1 枚追加して返す．"""
         s = self.prs.slides.add_slide(self.L1)
@@ -202,6 +269,151 @@ class Renderer:
                 return ph
         return None
 
+    # ----------------------------------------------------------- 図形（flow）
+    def box(self, slide, l, t, w, h, text, tc, sub=None, fsize=None, ssize=None):
+        """角丸四角ノードを描く（塗りはテーマ色 tc，文字は背景色 BG）．
+
+        fsize / ssize（pt）を省略するとテーマ既定のフォントサイズを継承する．
+        """
+        shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, l, t, w, h)
+        shp.fill.solid()
+        shp.fill.fore_color.theme_color = tc
+        shp.line.color.theme_color = self.TX
+        shp.line.width = Pt(0.5)
+        tf = shp.text_frame
+        tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_left = Pt(4)
+        tf.margin_right = Pt(4)
+        tf.margin_top = Pt(1)
+        tf.margin_bottom = Pt(1)
+        pa = tf.paragraphs[0]
+        pa.alignment = PP_ALIGN.CENTER
+        pa.text = text
+        for r in pa.runs:
+            r.font.color.theme_color = self.BG
+            if fsize is not None:
+                r.font.size = Pt(fsize)
+            r.font.bold = True
+        if sub:
+            p2 = tf.add_paragraph()
+            p2.alignment = PP_ALIGN.CENTER
+            p2.text = sub
+            for r in p2.runs:
+                r.font.color.theme_color = self.BG
+                if ssize is not None:
+                    r.font.size = Pt(ssize)
+        return shp
+
+    def arrow(self, slide, x1, y1, x2, y2, w=2.0):
+        """矢印（直線コネクタ＋三角の矢じり）を描く．"""
+        cn = slide.shapes.add_connector(2, x1, y1, x2, y2)
+        cn.line.color.theme_color = self.TX
+        cn.line.width = Pt(w)
+        le = cn.line._get_or_add_ln()
+        le.append(le.makeelement(
+            qn("a:tailEnd"), {"type": "triangle", "w": "med", "len": "med"}))
+        return cn
+
+    def note(self, slide, l, t, w, h, text, size, tc=None, bold=False,
+             align=PP_ALIGN.LEFT):
+        """注記用テキストボックスを描く（キャプション・矢印ラベル・省略記号）．"""
+        tb = slide.shapes.add_textbox(l, t, w, h)
+        tf = tb.text_frame
+        tf.word_wrap = True
+        pa = tf.paragraphs[0]
+        pa.alignment = align
+        pa.text = text
+        for r in pa.runs:
+            if size is not None:
+                r.font.size = Pt(size)
+            if tc is not None:
+                r.font.color.theme_color = tc
+            if bold:
+                r.font.bold = True
+        return tb
+
+    def _theme_color(self, name):
+        """テーマ色名を MSO_THEME_COLOR へ解決する（未知なら None）．"""
+        if not name:
+            return None
+        return self._theme_map.get(str(name).lower())
+
+    def _box_fits(self, node, bw, bh, font_pt):
+        """box（主ラベル＋副ラベル）が指定フォントサイズで収まるか概算判定する．"""
+        line_h = font_pt * 1.2
+        inner_w = max(1.0, bw / 12700.0 - 8)   # 左右マージン約 Pt(4)×2
+        inner_h = bh / 12700.0 - 4             # 上下マージン約
+        lines = max(1, math.ceil(self._text_width_pt(node.label, font_pt) / inner_w))
+        if node.sublabel:
+            lines += max(1, math.ceil(
+                self._text_width_pt(node.sublabel, font_pt) / inner_w))
+        return lines * line_h <= inner_h
+
+    def render_flow(self, slide, flow, left, top, width, height):
+        """Flow ブロックを矩形領域へ描画する（flow.plan_flow の座標プランを使用）．
+
+        図中の文字サイズは本文プレースホルダの標準サイズに揃える．
+        """
+        plan = plan_flow(flow, left, top, width, height)
+        # box が標準サイズで収まらなければ，全 box 一律で下位レベルへ切り替える．
+        boxes = plan["boxes"]
+        if boxes:
+            bsz = self._fit_font(
+                lambda sz: all(self._box_fits(node, bw, bh, sz)
+                               for node, _, _, bw, bh in boxes))
+        else:
+            bsz = self._body_font_size()
+        bi = 0
+        for node, bl, bt, bw, bh in plan["boxes"]:
+            tc = self._theme_color(node.color) or \
+                self._box_palette[bi % len(self._box_palette)]
+            bi += 1
+            self.box(slide, bl, bt, bw, bh, node.label, tc,
+                     sub=node.sublabel or None, fsize=bsz, ssize=bsz)
+        for label, bl, bt, bw, bh in plan["ellipses"]:
+            self.note(slide, bl, bt, bw, bh, label, bsz, tc=self.T2, bold=True,
+                      align=PP_ALIGN.CENTER)
+        for x1, y1, x2, y2 in plan["arrows"]:
+            self.arrow(slide, x1, y1, x2, y2)
+        for text, bl, bt, bw, bh in plan["labels"]:
+            self.note(slide, bl, bt, bw, bh, text, bsz, tc=self.T2, bold=True,
+                      align=PP_ALIGN.CENTER)
+        for text, bl, bt, bw, bh, role in plan["captions"]:
+            # caption のみ図に付随（note_top / note_bottom はプレースホルダ側で描く）．
+            if role == "caption":
+                self.note(slide, bl, bt, bw, bh, text, bsz, tc=self.T2,
+                          align=PP_ALIGN.CENTER)
+
+    def _table_col_widths(self, ncols, width, col_ratios):
+        """表の列幅（EMU）リストを返す（均等 or 比率指定）．"""
+        if col_ratios and len(col_ratios) == ncols and sum(col_ratios) > 0:
+            tot = float(sum(col_ratios))
+            return [int(width * r / tot) for r in col_ratios]
+        cw = int(width / ncols)
+        return [cw] * ncols
+
+    def _table_height_emu(self, data, col_w, font_pt):
+        """指定フォントサイズでの表の概算総高（EMU）を見積もる（折り返し考慮）．
+
+        実際の PowerPoint レンダリングは行間・最小行高などで見積りより伸びがち
+        なため，安全係数を掛けて保守的（やや大きめ）に見積もる．
+        """
+        line_h = font_pt * 1.32          # 行間込みの行高
+        cell_pad_pt = 6                  # セル上下マージン＋最小余白（約）
+        side_pad_pt = 18                 # セル左右マージン合計（約．Pt(10)+Pt(6)＋余裕）
+        safety = 1.15                    # 折り返し・最小行高ぶんの安全係数
+        total_pt = 0.0
+        for row in data:
+            row_h = line_h + cell_pad_pt
+            for ci, cw in enumerate(col_w):
+                text = row[ci] if ci < len(row) else ""
+                inner_pt = max(1.0, cw / 12700.0 - side_pad_pt)
+                lines = max(1, math.ceil(self._text_width_pt(text, font_pt) / inner_pt))
+                row_h = max(row_h, lines * line_h + cell_pad_pt)
+            total_pt += row_h
+        return int(total_pt * safety * 12700)
+
     def render_table(self, slide, table, left, top, width, height, col_ratios=None):
         """Table ブロックを座標指定で 1 つ描画する（ヘッダ行をアクセント色で着色）．
 
@@ -220,19 +432,14 @@ class Renderer:
         gf = slide.shapes.add_table(nrows, ncols, left, top, width, height)
         tbl = gf.table
 
-        # 列幅：均等 or 比率指定．
-        if col_ratios and len(col_ratios) == ncols and sum(col_ratios) > 0:
-            tot = float(sum(col_ratios))
-            for ci, r in enumerate(col_ratios):
-                tbl.columns[ci].width = int(width * r / tot)
-        else:
-            cw = int(width / ncols)
-            for ci in range(ncols):
-                tbl.columns[ci].width = cw
+        col_w = self._table_col_widths(ncols, width, col_ratios)
+        for ci, cw in enumerate(col_w):
+            tbl.columns[ci].width = cw
 
         data = ([table.header] if table.header else []) + list(table.rows)
-        # 行数に応じてフォントサイズを調整（多いほど小さく）．
-        fsize = 24 if nrows <= 4 else (18 if nrows <= 7 else 14)
+        # フォントは本文標準（lvl1）を基本に，収まらなければ下位レベルへ切り替える．
+        fsize = self._fit_font(
+            lambda sz: self._table_height_emu(data, col_w, sz) <= height)
 
         for ri, row in enumerate(data):
             is_header = bool(table.header) and ri == 0
@@ -279,7 +486,7 @@ class Renderer:
         scale = self._autofit_scale(directives)
         blocks = slide.blocks or []
 
-        if any(isinstance(b, Table) for b in blocks):
+        if any(isinstance(b, (Table, Flow)) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
                                  self._col_ratios(directives))
         else:
@@ -295,9 +502,12 @@ class Renderer:
         return s
 
     # ----------------------------------------------------- 描画ユーティリティ
-    def _fill_lines(self, tf, line_blocks, default_num_color):
-        """Line 列を text_frame の段落として流し込む（採番／no_bullet を適用）．"""
-        first = True
+    def _append_lines(self, tf, line_blocks, first, default_num_color):
+        """Line 列を text_frame に段落として追記する（採番／no_bullet を適用）．
+
+        first=True なら最初の 1 行は既存の paragraphs[0] を使う．残りの行を
+        追記しても良いよう，処理後の first 状態を返す．
+        """
         for blk in line_blocks:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
             first = False
@@ -310,6 +520,11 @@ class Renderer:
             elif blk.kind == "plain":
                 self.no_bullet(p)
             # kind == "bullet" はテーマ既定のまま
+        return first
+
+    def _fill_lines(self, tf, line_blocks, default_num_color):
+        """Line 列を text_frame の段落として流し込む（先頭から）．"""
+        self._append_lines(tf, line_blocks, True, default_num_color)
 
     def _autofit_scale(self, directives):
         """@autofit ディレクティブを縮小率へ解釈する（非数値は警告して None）．"""
@@ -359,65 +574,99 @@ class Renderer:
         return (Inches(0.6), Inches(1.7), self.SW - Inches(1.2),
                 self.SH - Inches(2.3))
 
-    def _render_text_box(self, slide, lines, left, top, width, height,
-                         default_num_color, scale, default_autofit):
-        """テキストセグメントを座標指定のテキストボックスへ描画する．"""
-        tb = slide.shapes.add_textbox(left, top, width, height)
-        tf = tb.text_frame
-        self._fill_lines(tf, lines, default_num_color)
-        self._apply_autofit(tf, scale, default_autofit)
-        return tb
+    def _note_to_line(self, text):
+        """Flow の note 文字列を本文プレースホルダ用の Line へ変換する．
+
+        行頭マーカー（→ は no_bullet）の最小限の解釈だけ行う．
+        """
+        t = (text or "").strip()
+        if t.startswith("→"):
+            return Line(text=t[len("→"):].lstrip(), kind="plain")
+        return Line(text=t, kind="bullet")
+
+    def _obj_weight(self, obj):
+        """オブジェクト（Table / Flow）の縦方向の重み（高さ配分用）．"""
+        if isinstance(obj, Flow):
+            return max(4, len(obj.nodes) + 2)
+        return max(2, len(obj.rows) + (1 if obj.header else 0))
+
+    def _stack_objects(self, slide, objects, left, top, width, height, col_ratios):
+        """Table / Flow を矩形領域内に重みづけで縦に積んで座標配置する．"""
+        weights = [self._obj_weight(o) for o in objects]
+        total = float(sum(weights)) or 1.0
+        gap = Pt(6)
+        avail = height - gap * (len(objects) - 1)
+        y = top
+        for obj, w in zip(objects, weights):
+            seg_h = int(avail * w / total)
+            if isinstance(obj, Flow):
+                self.render_flow(slide, obj, left, y, width, seg_h)
+            else:
+                self.render_table(slide, obj, left, y, width, seg_h, col_ratios)
+            y += seg_h + gap
 
     def _render_stacked(self, slide, blocks, default_num_color, scale,
                         default_autofit, col_ratios):
-        """表を含むスライドを，テキストと表のセグメントへ分けて縦に積む．
+        """表／図を含むスライドを描画する．
 
-        本文プレースホルダの矩形を内容領域とし，テキストはテキストボックス，
-        表は座標指定のテーブルとして重ならないように上から配置する．
+        地の文（Line）は **標準の本文プレースホルダ**へ流し込み，表・図だけを
+        座標配置する．プレースホルダには「導入文＋空行スペーサ＋結論文」を入れ，
+        確保した中央帯に表・図を重ねる（``参照スクリプト`` の図スライドと同方式）．
+        地の文を自由位置のテキストボックスには置かない．
         """
         left, top, width, height = self._content_rect(slide)
-
-        # 座標配置するため空の本文プレースホルダは取り除く．
         body = self._body_placeholder(slide)
-        if body is not None:
-            body._element.getparent().remove(body._element)
 
-        # ブロックをテキスト／表のセグメントへ（出現順を保つ）．
-        segments = []
-        cur_lines = []
+        # 地の文（前後）とオブジェクト（表・図）に分ける．
+        # Flow の note(top)/note(bottom) も地の文としてプレースホルダへ回す．
+        prose_before, objects, prose_after = [], [], []
+        seen_obj = False
         for b in blocks:
-            if isinstance(b, Line):
-                cur_lines.append(b)
-            elif isinstance(b, Table):
-                if cur_lines:
-                    segments.append(("text", cur_lines))
-                    cur_lines = []
-                segments.append(("table", b))
-            # Flow は Phase 3 で対応（ここでは無視）．
-        if cur_lines:
-            segments.append(("text", cur_lines))
-        if not segments:
+            if isinstance(b, (Table, Flow)):
+                if isinstance(b, Flow) and b.note_top:
+                    bucket = prose_after if seen_obj else prose_before
+                    bucket.append(self._note_to_line(b.note_top))
+                objects.append(b)
+                seen_obj = True
+                if isinstance(b, Flow) and b.note_bottom:
+                    prose_after.append(self._note_to_line(b.note_bottom))
+            elif isinstance(b, Line):
+                (prose_after if seen_obj else prose_before).append(b)
+        if not objects:
             return
 
-        def weight(seg):
-            if seg[0] == "text":
-                return max(1, len(seg[1]))
-            t = seg[1]
-            return max(2, len(t.rows) + (1 if t.header else 0))
+        # 地の文が無ければプレースホルダは使わず，領域全体にオブジェクトを置く．
+        if not prose_before and not prose_after:
+            if body is not None:
+                body._element.getparent().remove(body._element)
+            self._stack_objects(slide, objects, left, top, width, height, col_ratios)
+            return
 
-        weights = [weight(s) for s in segments]
-        total = float(sum(weights))
-        gap = Pt(6)
-        avail = height - gap * (len(segments) - 1)
-        y = top
-        for seg, w in zip(segments, weights):
-            seg_h = int(avail * w / total)
-            if seg[0] == "text":
-                self._render_text_box(slide, seg[1], left, y, width, seg_h,
-                                      default_num_color, scale, default_autofit)
-            else:
-                self.render_table(slide, seg[1], left, y, width, seg_h, col_ratios)
-            y += seg_h + gap
+        # 地の文あり：プレースホルダに導入文＋空行＋結論文を流して中央帯を確保．
+        # 帯と空行数はプレースホルダ矩形から逆算し，地の文＋空行＋結論文が
+        # プレースホルダ高を超えないようにする（結論文がスライド外へ出ない）．
+        bsz = self._body_font_size()
+        line_h = int(Pt(bsz) * 1.32)        # 行間込みの保守的な行高
+        nb, na = len(prose_before), len(prose_after)
+        inset = Pt(4)
+        band_h = height - (nb + na) * line_h - 2 * inset
+        if band_h < Inches(0.8):
+            band_h = Inches(0.8)
+        band_top = top + nb * line_h + inset
+        blanks = max(1, int(band_h / line_h))   # 帯を埋める空行数（超過しない）
+
+        if body is not None:
+            tf = body.text_frame
+            first = self._append_lines(tf, prose_before, True, default_num_color)
+            for _ in range(blanks):
+                p = tf.paragraphs[0] if first else tf.add_paragraph()
+                first = False
+            self._append_lines(tf, prose_after, first, default_num_color)
+            self._apply_autofit(tf, scale, default_autofit)
+
+        # 結論文との重なりを避けるため帯を少しだけ詰めてオブジェクトを置く．
+        obj_h = max(Inches(0.8), band_h - Pt(8))
+        self._stack_objects(slide, objects, left, band_top, width, obj_h, col_ratios)
 
     # ------------------------------------------------------------- deck
     def render(self, deck: Deck):
