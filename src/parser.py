@@ -46,6 +46,8 @@ _RE_DIRECTIVE = re.compile(r"^<!--\s*@([\w-]+)\s*:\s*(.*?)\s*-->$")
 _RE_COMMENT = re.compile(r"^<!--.*-->$")
 # Markdown テーブルの区切り行（例 "| --- | :--: |"）．ヘッダ行の直後に現れる．
 _RE_TABLE_SEP = re.compile(r"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$")
+# タイトル内の明示改行マーカー（<br> / <br/>）．"\v"（行内改行）へ変換する．
+_RE_TITLE_BR = re.compile(r"\s*<br\s*/?>\s*")
 
 # 整数として解釈するディレクティブキー（正規化後の名前）．
 _INT_DIRECTIVES = {"layout", "autofit"}
@@ -167,6 +169,8 @@ def _parse_body(body: str) -> list[Slide]:
         m = _RE_HEADING.match(raw.lstrip())
         if m:
             hashes, htext = m.group(1), m.group(2)
+            # タイトル内の <br> を行内改行（\v）へ変換する．
+            htext = _RE_TITLE_BR.sub("\v", htext)
             if current is not None:
                 slides.append(current)
             # "# 見出し"（H1）はセクションスライド（レイアウト2），
@@ -314,9 +318,10 @@ def _parse_content_line(raw: str) -> Line | None:
         return Line(text=s[1:].lstrip(), level=level,
                     kind="autonum", num_style="circleNumDbPlain")
 
-    # 矢印："→ …" → 行頭記号なし（no_bullet 相当）
+    # 矢印："→ …" → 行頭記号なし（no_bullet 相当）．"→" は本文に残す
+    # （結論・補足行の視覚的な導線として表示する）．
     if s.startswith(ARROW):
-        return Line(text=s[len(ARROW):].lstrip(), level=level, kind="plain")
+        return Line(text=s, level=level, kind="plain")
 
     # 上記以外 → 既定の箇条書き（インデントに応じたレベル）
     return Line(text=s, level=level, kind="bullet")

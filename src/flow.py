@@ -161,33 +161,38 @@ def plan_flow(flow: Flow, left, top, width, height):
 
     # note_top / note_bottom（地の文）は本文プレースホルダ側で描く（render 側で処理）．
     # ここでは図本体＋キャプションのみを領域内に配置する．
-    strip_h = _emu(0.5)
-    band_top = top
-    band_h = height - (strip_h if flow.caption else 0)
-    if band_h < _emu(0.8):
-        band_h = _emu(0.8)
+    # 図とキャプションを 1 つのまとまりとして領域中央に置き，キャプションは
+    # box の直下に付ける（box とキャプションが離れて間延びしないように）．
+    cap_h = _emu(0.5) if flow.caption else 0
+    cap_gap = _emu(0.12) if flow.caption else 0
 
     if flow.direction == "tb":
-        _plan_vertical(plan, flow, left, band_top, width, band_h)
+        bottom = _plan_vertical(plan, flow, left, top, width, height,
+                                cap_h + cap_gap)
     else:
-        _plan_horizontal(plan, flow, left, band_top, width, band_h)
+        bottom = _plan_horizontal(plan, flow, left, top, width, height,
+                                  cap_h + cap_gap)
 
     if flow.caption:
-        cy = band_top + band_h
-        plan["captions"].append((flow.caption, left, cy, width, strip_h, "caption"))
+        cy = bottom + cap_gap
+        plan["captions"].append((flow.caption, left, cy, width, cap_h, "caption"))
     return plan
 
 
-def _plan_horizontal(plan, flow, left, band_top, width, band_h):
+def _plan_horizontal(plan, flow, left, top, width, height, cap_reserve):
+    """横並び（lr）に配置し，box 帯の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
-    gx = _emu(0.5)
+    gx = _emu(0.65)
     bw = (width - (n - 1) * gx) // n
     bw = max(_emu(1.1), min(_emu(2.4), bw))
-    bh = min(_emu(1.4), int(band_h * 0.7))
+    bh = min(_emu(1.4), int((height - cap_reserve) * 0.7))
+    bh = max(_emu(0.6), bh)
     total = n * bw + (n - 1) * gx
     startx = left + (width - total) // 2
-    by = band_top + (band_h - bh) // 2
+    # box＋キャプションのまとまりを縦中央に置く．
+    group_h = bh + cap_reserve
+    by = top + max(0, (height - group_h) // 2)
 
     centers = []
     for i, node in enumerate(nodes):
@@ -208,18 +213,21 @@ def _plan_horizontal(plan, flow, left, band_top, width, band_h):
             mx = (a[2] + b[0]) // 2
             plan["labels"].append(
                 (e.label, mx - _emu(0.5), by - _emu(0.5), _emu(1.0), _emu(0.45)))
+    return by + bh
 
 
-def _plan_vertical(plan, flow, left, band_top, width, band_h):
+def _plan_vertical(plan, flow, left, top, width, height, cap_reserve):
+    """縦並び（tb）に配置し，box 列の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
     gy = _emu(0.35)
-    bh = (band_h - (n - 1) * gy) // n
+    avail = height - cap_reserve
+    bh = (avail - (n - 1) * gy) // n
     bh = max(_emu(0.6), min(_emu(1.2), bh))
     bw = min(_emu(3.2), int(width * 0.5))
     bx = left + (width - bw) // 2
     total = n * bh + (n - 1) * gy
-    starty = band_top + (band_h - total) // 2
+    starty = top + max(0, (avail - total) // 2)
 
     centers = []
     for i, node in enumerate(nodes):
@@ -240,3 +248,4 @@ def _plan_vertical(plan, flow, left, band_top, width, band_h):
             my = (a[2] + b[1]) // 2
             plan["labels"].append(
                 (e.label, cx + _emu(0.2), my - _emu(0.22), _emu(1.2), _emu(0.45)))
+    return starty + total

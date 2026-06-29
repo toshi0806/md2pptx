@@ -201,6 +201,19 @@ class Renderer:
         """本文プレースホルダの標準フォントサイズ（pt．lvl1）を返す．"""
         return self._body_font_levels()[0]
 
+    def _title_font_size(self):
+        """タイトルプレースホルダの既定フォントサイズ（pt．lvl1）を返す（既定 42）．"""
+        try:
+            master = self.prs.slide_masters[0]
+            el = master.element.find(
+                qn("p:txStyles") + "/" + qn("p:titleStyle")
+                + "/" + qn("a:lvl1pPr") + "/" + qn("a:defRPr"))
+            if el is not None and el.get("sz"):
+                return int(el.get("sz")) / 100.0
+        except Exception:
+            pass
+        return 42.0
+
     @staticmethod
     def _text_width_pt(text, font_pt):
         """テキストの概算表示幅（pt）．全角は font_pt，半角は約 0.55×で見積もる．"""
@@ -247,21 +260,59 @@ class Renderer:
             tf.paragraphs[0].text = lines[0]
             for ln in lines[1:]:
                 tf.add_paragraph().text = ln
+            # 副題はタイトル枠内に，本文より少し小さめの文字で入れる．
+            if ts.subtitle:
+                sp = tf.add_paragraph()
+                sp.text = ts.subtitle
+                sp.space_before = Pt(6)
+                sub_sz = self._title_font_size() * 0.8
+                for r in sp.runs:
+                    r.font.size = Pt(sub_sz)
 
+        # 副題プレースホルダには著者・所属のみを入れる（副題はタイトル枠へ移動）．
         sub_ph = self._find_placeholder(s, 1)
         if sub_ph is not None:
-            tf = sub_ph.text_frame
             sub_lines = []
-            if ts.subtitle:
-                sub_lines.append(ts.subtitle)
             if ts.author:
                 sub_lines.append(ts.author)
             sub_lines.extend(ts.affiliation or [])
             if sub_lines:
+                # 所属行の折り返しを抑えるため右方向へ枠を広げる（左位置は維持）．
+                # 継承ジオメトリの場合は 4 辺すべてを実効値で明示する
+                # （一部だけ設定すると top/height が 0 に落ちて枠が移動するため）．
+                left, top, width, height = self._effective_geom(sub_ph, s)
+                if None not in (left, top, width, height):
+                    new_w = self.SW - left - Inches(0.2)
+                    if new_w > width:
+                        sub_ph.left = left
+                        sub_ph.top = top
+                        sub_ph.height = height
+                        sub_ph.width = new_w
+                tf = sub_ph.text_frame
                 tf.paragraphs[0].text = sub_lines[0]
                 for ln in sub_lines[1:]:
                     tf.add_paragraph().text = ln
         return s
+
+    def _effective_geom(self, ph, slide):
+        """プレースホルダの実効ジオメトリ (left, top, width, height) を返す．
+
+        スライド上で未指定（継承）の値はレイアウトの同 idx プレースホルダで補う．
+        """
+        left, top, width, height = ph.left, ph.top, ph.width, ph.height
+        if None in (left, top, width, height):
+            idx = ph.placeholder_format.idx
+            try:
+                for lph in slide.slide_layout.placeholders:
+                    if lph.placeholder_format.idx == idx:
+                        left = left if left is not None else lph.left
+                        top = top if top is not None else lph.top
+                        width = width if width is not None else lph.width
+                        height = height if height is not None else lph.height
+                        break
+            except Exception:
+                pass
+        return left, top, width, height
 
     def _find_placeholder(self, slide, idx):
         for ph in slide.placeholders:
@@ -314,6 +365,36 @@ class Renderer:
         le.append(le.makeelement(
             qn("a:tailEnd"), {"type": "triangle", "w": "med", "len": "med"}))
         return cn
+
+    def block_arrow(self, slide, x1, y1, x2, y2, thickness, color=None):
+        """ノード間のすき間に塗りつぶしのブロック矢印を置く．
+
+        太い直線＋三角矢じりは box に食い込み見栄えが悪いため，すき間に収まる
+        塗り矢印シェイプ（RIGHT/DOWN_ARROW）を用いる．色はテーマ任せ（既定はアクセント）．
+        """
+        inset = Inches(0.05)
+        if abs(x2 - x1) >= abs(y2 - y1):       # 横向き
+            left = min(x1, x2) + inset
+            width = abs(x2 - x1) - 2 * inset
+            if width <= 0:
+                left, width = min(x1, x2), abs(x2 - x1)
+            height = thickness
+            top = y1 - height // 2
+            shape = MSO_SHAPE.RIGHT_ARROW if x2 >= x1 else MSO_SHAPE.LEFT_ARROW
+        else:                                   # 縦向き
+            top = min(y1, y2) + inset
+            height = abs(y2 - y1) - 2 * inset
+            if height <= 0:
+                top, height = min(y1, y2), abs(y2 - y1)
+            width = thickness
+            left = x1 - width // 2
+            shape = MSO_SHAPE.DOWN_ARROW if y2 >= y1 else MSO_SHAPE.UP_ARROW
+        shp = slide.shapes.add_shape(shape, int(left), int(top),
+                                     int(width), int(height))
+        shp.fill.solid()
+        shp.fill.fore_color.theme_color = color or self.TX
+        shp.line.fill.background()
+        return shp
 
     def note(self, slide, l, t, w, h, text, size, tc=None, bold=False,
              align=PP_ALIGN.LEFT):
@@ -374,8 +455,11 @@ class Renderer:
         for label, bl, bt, bw, bh in plan["ellipses"]:
             self.note(slide, bl, bt, bw, bh, label, bsz, tc=self.T2, bold=True,
                       align=PP_ALIGN.CENTER)
+        # ノード間のすき間に塗りつぶしのブロック矢印を置く（太さは box 高に比例）．
+        box_h_emu = boxes[0][4] if boxes else Inches(1.0)
+        thick = int(box_h_emu * 0.34)
         for x1, y1, x2, y2 in plan["arrows"]:
-            self.arrow(slide, x1, y1, x2, y2)
+            self.block_arrow(slide, x1, y1, x2, y2, thick)
         for text, bl, bt, bw, bh in plan["labels"]:
             self.note(slide, bl, bt, bw, bh, text, bsz, tc=self.T2, bold=True,
                       align=PP_ALIGN.CENTER)
@@ -581,7 +665,7 @@ class Renderer:
         """
         t = (text or "").strip()
         if t.startswith("→"):
-            return Line(text=t[len("→"):].lstrip(), kind="plain")
+            return Line(text=t, kind="plain")
         return Line(text=t, kind="bullet")
 
     def _obj_weight(self, obj):
