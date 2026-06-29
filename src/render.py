@@ -52,6 +52,9 @@ class Renderer:
 
     def __init__(self, base_pptx_path):
         self.prs = Presentation(base_pptx_path)
+        # テーマに pptx を渡した場合，元々入っているスライド（テンプレート用の
+        # プレースホルダ枚）が先頭に残らないよう，常に 0 枚から描画を始める．
+        self._clear_slides()
         self.SW = self.prs.slide_width
         self.SH = self.prs.slide_height
 
@@ -85,6 +88,18 @@ class Renderer:
         self.section_layout = layouts[2] if len(layouts) > 2 else self.L1
 
     # ------------------------------------------------------------ helpers
+    def _clear_slides(self):
+        """base pptx に既存のスライドがあれば取り除く（0 枚から描画するため）．"""
+        sldIdLst = self.prs.slides._sldIdLst
+        for sldId in list(sldIdLst):
+            rId = sldId.get(qn("r:id"))
+            if rId:
+                try:
+                    self.prs.part.drop_rel(rId)
+                except KeyError:
+                    pass
+            sldIdLst.remove(sldId)
+
     def no_bullet(self, para):
         """段落の行頭記号を消す（結論行など）．"""
         pPr = para._p.get_or_add_pPr()
