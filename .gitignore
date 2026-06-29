@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Generated output (build artifacts)
+example.pptx
+*-slide.pptx
