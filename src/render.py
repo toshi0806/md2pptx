@@ -56,8 +56,9 @@ class Renderer:
     # 相対フォントサイズ 1 段あたりの倍率（≈12.5%）．拡大は ×，縮小は ÷．
     # 絶対 pt はハードコードせず，テーマ既定サイズ（_body_font_levels）からの相対比のみ持つ．
     _SIZE_STEP_RATIO = 1.125
-    # 相対サイズの下限（可読性確保のため極小化を防ぐ）．
+    # 相対サイズの下限・上限（極小化／巨大化を防ぐ安全クランプ．段数の暴走対策）．
     _SIZE_MIN_PT = 8.0
+    _SIZE_MAX_PT = 96.0
 
     def __init__(self, base_pptx_path):
         self.prs = Presentation(base_pptx_path)
@@ -229,18 +230,25 @@ class Renderer:
         """段落 p に相対フォントサイズ（delta 段）を適用する．
 
         基点はその段落の level に対応するテーマ既定サイズ（_body_font_levels）．
-        実サイズ = round(base × 1.125**delta) で，下限 _SIZE_MIN_PT でクランプする．
-        p.level（インデント）は変更しない＝サイズだけを段落の全 run へ焼き込む．
-        delta が None（未指定）／0（テーマ既定に固定）のときは何もしない．
+        実サイズ = round(base × 1.125**delta) を [_SIZE_MIN_PT, _SIZE_MAX_PT] で
+        クランプする（大きな段数指定でも極小・巨大化しない）．p.level（インデント）は
+        変更しない＝段落の既定文字書式（defRPr＝p.font）にサイズを設定するため，
+        run が無い空段落でも有効で，bullet/採番記号も本文と同じサイズになる．
+
+        - delta is None（未指定）: 何もしない（スライド既定もテーマ既定もそのまま）．
+        - delta == 0（テーマ既定に固定）: サイズ指定を明示的に外しテーマ継承へ戻す．
         """
-        if delta is None or delta == 0:
+        if delta is None:
+            return
+        if delta == 0:
+            # スライド既定（@body-size）を無効化し，テーマ既定サイズへ戻す．
+            p.font.size = None
             return
         levels = self._body_font_levels()
         base = levels[min(level, len(levels) - 1)]
-        size = max(self._SIZE_MIN_PT, round(base * self._SIZE_STEP_RATIO ** delta))
-        # p.text により生成済みの run へ反映（autonum/no_bullet でも run は本文 1 つ）．
-        for run in p.runs:
-            run.font.size = Pt(size)
+        size = round(base * self._SIZE_STEP_RATIO ** delta)
+        size = min(self._SIZE_MAX_PT, max(self._SIZE_MIN_PT, size))
+        p.font.size = Pt(size)
 
     def _title_font_size(self):
         """タイトルプレースホルダの既定フォントサイズ（pt．lvl1）を返す（既定 42）．"""
@@ -643,8 +651,12 @@ class Renderer:
 
         未指定・非整数値はいずれも None（＝スライド既定なし）を返す．None は
         「未指定」を明示する番兵で，size_delta=None の行はテーマ既定のままになる
-        （0＝明示的に 0 段，とは区別する）．parser で int 化されるが，手書き値の
-        堅牢性のため数値文字列も受ける．
+        （0＝明示的に 0 段，とは区別する）．
+
+        parser 経由なら body_size は _INT_DIRECTIVES で int 化済みのため int()
+        は素通りする．try/except は parser を介さず directives を直接組み立てる
+        ケース（テスト・他コードからの呼び出し）に対する防御で，不正値で落とさず
+        「スライド既定なし」に倒す．
         """
         val = directives.get("body_size")
         if val is None:
