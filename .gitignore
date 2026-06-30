@@ -8,8 +8,9 @@ __pycache__/
 # Generated output (build artifacts)
 example.pptx
 example.pdf
-demo.pptx
+base.pptx
 *-slide.pptx
+*.pptx.tmp
 *.pdf
 
 # Office lock/temp files

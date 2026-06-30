@@ -22,15 +22,15 @@ input.md ──[parser]──▶ IR(Deck) ───────┘
 | `src/thmx2pptx.py` | thmx → base pptx 変換（ステージ0）。`theme/`→`ppt/` 等の OPC 操作 |
 | `src/parser.py` | Markdown → 中間表現（IR）。python-pptx 非依存 |
 | `src/ir.py` | IR データクラス（`Deck`/`Slide`/`Line`/`Table`/`Flow`/`TitleSlide` 等）。外部依存なし |
-| `src/render.py` | IR → pptx 描画（`Renderer` クラス）。`参照スクリプト` のヘルパーを移植 |
+| `src/render.py` | IR → pptx 描画（`Renderer` クラス）。描画ヘルパーは手書きの参照スクリプトから移植 |
 | `src/flow.py` | フロー図 DSL のパーサ＋座標レイアウタ。python-pptx 非依存（EMU 計算のみ） |
 
 `parser.py` と `flow.py` は **python-pptx に依存しない純モジュール**（描画は render の責務）。
 `ir.py` がパーサとレンダラの契約。新しい記法を足すときは「parser が IR を作る／render が IR を描く」
 の分離を保つ。
 
-参照元: `参照スクリプト` は本ツールの土台になった手書きスクリプト（demo スライド生成）。
-描画ヘルパー（`box`/`arrow`/`set_autonum`/`no_bullet`/`fit_body` 等）はここから `render.py` へ移植した。
+描画ヘルパー（`box`/`arrow`/`set_autonum`/`no_bullet`/`fit_body` 等）は、本ツールの土台になった
+手書きスクリプト（個人デッキ生成用、リポジトリには含めない）から `render.py` へ移植したもの。
 
 ## コマンド
 
@@ -40,10 +40,6 @@ input.md ──[parser]──▶ IR(Deck) ───────┘
 
 # デモ一式
 ./src/md2pptx example.md --theme OfficeTheme.pptx -o example.pptx
-
-# 基準（手書き版）の再生成
-python3 参照スクリプト            # → demo-slide.pptx
-./src/md2pptx demo.md --theme OfficeTheme.pptx -o demo.pptx
 ```
 
 依存: `pip install python-pptx pyyaml`（環境は python-pptx 1.0.2 / PyYAML 6）。
@@ -95,6 +91,6 @@ magick montage ref.png md.png -tile 2x1 -geometry +4+4 -background '#888' /tmp/c
 
 - 親リポジトリ（latex-ecosystem）の `.gitignore` で `*/` 除外されるため、md2pptx は**独立した
   git リポジトリ**（ローカルのみ、リモート未設定）。
-- 生成物（`example.pptx`/`demo.pptx`/`*.pdf`/`*-slide.pptx`）と Office ロックファイル（`~$*`）は
+- 生成物（`example.pptx`/`*.pdf`/`*-slide.pptx`）と Office ロックファイル（`~$*`）は
   `.gitignore` 済み。
 - コミットメッセージは英語。PR ワークフローの規約は親リポジトリの CLAUDE.md に従う。
