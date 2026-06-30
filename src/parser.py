@@ -338,30 +338,32 @@ def _parse_content_line(raw: str) -> Line | None:
     if not s:
         return None
 
+    def _mk(text, **kw):
+        """本文が空（マーカー／サイズトークンだけの行）なら Line を作らず None．
+        マーカー除去後に空の行を IR に入れない（先頭の空行チェックと整合）．"""
+        return Line(text=text, level=level, **kw) if text else None
+
     # 通常箇条書き："- " / "* "
     if s.startswith("- ") or s.startswith("* "):
         delta, text = _split_size(s[2:].strip())
-        return Line(text=text, level=level, kind="bullet", size_delta=delta)
+        return _mk(text, kind="bullet", size_delta=delta)
 
     # 連番："1. 2. 3." → arabicPeriod
     m = _RE_ORDERED.match(s)
     if m:
         delta, text = _split_size(m.group(2).strip())
-        return Line(text=text, level=level, kind="autonum",
-                    num_style="arabicPeriod", size_delta=delta)
+        return _mk(text, kind="autonum", num_style="arabicPeriod", size_delta=delta)
 
     # 丸括弧："(1) (2)" → arabicParenBoth（"(1)" 表記を忠実に再現）
     m = _RE_PAREN.match(s)
     if m:
         delta, text = _split_size(m.group(2).strip())
-        return Line(text=text, level=level, kind="autonum",
-                    num_style="arabicParenBoth", size_delta=delta)
+        return _mk(text, kind="autonum", num_style="arabicParenBoth", size_delta=delta)
 
     # 丸数字："①②③ …" → circleNumDbPlain（番号文字は除去）
     if s[0] in CIRCLED_DIGITS:
         delta, text = _split_size(s[1:].lstrip())
-        return Line(text=text, level=level, kind="autonum",
-                    num_style="circleNumDbPlain", size_delta=delta)
+        return _mk(text, kind="autonum", num_style="circleNumDbPlain", size_delta=delta)
 
     # 矢印："→ …" → 行頭記号なし（no_bullet 相当）．"→" は本文に残す
     # （結論・補足行の視覚的な導線として表示する）．トークンは "→" の後ろに置く．
@@ -376,7 +378,7 @@ def _parse_content_line(raw: str) -> Line | None:
 
     # 上記以外 → 既定の箇条書き（インデントに応じたレベル）
     delta, text = _split_size(s)
-    return Line(text=text, level=level, kind="bullet", size_delta=delta)
+    return _mk(text, kind="bullet", size_delta=delta)
 
 
 # ---------------------------------------------------------------- 自己検証

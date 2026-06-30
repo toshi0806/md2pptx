@@ -718,6 +718,11 @@ class Renderer:
                 self.no_bullet(p)
             # kind == "bullet" はテーマ既定のまま
             delta = blk.size_delta if blk.size_delta is not None else default_size_delta
+            # 行トークン {0} は「スライド既定を無効化してテーマ既定へ戻す」意味だが，
+            # そもそもスライド既定が無い（default_size_delta is None）なら戻す対象が
+            # なく無意味な no-op なので適用しない（テーマの段落サイズに触れない）．
+            if delta == 0 and default_size_delta is None:
+                delta = None
             self._apply_size_delta(p, blk.level, delta)
         return first
 
@@ -842,7 +847,9 @@ class Renderer:
         # 取りこぼさないため．0／None（変化なし）は対象外．
         def _eff_delta(ln):
             return ln.size_delta if ln.size_delta is not None else default_size_delta
-        if any(_eff_delta(ln) for ln in prose_before + prose_after):
+        # 0／None は「サイズ変化なし」＝帯高（本文標準サイズ前提）と食い違わないので
+        # 対象外．{0} はテーマ既定＝標準サイズそのものなので警告不要．
+        if any(_eff_delta(ln) not in (None, 0) for ln in prose_before + prose_after):
             sys.stderr.write(
                 "md2pptx: warning: relative font size on body text of a "
                 "table/figure slide may cause layout crowding "
