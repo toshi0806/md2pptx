@@ -835,6 +835,16 @@ class Renderer:
         if not objects:
             return
 
+        # 表・図スライドの地の文に相対サイズ指定があると，帯高計算（_body_font_size
+        # 固定）と食い違い，帯が詰まって結論文が重なりうる（既知の制約．TODO(v2)）．
+        # サイレントなレイアウト崩れを避けるため，この場合のみ警告を出す．
+        if any(ln.size_delta for ln in prose_before + prose_after):
+            sys.stderr.write(
+                "md2pptx: warning: relative font size on body text of a "
+                "table/figure slide may cause layout crowding "
+                "(band height is estimated at the standard body size)\n"
+            )
+
         # 地の文が無ければプレースホルダは使わず，領域全体にオブジェクトを置く．
         if not prose_before and not prose_after:
             if body is not None:
