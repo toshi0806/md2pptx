@@ -231,9 +231,9 @@ class Renderer:
         基点はその段落の level に対応するテーマ既定サイズ（_body_font_levels）．
         実サイズ = round(base × 1.125**delta) で，下限 _SIZE_MIN_PT でクランプする．
         p.level（インデント）は変更しない＝サイズだけを段落の全 run へ焼き込む．
-        delta が 0／None のときは何もしない（テーマ既定のまま）．
+        delta が None（未指定）／0（テーマ既定に固定）のときは何もしない．
         """
-        if not delta:
+        if delta is None or delta == 0:
             return
         levels = self._body_font_levels()
         base = levels[min(level, len(levels) - 1)]
@@ -641,12 +641,14 @@ class Renderer:
     def _body_size_delta(self, directives):
         """@body-size ディレクティブをスライド既定の相対サイズ段数へ解釈する．
 
-        非整数値は警告して 0（テーマ既定）に倒す．parser で int 化されるが，
-        手書き値の堅牢性のため数値文字列も受ける．
+        未指定・非整数値はいずれも None（＝スライド既定なし）を返す．None は
+        「未指定」を明示する番兵で，size_delta=None の行はテーマ既定のままになる
+        （0＝明示的に 0 段，とは区別する）．parser で int 化されるが，手書き値の
+        堅牢性のため数値文字列も受ける．
         """
         val = directives.get("body_size")
         if val is None:
-            return 0
+            return None
         try:
             return int(val)
         except (TypeError, ValueError):
@@ -654,10 +656,10 @@ class Renderer:
                 f"md2pptx: warning: ignoring non-integer @body-size value "
                 f"{val!r}\n"
             )
-            return 0
+            return None
 
     def _render_columns(self, slide, columns, default_num_color, scale,
-                        default_autofit, default_size_delta=0):
+                        default_autofit, default_size_delta=None):
         """多カラム（「2つのコンテンツ」）：各カラムを idx 1, 2 … へ流す．
 
         columns[i] を プレースホルダ idx=i+1 へ描画する（idx 0 はタイトル）．
@@ -675,7 +677,7 @@ class Renderer:
 
     # ----------------------------------------------------- 描画ユーティリティ
     def _append_lines(self, tf, line_blocks, first, default_num_color,
-                      default_size_delta=0):
+                      default_size_delta=None):
         """Line 列を text_frame に段落として追記する（採番／no_bullet を適用）．
 
         first=True なら最初の 1 行は既存の paragraphs[0] を使う．残りの行を
@@ -700,7 +702,7 @@ class Renderer:
             self._apply_size_delta(p, blk.level, delta)
         return first
 
-    def _fill_lines(self, tf, line_blocks, default_num_color, default_size_delta=0):
+    def _fill_lines(self, tf, line_blocks, default_num_color, default_size_delta=None):
         """Line 列を text_frame の段落として流し込む（先頭から）．"""
         self._append_lines(tf, line_blocks, True, default_num_color,
                            default_size_delta)
@@ -785,7 +787,7 @@ class Renderer:
             y += seg_h + gap
 
     def _render_stacked(self, slide, blocks, default_num_color, scale,
-                        default_autofit, col_ratios, default_size_delta=0):
+                        default_autofit, col_ratios, default_size_delta=None):
         """表／図を含むスライドを描画する．
 
         地の文（Line）は **標準の本文プレースホルダ**へ流し込み，表・図だけを
@@ -824,6 +826,8 @@ class Renderer:
         # 地の文あり：プレースホルダに導入文＋空行＋結論文を流して中央帯を確保．
         # 帯と空行数はプレースホルダ矩形から逆算し，地の文＋空行＋結論文が
         # プレースホルダ高を超えないようにする（結論文がスライド外へ出ない）．
+        # TODO(v2): prose の size_delta を行高に反映する（現在は本文標準サイズ固定）．
+        # 導入文を {+2} 等で大きく拡大すると帯が詰まり結論文と重なりうる（既知の制約）．
         bsz = self._body_font_size()
         line_h = int(Pt(bsz) * 1.32)        # 行間込みの保守的な行高
         nb, na = len(prose_before), len(prose_after)
