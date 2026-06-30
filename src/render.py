@@ -53,6 +53,12 @@ class Renderer:
     # フロー box の幅見積もりに掛ける安全係数（_text_width_pt の楽観的見積もりを補正）．
     _BOX_W_SAFETY = 1.15
 
+    # 相対フォントサイズ 1 段あたりの倍率（≈12.5%）．拡大は ×，縮小は ÷．
+    # 絶対 pt はハードコードせず，テーマ既定サイズ（_body_font_levels）からの相対比のみ持つ．
+    _SIZE_STEP_RATIO = 1.125
+    # 相対サイズの下限（可読性確保のため極小化を防ぐ）．
+    _SIZE_MIN_PT = 8.0
+
     def __init__(self, base_pptx_path):
         self.prs = Presentation(base_pptx_path)
         # テーマに pptx を渡した場合，元々入っているスライド（テンプレート用の
@@ -218,6 +224,23 @@ class Renderer:
     def _body_font_size(self):
         """本文プレースホルダの標準フォントサイズ（pt．lvl1）を返す．"""
         return self._body_font_levels()[0]
+
+    def _apply_size_delta(self, p, level, delta):
+        """段落 p に相対フォントサイズ（delta 段）を適用する．
+
+        基点はその段落の level に対応するテーマ既定サイズ（_body_font_levels）．
+        実サイズ = round(base × 1.125**delta) で，下限 _SIZE_MIN_PT でクランプする．
+        p.level（インデント）は変更しない＝サイズだけを段落の全 run へ焼き込む．
+        delta が 0／None のときは何もしない（テーマ既定のまま）．
+        """
+        if not delta:
+            return
+        levels = self._body_font_levels()
+        base = levels[min(level, len(levels) - 1)]
+        size = max(self._SIZE_MIN_PT, round(base * self._SIZE_STEP_RATIO ** delta))
+        # p.text により生成済みの run へ反映（autonum/no_bullet でも run は本文 1 つ）．
+        for run in p.runs:
+            run.font.size = Pt(size)
 
     def _title_font_size(self):
         """タイトルプレースホルダの既定フォントサイズ（pt．lvl1）を返す（既定 42）．"""
@@ -591,29 +614,50 @@ class Renderer:
 
         # スライド既定の採番色（@autonum-color）．Line.num_color が優先．
         default_num_color = directives.get("autonum_color")
+        # スライド既定の相対サイズ段数（@body-size）．Line.size_delta が優先．
+        default_size_delta = self._body_size_delta(directives)
         scale = self._autofit_scale(directives)
         blocks = slide.blocks or []
 
         if slide.columns:
             self._render_columns(s, slide.columns, default_num_color, scale,
-                                 default_autofit)
+                                 default_autofit, default_size_delta)
         elif any(isinstance(b, (Table, Flow)) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
-                                 self._col_ratios(directives))
+                                 self._col_ratios(directives), default_size_delta)
         else:
             line_blocks = [b for b in blocks if isinstance(b, Line)]
             body = self._body_placeholder(s)
             if body is not None and line_blocks:
                 tf = body.text_frame
-                self._fill_lines(tf, line_blocks, default_num_color)
+                self._fill_lines(tf, line_blocks, default_num_color,
+                                 default_size_delta)
                 self._apply_autofit(tf, scale, default_autofit)
 
         if slide_number:
             self.add_slide_number(s)
         return s
 
+    def _body_size_delta(self, directives):
+        """@body-size ディレクティブをスライド既定の相対サイズ段数へ解釈する．
+
+        非整数値は警告して 0（テーマ既定）に倒す．parser で int 化されるが，
+        手書き値の堅牢性のため数値文字列も受ける．
+        """
+        val = directives.get("body_size")
+        if val is None:
+            return 0
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring non-integer @body-size value "
+                f"{val!r}\n"
+            )
+            return 0
+
     def _render_columns(self, slide, columns, default_num_color, scale,
-                        default_autofit):
+                        default_autofit, default_size_delta=0):
         """多カラム（「2つのコンテンツ」）：各カラムを idx 1, 2 … へ流す．
 
         columns[i] を プレースホルダ idx=i+1 へ描画する（idx 0 はタイトル）．
@@ -626,15 +670,19 @@ class Renderer:
             lines = [b for b in col_blocks if isinstance(b, Line)]
             if lines:
                 tf = ph.text_frame
-                self._fill_lines(tf, lines, default_num_color)
+                self._fill_lines(tf, lines, default_num_color, default_size_delta)
                 self._apply_autofit(tf, scale, default_autofit)
 
     # ----------------------------------------------------- 描画ユーティリティ
-    def _append_lines(self, tf, line_blocks, first, default_num_color):
+    def _append_lines(self, tf, line_blocks, first, default_num_color,
+                      default_size_delta=0):
         """Line 列を text_frame に段落として追記する（採番／no_bullet を適用）．
 
         first=True なら最初の 1 行は既存の paragraphs[0] を使う．残りの行を
         追記しても良いよう，処理後の first 状態を返す．
+
+        相対サイズは行の size_delta を優先し，None の行はスライド既定
+        （default_size_delta，@body-size 由来）を継承する．
         """
         for blk in line_blocks:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
@@ -648,11 +696,14 @@ class Renderer:
             elif blk.kind == "plain":
                 self.no_bullet(p)
             # kind == "bullet" はテーマ既定のまま
+            delta = blk.size_delta if blk.size_delta is not None else default_size_delta
+            self._apply_size_delta(p, blk.level, delta)
         return first
 
-    def _fill_lines(self, tf, line_blocks, default_num_color):
+    def _fill_lines(self, tf, line_blocks, default_num_color, default_size_delta=0):
         """Line 列を text_frame の段落として流し込む（先頭から）．"""
-        self._append_lines(tf, line_blocks, True, default_num_color)
+        self._append_lines(tf, line_blocks, True, default_num_color,
+                           default_size_delta)
 
     def _autofit_scale(self, directives):
         """@autofit ディレクティブを縮小率へ解釈する（非数値は警告して None）．"""
@@ -734,7 +785,7 @@ class Renderer:
             y += seg_h + gap
 
     def _render_stacked(self, slide, blocks, default_num_color, scale,
-                        default_autofit, col_ratios):
+                        default_autofit, col_ratios, default_size_delta=0):
         """表／図を含むスライドを描画する．
 
         地の文（Line）は **標準の本文プレースホルダ**へ流し込み，表・図だけを
@@ -785,11 +836,13 @@ class Renderer:
 
         if body is not None:
             tf = body.text_frame
-            first = self._append_lines(tf, prose_before, True, default_num_color)
+            first = self._append_lines(tf, prose_before, True, default_num_color,
+                                       default_size_delta)
             for _ in range(blanks):
                 p = tf.paragraphs[0] if first else tf.add_paragraph()
                 first = False
-            self._append_lines(tf, prose_after, first, default_num_color)
+            self._append_lines(tf, prose_after, first, default_num_color,
+                               default_size_delta)
             self._apply_autofit(tf, scale, default_autofit)
 
         # 結論文との重なりを避けるため帯を少しだけ詰めてオブジェクトを置く．

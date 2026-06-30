@@ -34,6 +34,11 @@ class Line:
             "arabicParenBoth"（丸括弧 (1) (2)）など．kind!="autonum" のときは None．
         num_color: 採番記号の色をテーマ色名で指定（例 "tx1"）．
             None ならテーマ任せ．kind=="autonum" のときのみ意味を持つ．
+        size_delta: 相対フォントサイズの段数（行頭 "{+1}"/"{-2}" 由来）．
+            その行が level から得るテーマ既定サイズを基点に，1 段ごとに
+            ×1.125（拡大）/ ÷1.125（縮小）する（render が実サイズへ換算）．
+            None ならスライド既定（@body-size）に従う＝未指定．0 で「テーマ既定
+            に固定（スライド既定を無効化）」を表す．絶対 pt は持たない（テーマ委譲）．
     """
 
     text: str
@@ -41,6 +46,7 @@ class Line:
     kind: str = "bullet"
     num_style: str | None = None
     num_color: str | None = None
+    size_delta: int | None = None
 
 
 @dataclass
