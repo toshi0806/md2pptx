@@ -363,16 +363,15 @@ author: md2pptx demo
 affiliation:
   - Markdown ＋ PowerPoint テーマ → pptx
   - Python / python-pptx / PyYAML
-  - MIT License
 ---
 
 ## Background
 
 - スライドは体裁に時間を取られがち
-  - 環境構築が困難
-  - 版管理が煩雑
+  - 配色・フォントをそろえるのが面倒
+  - テキストとレイアウトが密結合
 
-## Contributions
+## Features
 <!-- @autonum-color: tx1 -->
 
 ① テーマの配色・フォントを継承

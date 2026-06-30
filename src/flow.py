@@ -10,8 +10,8 @@ DSL 例::
 
     direction: lr
     [theme.thmx | テーマ]
-    -PR-> [base.pptx | 土台]
-    -PR-> [out.pptx | スライド]
+    -変換-> [base.pptx | 土台]
+    -描画-> [out.pptx | スライド]
     -> [… | ]
     caption: 配色・フォントはテーマ、内容は Markdown
     note(top): テーマと Markdown を入力に pptx を生成

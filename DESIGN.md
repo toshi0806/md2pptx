@@ -206,7 +206,6 @@ author: md2pptx demo
 affiliation:
   - Markdown ＋ PowerPoint テーマ → pptx
   - Python / python-pptx / PyYAML
-  - MIT License
 ---
 ```
 
@@ -221,7 +220,7 @@ affiliation:
 - `# 見出し`（H1）はセクション見出しスライド（レイアウト2）に割当（オプション）。
 - タイトル内に `<br>`（`<br/>` 可）を書くと、その位置で**タイトルを改行**できる
   （`\v`＝行内改行に変換。`参照スクリプト` の `\v` 相当）。例:
-  `## Ⅲ. 行頭マーカー記法 (2/3)：<br>見た目で段落の種別を判定`
+  `## 行頭マーカー記法：<br>見た目で段落の種別を判定`
 
 ### 5.3 本文：行頭マーカー記法
 
@@ -244,9 +243,9 @@ affiliation:
 
 ```markdown
 1. parser.py
-   - 日本語Markdown を中間表現（IR）へ変換 → 後述
+   - Markdown を中間表現（IR）へ変換 → 後述
 2. render.py
-   - 統一された執筆環境（開発コンテナ）を提供 → 後述
+   - IR を python-pptx で pptx に描画 → 後述
 ```
 
 ### 5.4 表
@@ -256,8 +255,8 @@ Markdown 標準のテーブル記法。1 行目をヘッダとしてアクセン
 ```markdown
 | 課題 | md2pptx のアプローチ |
 |---|---|
-| Ⅰ デザインの一貫性 | PowerPoint テーマに委譲 |
-| Ⅱ 記述のしやすさ | Markdown の行頭マーカー記法 |
+| デザインの一貫性 | PowerPoint テーマに委譲 |
+| 記述のしやすさ | Markdown の行頭マーカー記法 |
 ```
 
 - 表とテキストを同一スライドに混在可（導入文＋表＋結論）。
@@ -286,8 +285,8 @@ box / arrow による横並びフロー図を簡潔に書く独自 DSL。`参照
 ```flow
 direction: lr            # lr(左→右、既定) / tb(上→下)
 [theme.thmx | テーマ]
--PR-> [base.pptx | 土台]
--PR-> [out.pptx | スライド]
+-変換-> [base.pptx | 土台]
+-描画-> [out.pptx | スライド]
 -> [… | ]                # "…" 単独は省略記号ノード（box ではなく note）
 caption: 配色・フォントはテーマ、内容は Markdown
 note(top): テーマと Markdown を入力に pptx を生成
