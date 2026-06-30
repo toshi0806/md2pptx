@@ -51,8 +51,13 @@ _RE_TABLE_SEP = re.compile(r"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$")
 # タイトル内の明示改行マーカー（<br> / <br/>）．"\v"（行内改行）へ変換する．
 _RE_TITLE_BR = re.compile(r"\s*<br\s*/?>\s*")
 
+# 相対フォントサイズトークン．マーカー直後・本文直前の "{+1}"/"{-2}"/"{0}"．
+# 符号は省略可（"{2}" は "+2" と同義）．render がテーマ基準で実サイズへ換算する．
+_RE_SIZE = re.compile(r"^\{\s*([+-]?\d+)\s*\}\s*(.*)$")
+
 # 整数として解釈するディレクティブキー（正規化後の名前）．
-_INT_DIRECTIVES = {"layout", "autofit"}
+# body_size はスライド既定の相対フォントサイズ段数（@body-size）．
+_INT_DIRECTIVES = {"layout", "autofit", "body_size"}
 
 
 # ---------------------------------------------------------------- 公開 API
@@ -300,11 +305,29 @@ def _apply_directive(slide: Slide, key: str, value: str) -> None:
 
 # ---------------------------------------------------------------- 行頭マーカー
 
+def _split_size(content: str) -> tuple[int | None, str]:
+    """本文先頭の相対サイズトークン "{+1}" を剥がして (段数, 残りの本文) を返す．
+
+    トークンが無ければ (None, content)．`None` は「未指定（スライド既定に従う）」を
+    意味し，render 側でスライドの @body-size を継承する．
+
+    符号は省略可（"{2}" ＝ "+2"）．"{+0}" / "{-0}" は int 化で 0 となり "{0}" と
+    同義（render 側で「テーマ既定に固定」＝スライド既定を無効化）になる．
+    """
+    m = _RE_SIZE.match(content)
+    if m:
+        return int(m.group(1)), m.group(2).strip()
+    return None, content
+
+
 def _parse_content_line(raw: str) -> Line | None:
     """1 行を行頭マーカー規則（DESIGN.md §5.3）に従って Line へ変換する．
 
     インデント（半角スペース 2 つ＝1 レベル）でネスト深さを決める．
     空行（マーカー除去後に空）は None を返す．
+
+    各行種のマーカー直後・本文直前に相対サイズトークン "{+1}"/"{-2}" を置ける
+    （DESIGN.md §5.8）．トークンは本文から除去し Line.size_delta へ格納する．
     """
     # インデント量からレベルを算出（タブは 1 スペース換算）．
     expanded = raw.replace("\t", " ")
@@ -315,34 +338,47 @@ def _parse_content_line(raw: str) -> Line | None:
     if not s:
         return None
 
+    def _mk(text, **kw):
+        """本文が空（マーカー／サイズトークンだけの行）なら Line を作らず None．
+        マーカー除去後に空の行を IR に入れない（先頭の空行チェックと整合）．"""
+        return Line(text=text, level=level, **kw) if text else None
+
     # 通常箇条書き："- " / "* "
     if s.startswith("- ") or s.startswith("* "):
-        return Line(text=s[2:].strip(), level=level, kind="bullet")
+        delta, text = _split_size(s[2:].strip())
+        return _mk(text, kind="bullet", size_delta=delta)
 
     # 連番："1. 2. 3." → arabicPeriod
     m = _RE_ORDERED.match(s)
     if m:
-        return Line(text=m.group(2).strip(), level=level,
-                    kind="autonum", num_style="arabicPeriod")
+        delta, text = _split_size(m.group(2).strip())
+        return _mk(text, kind="autonum", num_style="arabicPeriod", size_delta=delta)
 
     # 丸括弧："(1) (2)" → arabicParenBoth（"(1)" 表記を忠実に再現）
     m = _RE_PAREN.match(s)
     if m:
-        return Line(text=m.group(2).strip(), level=level,
-                    kind="autonum", num_style="arabicParenBoth")
+        delta, text = _split_size(m.group(2).strip())
+        return _mk(text, kind="autonum", num_style="arabicParenBoth", size_delta=delta)
 
     # 丸数字："①②③ …" → circleNumDbPlain（番号文字は除去）
     if s[0] in CIRCLED_DIGITS:
-        return Line(text=s[1:].lstrip(), level=level,
-                    kind="autonum", num_style="circleNumDbPlain")
+        delta, text = _split_size(s[1:].lstrip())
+        return _mk(text, kind="autonum", num_style="circleNumDbPlain", size_delta=delta)
 
     # 矢印："→ …" → 行頭記号なし（no_bullet 相当）．"→" は本文に残す
-    # （結論・補足行の視覚的な導線として表示する）．
+    # （結論・補足行の視覚的な導線として表示する）．トークンは "→" の後ろに置く．
     if s.startswith(ARROW):
-        return Line(text=s, level=level, kind="plain")
+        delta, rest = _split_size(s[len(ARROW):].lstrip())
+        if delta is None:
+            text = s  # トークン無し → 原文の間隔をそのまま保持（従来挙動）
+        else:
+            # トークンを剥がした分は復元できないので "→ 本文" に正規化する．
+            text = f"{ARROW} {rest}" if rest else ARROW
+        return Line(text=text, level=level, kind="plain", size_delta=delta)
 
     # 上記以外 → 既定の箇条書き（インデントに応じたレベル）
-    return Line(text=s, level=level, kind="bullet")
+    delta, text = _split_size(s)
+    return _mk(text, kind="bullet", size_delta=delta)
 
 
 # ---------------------------------------------------------------- 自己検証

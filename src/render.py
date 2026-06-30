@@ -53,6 +53,13 @@ class Renderer:
     # フロー box の幅見積もりに掛ける安全係数（_text_width_pt の楽観的見積もりを補正）．
     _BOX_W_SAFETY = 1.15
 
+    # 相対フォントサイズ 1 段あたりの倍率（≈12.5%）．拡大は ×，縮小は ÷．
+    # 絶対 pt はハードコードせず，テーマ既定サイズ（_body_font_levels）からの相対比のみ持つ．
+    _SIZE_STEP_RATIO = 1.125
+    # 相対サイズの下限・上限（極小化／巨大化を防ぐ安全クランプ．段数の暴走対策）．
+    _SIZE_MIN_PT = 8.0
+    _SIZE_MAX_PT = 96.0
+
     def __init__(self, base_pptx_path):
         self.prs = Presentation(base_pptx_path)
         # テーマに pptx を渡した場合，元々入っているスライド（テンプレート用の
@@ -218,6 +225,30 @@ class Renderer:
     def _body_font_size(self):
         """本文プレースホルダの標準フォントサイズ（pt．lvl1）を返す．"""
         return self._body_font_levels()[0]
+
+    def _apply_size_delta(self, p, level, delta):
+        """段落 p に相対フォントサイズ（delta 段）を適用する．
+
+        基点はその段落の level に対応するテーマ既定サイズ（_body_font_levels）．
+        実サイズ = round(base × 1.125**delta) を [_SIZE_MIN_PT, _SIZE_MAX_PT] で
+        クランプする（大きな段数指定でも極小・巨大化しない）．p.level（インデント）は
+        変更しない＝段落の既定文字書式（defRPr＝p.font）にサイズを設定するため，
+        run が無い空段落でも有効で，bullet/採番記号も本文と同じサイズになる．
+
+        - delta is None（未指定）: 何もしない（スライド既定もテーマ既定もそのまま）．
+        - delta == 0（テーマ既定に固定）: サイズ指定を明示的に外しテーマ継承へ戻す．
+        """
+        if delta is None:
+            return
+        if delta == 0:
+            # スライド既定（@body-size）を無効化し，テーマ既定サイズへ戻す．
+            p.font.size = None
+            return
+        levels = self._body_font_levels()
+        base = levels[min(level, len(levels) - 1)]
+        size = round(base * self._SIZE_STEP_RATIO ** delta)
+        size = min(self._SIZE_MAX_PT, max(self._SIZE_MIN_PT, size))
+        p.font.size = Pt(size)
 
     def _title_font_size(self):
         """タイトルプレースホルダの既定フォントサイズ（pt．lvl1）を返す（既定 42）．"""
@@ -591,29 +622,63 @@ class Renderer:
 
         # スライド既定の採番色（@autonum-color）．Line.num_color が優先．
         default_num_color = directives.get("autonum_color")
+        # スライド既定の相対サイズ段数（@body-size）．Line.size_delta が優先．
+        default_size_delta = self._body_size_delta(directives)
         scale = self._autofit_scale(directives)
         blocks = slide.blocks or []
 
         if slide.columns:
             self._render_columns(s, slide.columns, default_num_color, scale,
-                                 default_autofit)
+                                 default_autofit, default_size_delta)
         elif any(isinstance(b, (Table, Flow)) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
-                                 self._col_ratios(directives))
+                                 self._col_ratios(directives), default_size_delta)
         else:
             line_blocks = [b for b in blocks if isinstance(b, Line)]
             body = self._body_placeholder(s)
             if body is not None and line_blocks:
                 tf = body.text_frame
-                self._fill_lines(tf, line_blocks, default_num_color)
+                self._fill_lines(tf, line_blocks, default_num_color,
+                                 default_size_delta)
                 self._apply_autofit(tf, scale, default_autofit)
 
         if slide_number:
             self.add_slide_number(s)
         return s
 
+    def _body_size_delta(self, directives):
+        """@body-size ディレクティブをスライド既定の相対サイズ段数へ解釈する．
+
+        未指定・非整数値はいずれも None（＝スライド既定なし）を返す．None は
+        「未指定」を明示する番兵で，size_delta=None の行はテーマ既定のままになる
+        （0＝明示的に 0 段，とは区別する）．
+
+        `@body-size: 0`（0 段）は「スライド既定なし」と同義として None を返す．
+        スライド全体に対する 0 段は変化なし＝既定なしと区別する意味がないため．
+        （行トークン `{0}` の「テーマ既定へ明示的に戻す」意味は別物で，スライド既定
+        が非 0 のとき個別行を素のテーマ既定へ戻す用途に残る．Line.size_delta=0 が
+        担い，こちらには波及しない．）
+
+        parser 経由なら body_size は _INT_DIRECTIVES で int 化済みのため int()
+        は素通りする．try/except は parser を介さず directives を直接組み立てる
+        ケース（テスト・他コードからの呼び出し）に対する防御で，不正値で落とさず
+        「スライド既定なし」に倒す．
+        """
+        val = directives.get("body_size")
+        if val is None:
+            return None
+        try:
+            iv = int(val)
+        except (TypeError, ValueError):
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring non-integer @body-size value "
+                f"{val!r}\n"
+            )
+            return None
+        return iv if iv != 0 else None
+
     def _render_columns(self, slide, columns, default_num_color, scale,
-                        default_autofit):
+                        default_autofit, default_size_delta=None):
         """多カラム（「2つのコンテンツ」）：各カラムを idx 1, 2 … へ流す．
 
         columns[i] を プレースホルダ idx=i+1 へ描画する（idx 0 はタイトル）．
@@ -626,15 +691,19 @@ class Renderer:
             lines = [b for b in col_blocks if isinstance(b, Line)]
             if lines:
                 tf = ph.text_frame
-                self._fill_lines(tf, lines, default_num_color)
+                self._fill_lines(tf, lines, default_num_color, default_size_delta)
                 self._apply_autofit(tf, scale, default_autofit)
 
     # ----------------------------------------------------- 描画ユーティリティ
-    def _append_lines(self, tf, line_blocks, first, default_num_color):
+    def _append_lines(self, tf, line_blocks, first, default_num_color,
+                      default_size_delta=None):
         """Line 列を text_frame に段落として追記する（採番／no_bullet を適用）．
 
         first=True なら最初の 1 行は既存の paragraphs[0] を使う．残りの行を
         追記しても良いよう，処理後の first 状態を返す．
+
+        相対サイズは行の size_delta を優先し，None の行はスライド既定
+        （default_size_delta，@body-size 由来）を継承する．
         """
         for blk in line_blocks:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
@@ -648,11 +717,19 @@ class Renderer:
             elif blk.kind == "plain":
                 self.no_bullet(p)
             # kind == "bullet" はテーマ既定のまま
+            delta = blk.size_delta if blk.size_delta is not None else default_size_delta
+            # 行トークン {0} は「スライド既定を無効化してテーマ既定へ戻す」意味だが，
+            # そもそもスライド既定が無い（default_size_delta is None）なら戻す対象が
+            # なく無意味な no-op なので適用しない（テーマの段落サイズに触れない）．
+            if delta == 0 and default_size_delta is None:
+                delta = None
+            self._apply_size_delta(p, blk.level, delta)
         return first
 
-    def _fill_lines(self, tf, line_blocks, default_num_color):
+    def _fill_lines(self, tf, line_blocks, default_num_color, default_size_delta=None):
         """Line 列を text_frame の段落として流し込む（先頭から）．"""
-        self._append_lines(tf, line_blocks, True, default_num_color)
+        self._append_lines(tf, line_blocks, True, default_num_color,
+                           default_size_delta)
 
     def _autofit_scale(self, directives):
         """@autofit ディレクティブを縮小率へ解釈する（非数値は警告して None）．"""
@@ -734,7 +811,7 @@ class Renderer:
             y += seg_h + gap
 
     def _render_stacked(self, slide, blocks, default_num_color, scale,
-                        default_autofit, col_ratios):
+                        default_autofit, col_ratios, default_size_delta=None):
         """表／図を含むスライドを描画する．
 
         地の文（Line）は **標準の本文プレースホルダ**へ流し込み，表・図だけを
@@ -763,6 +840,22 @@ class Renderer:
         if not objects:
             return
 
+        # 表・図スライドの地の文に相対サイズが効くと，帯高計算（_body_font_size
+        # 固定）と食い違い，帯が詰まって結論文が重なりうる（既知の制約．TODO(v2)）．
+        # 判定は _append_lines と同じ実効デルタ（行トークン優先，無ければスライド既定
+        # @body-size）で行う．行 size_delta=None でも @body-size 由来で拡縮する場合を
+        # 取りこぼさないため．0／None（変化なし）は対象外．
+        def _eff_delta(ln):
+            return ln.size_delta if ln.size_delta is not None else default_size_delta
+        # 0／None は「サイズ変化なし」＝帯高（本文標準サイズ前提）と食い違わないので
+        # 対象外．{0} はテーマ既定＝標準サイズそのものなので警告不要．
+        if any(_eff_delta(ln) not in (None, 0) for ln in prose_before + prose_after):
+            sys.stderr.write(
+                "md2pptx: warning: relative font size on body text of a "
+                "table/figure slide may cause layout crowding "
+                "(band height is estimated at the standard body size)\n"
+            )
+
         # 地の文が無ければプレースホルダは使わず，領域全体にオブジェクトを置く．
         if not prose_before and not prose_after:
             if body is not None:
@@ -773,6 +866,8 @@ class Renderer:
         # 地の文あり：プレースホルダに導入文＋空行＋結論文を流して中央帯を確保．
         # 帯と空行数はプレースホルダ矩形から逆算し，地の文＋空行＋結論文が
         # プレースホルダ高を超えないようにする（結論文がスライド外へ出ない）．
+        # TODO(v2): prose の size_delta を行高に反映する（現在は本文標準サイズ固定）．
+        # 導入文を {+2} 等で大きく拡大すると帯が詰まり結論文と重なりうる（既知の制約）．
         bsz = self._body_font_size()
         line_h = int(Pt(bsz) * 1.32)        # 行間込みの保守的な行高
         nb, na = len(prose_before), len(prose_after)
@@ -785,11 +880,13 @@ class Renderer:
 
         if body is not None:
             tf = body.text_frame
-            first = self._append_lines(tf, prose_before, True, default_num_color)
+            first = self._append_lines(tf, prose_before, True, default_num_color,
+                                       default_size_delta)
             for _ in range(blanks):
                 p = tf.paragraphs[0] if first else tf.add_paragraph()
                 first = False
-            self._append_lines(tf, prose_after, first, default_num_color)
+            self._append_lines(tf, prose_after, first, default_num_color,
+                               default_size_delta)
             self._apply_autofit(tf, scale, default_autofit)
 
         # 結論文との重なりを避けるため帯を少しだけ詰めてオブジェクトを置く．
