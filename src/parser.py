@@ -310,6 +310,9 @@ def _split_size(content: str) -> tuple[int | None, str]:
 
     トークンが無ければ (None, content)．`None` は「未指定（スライド既定に従う）」を
     意味し，render 側でスライドの @body-size を継承する．
+
+    符号は省略可（"{2}" ＝ "+2"）．"{+0}" / "{-0}" は int 化で 0 となり "{0}" と
+    同義（render 側で「テーマ既定に固定」＝スライド既定を無効化）になる．
     """
     m = _RE_SIZE.match(content)
     if m:

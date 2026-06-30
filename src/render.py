@@ -835,10 +835,14 @@ class Renderer:
         if not objects:
             return
 
-        # 表・図スライドの地の文に相対サイズ指定があると，帯高計算（_body_font_size
+        # 表・図スライドの地の文に相対サイズが効くと，帯高計算（_body_font_size
         # 固定）と食い違い，帯が詰まって結論文が重なりうる（既知の制約．TODO(v2)）．
-        # サイレントなレイアウト崩れを避けるため，この場合のみ警告を出す．
-        if any(ln.size_delta for ln in prose_before + prose_after):
+        # 判定は _append_lines と同じ実効デルタ（行トークン優先，無ければスライド既定
+        # @body-size）で行う．行 size_delta=None でも @body-size 由来で拡縮する場合を
+        # 取りこぼさないため．0／None（変化なし）は対象外．
+        def _eff_delta(ln):
+            return ln.size_delta if ln.size_delta is not None else default_size_delta
+        if any(_eff_delta(ln) for ln in prose_before + prose_after):
             sys.stderr.write(
                 "md2pptx: warning: relative font size on body text of a "
                 "table/figure slide may cause layout crowding "
