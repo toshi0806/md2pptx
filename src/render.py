@@ -50,6 +50,9 @@ class Renderer:
     （thmx 由来の base は本文スライドを持たない）．
     """
 
+    # フロー box の幅見積もりに掛ける安全係数（_text_width_pt の楽観的見積もりを補正）．
+    _BOX_W_SAFETY = 1.15
+
     def __init__(self, base_pptx_path):
         self.prs = Presentation(base_pptx_path)
         # テーマに pptx を渡した場合，元々入っているスライド（テンプレート用の
@@ -436,14 +439,20 @@ class Renderer:
         return self._theme_map.get(str(name).lower())
 
     def _box_fits(self, node, bw, bh, font_pt):
-        """box（主ラベル＋副ラベル）が指定フォントサイズで収まるか概算判定する．"""
+        """box（主ラベル＋副ラベル）が指定フォントサイズで収まるか概算判定する．
+
+        幅見積もりは安全係数 ``_BOX_W_SAFETY`` を掛けて保守的に評価する（``theme.thmx``
+        のような半角主体ラベルが実 PowerPoint で 1 字あふれて折り返すのを防ぐ）．
+        """
         line_h = font_pt * 1.2
         inner_w = max(1.0, bw / 12700.0 - 8)   # 左右マージン約 Pt(4)×2
         inner_h = bh / 12700.0 - 4             # 上下マージン約
-        lines = max(1, math.ceil(self._text_width_pt(node.label, font_pt) / inner_w))
+        safe = self._BOX_W_SAFETY
+        lines = max(1, math.ceil(
+            safe * self._text_width_pt(node.label, font_pt) / inner_w))
         if node.sublabel:
             lines += max(1, math.ceil(
-                self._text_width_pt(node.sublabel, font_pt) / inner_w))
+                safe * self._text_width_pt(node.sublabel, font_pt) / inner_w))
         return lines * line_h <= inner_h
 
     def render_flow(self, slide, flow, left, top, width, height):
