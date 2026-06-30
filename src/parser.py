@@ -364,7 +364,11 @@ def _parse_content_line(raw: str) -> Line | None:
     # （結論・補足行の視覚的な導線として表示する）．トークンは "→" の後ろに置く．
     if s.startswith(ARROW):
         delta, rest = _split_size(s[len(ARROW):].lstrip())
-        text = f"{ARROW} {rest}" if rest else ARROW
+        if delta is None:
+            text = s  # トークン無し → 原文の間隔をそのまま保持（従来挙動）
+        else:
+            # トークンを剥がした分は復元できないので "→ 本文" に正規化する．
+            text = f"{ARROW} {rest}" if rest else ARROW
         return Line(text=text, level=level, kind="plain", size_delta=delta)
 
     # 上記以外 → 既定の箇条書き（インデントに応じたレベル）

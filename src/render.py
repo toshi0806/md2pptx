@@ -653,6 +653,12 @@ class Renderer:
         「未指定」を明示する番兵で，size_delta=None の行はテーマ既定のままになる
         （0＝明示的に 0 段，とは区別する）．
 
+        `@body-size: 0`（0 段）は「スライド既定なし」と同義として None を返す．
+        スライド全体に対する 0 段は変化なし＝既定なしと区別する意味がないため．
+        （行トークン `{0}` の「テーマ既定へ明示的に戻す」意味は別物で，スライド既定
+        が非 0 のとき個別行を素のテーマ既定へ戻す用途に残る．Line.size_delta=0 が
+        担い，こちらには波及しない．）
+
         parser 経由なら body_size は _INT_DIRECTIVES で int 化済みのため int()
         は素通りする．try/except は parser を介さず directives を直接組み立てる
         ケース（テスト・他コードからの呼び出し）に対する防御で，不正値で落とさず
@@ -662,13 +668,14 @@ class Renderer:
         if val is None:
             return None
         try:
-            return int(val)
+            iv = int(val)
         except (TypeError, ValueError):
             sys.stderr.write(
                 f"md2pptx: warning: ignoring non-integer @body-size value "
                 f"{val!r}\n"
             )
             return None
+        return iv if iv != 0 else None
 
     def _render_columns(self, slide, columns, default_num_color, scale,
                         default_autofit, default_size_delta=None):
