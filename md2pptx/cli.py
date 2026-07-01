@@ -75,7 +75,9 @@ def _parse_args(argv):
 def main(argv=None):
     try:
         return _run(args=_parse_args(argv))
-    except ThmxError as e:  # thmx 変換失敗は原因を表示して失敗させる（§7）．
+    except (ThmxError, OSError) as e:
+        # thmx 変換の失敗やファイル入出力の失敗（不在・権限・破損）は，
+        # トレースバックではなく整形したメッセージで失敗させる（§7）．
         raise SystemExit(f"md2pptx: {e}")
 
 

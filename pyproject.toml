@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "md2pptx"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Markdown と PowerPoint テーマ（thmx/pptx）から発表スライド（pptx）を生成するツール"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -25,3 +25,7 @@ md2pptx = "md2pptx.cli:main"
 
 [tool.setuptools]
 packages = ["md2pptx"]
+
+# バージョンは md2pptx/__init__.py の __version__ を単一の情報源にする（二重管理を避ける）．
+[tool.setuptools.dynamic]
+version = { attr = "md2pptx.__version__" }
