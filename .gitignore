@@ -2,6 +2,12 @@
 __pycache__/
 *.py[cod]
 
+# Packaging / build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
 # Claude Code local settings
 .claude/settings.local.json
 
