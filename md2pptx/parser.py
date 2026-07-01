@@ -408,7 +408,11 @@ def _parse_image_shorthand(alt: str, src: str, opts: str | None) -> Image:
         img.caption = alt.strip()
     for tok in (opts or "").split():
         if "=" not in tok:
-            raise ValueError(f"invalid image option (expected key=value): {tok!r}")
+            raise ValueError(
+                f"invalid image option (expected key=value): {tok!r} — "
+                "shorthand options are space-separated, so a caption cannot "
+                "contain spaces; use the alt text ![caption](...) or the "
+                "```image 'caption:' line instead")
         k, v = tok.split("=", 1)
         _apply_image_opt(img, k, v)
     if not img.src:

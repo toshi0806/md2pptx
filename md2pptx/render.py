@@ -53,8 +53,9 @@ def _read_image_size(path):
     with open(path, "rb") as f:
         head = f.read(8)
         if head[:8] == b"\x89PNG\r\n\x1a\n":
-            # PNG: 先頭直後の IHDR チャンクに width/height（ビッグエンディアン 4B×2）．
-            f.read(4 + 4)  # length(4) + "IHDR"(4)
+            # PNG: シグネチャ(8B)の直後が IHDR チャンク．チャンク長(4B)＋チャンクタイプ
+            # "IHDR"(4B) を読み飛ばすと，先頭に width/height（ビッグエンディアン 4B×2）．
+            f.read(4 + 4)  # チャンク長(4) + チャンクタイプ"IHDR"(4)
             w, h = struct.unpack(">II", f.read(8))
             return w, h
         if head[:2] == b"\xff\xd8":  # JPEG（SOI）．SOF マーカーまで走査する．
@@ -779,7 +780,10 @@ class Renderer:
             pic.crop_right, pic.crop_bottom = cr, cb
 
         if img.caption:
-            self._draw_caption(slide, img.caption, left, int(y + h), width, cap_h)
+            # 画像直下に置く．h ≤ avail_h なので通常 y+h ≤ top+avail_h だが，丸め等で
+            # セグメント外へ出ないよう cap 上端を [.., top+seg_h-cap_h] にクランプする．
+            cap_top = min(int(y + h), int(top + seg_h - cap_h))
+            self._draw_caption(slide, img.caption, left, cap_top, width, cap_h)
         return pic
 
     @staticmethod
