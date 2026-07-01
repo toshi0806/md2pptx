@@ -134,21 +134,40 @@ def _build_title_slide(meta: dict) -> TitleSlide | None:
         # 複数行タイトル（YAML ブロックスカラー）の末尾改行を落とす．
         title = title.rstrip("\n")
 
-    subtitle = meta.get("subtitle")
-    author = meta.get("author")
+    # 副題・著者・所属も本文行と同じ相対サイズトークン "{-1}"/"{+1}" を先頭に置ける．
+    # トークンは本文から剥がし，段数を IR の *_delta へ格納する（render が換算）．
+    subtitle_delta, subtitle = _split_size_opt(meta.get("subtitle"))
+    author_delta, author = _split_size_opt(meta.get("author"))
 
-    affiliation = meta.get("affiliation") or []
-    if isinstance(affiliation, str):
-        affiliation = [affiliation]
-    else:
-        affiliation = list(affiliation)
+    affiliation_raw = meta.get("affiliation") or []
+    if isinstance(affiliation_raw, str):
+        affiliation_raw = [affiliation_raw]
+    affiliation = []
+    affiliation_deltas = []
+    for line in affiliation_raw:
+        delta, text = _split_size_opt(line)
+        affiliation.append(text)
+        affiliation_deltas.append(delta)
 
     return TitleSlide(
         title=title,
         subtitle=subtitle,
         author=author,
         affiliation=affiliation,
+        subtitle_delta=subtitle_delta,
+        author_delta=author_delta,
+        affiliation_deltas=affiliation_deltas,
     )
+
+
+def _split_size_opt(value):
+    """front matter 値（None 可）の先頭相対サイズトークンを剥がして (段数, 文字列) を返す．
+
+    None はそのまま (None, None)．文字列以外（数値等）は文字列化してトークン判定する．
+    """
+    if value is None:
+        return None, None
+    return _split_size(str(value))
 
 
 # ---------------------------------------------------------------- 本文

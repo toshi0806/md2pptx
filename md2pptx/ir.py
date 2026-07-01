@@ -151,12 +151,20 @@ class TitleSlide:
         subtitle: 副題段落．無ければ None．
         author: 発表者名．無ければ None．
         affiliation: 所属・日付などの行リスト（著者欄に複数行で並べる）．
+        subtitle_delta: 副題の相対フォントサイズ段数（先頭 "{-1}" 由来．None＝未指定）．
+        author_delta: 著者名の相対フォントサイズ段数（同上）．
+        affiliation_deltas: affiliation 各行と 1 対 1 対応する相対サイズ段数リスト
+            （各要素 int｜None．None＝未指定）．本文の Line.size_delta と同じ意味で，
+            render がテーマ既定サイズを基点に実サイズへ換算する．
     """
 
     title: str | None = None
     subtitle: str | None = None
     author: str | None = None
     affiliation: list[str] = field(default_factory=list)
+    subtitle_delta: int | None = None
+    author_delta: int | None = None
+    affiliation_deltas: list[int | None] = field(default_factory=list)
 
 
 @dataclass
