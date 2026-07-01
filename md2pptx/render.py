@@ -267,7 +267,10 @@ class Renderer:
         """副題プレースホルダ（idx 1）の既定フォントサイズ（pt．lvl1）を返す（既定 28）．
 
         著者・所属欄はこのプレースホルダに入るため，相対サイズ段数（{-1} 等）の基点にする．
+        （副題自体はタイトル枠内に別サイズで入るため基点が異なる：render_title_slide 参照．）
         """
+        if self.title_layout is None:
+            return 28.0
         try:
             for ph in self.title_layout.placeholders:
                 if ph.placeholder_format.idx == 1:
@@ -339,7 +342,9 @@ class Renderer:
                 sp = tf.add_paragraph()
                 sp.text = ts.subtitle
                 sp.space_before = Pt(6)
-                # 既定は本文タイトルより少し小さめ．{-1}/{+1} 指定があればその段数で調整．
+                # 副題はタイトル枠内に入るため基点はタイトル×0.8（副題プレースホルダの
+                # 既定サイズではない）．著者・所属は別プレースホルダなので基点が異なるが，
+                # いずれも「その要素が本来出るサイズから delta 段」で一貫する．
                 sub_sz = self._size_from_delta(
                     self._title_font_size() * 0.8, ts.subtitle_delta)
                 for r in sp.runs:
@@ -348,17 +353,16 @@ class Renderer:
         # 副題プレースホルダには著者・所属のみを入れる（副題はタイトル枠へ移動）．
         sub_ph = self._find_placeholder(s, 1)
         if sub_ph is not None:
-            # 各行の相対サイズ段数（{-1} 等）を本文行と 1 対 1 で持ち回る（None＝未指定）．
+            # 各行の相対サイズ段数（{-1} 等）を行と 1 対 1 で持ち回る（None＝未指定）．
+            # affiliation_deltas は TitleSlide.__post_init__ で affiliation と同長が保証される．
             sub_lines = []
             sub_deltas = []
             if ts.author:
                 sub_lines.append(ts.author)
                 sub_deltas.append(ts.author_delta)
-            for i, aff in enumerate(ts.affiliation or []):
+            for aff, delta in zip(ts.affiliation or [], ts.affiliation_deltas):
                 sub_lines.append(aff)
-                sub_deltas.append(
-                    ts.affiliation_deltas[i]
-                    if i < len(ts.affiliation_deltas) else None)
+                sub_deltas.append(delta)
             if sub_lines:
                 # 所属行の折り返しを抑えるため右方向へ枠を広げる（左位置は維持）．
                 # 継承ジオメトリの場合は 4 辺すべてを実効値で明示する

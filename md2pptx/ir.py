@@ -166,6 +166,17 @@ class TitleSlide:
     author_delta: int | None = None
     affiliation_deltas: list[int | None] = field(default_factory=list)
 
+    def __post_init__(self):
+        # 不変条件：affiliation_deltas は affiliation と同じ長さ（各行 1 対 1）．
+        # 直接構築（テスト等）で長さがずれても None 詰め／切り詰めで揃え，
+        # render 側が添字で安全に対応付けられるようにする．
+        n = len(self.affiliation)
+        d = self.affiliation_deltas
+        if len(d) < n:
+            self.affiliation_deltas = list(d) + [None] * (n - len(d))
+        elif len(d) > n:
+            self.affiliation_deltas = list(d[:n])
+
 
 @dataclass
 class Deck:
