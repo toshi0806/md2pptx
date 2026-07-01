@@ -119,9 +119,11 @@ def _run(args):
         )
 
     # 3) base pptx へ収束 → レンダリング → 保存．
+    # 画像などの相対パスは Markdown ファイルの置き場を基準に解決する．
+    base_dir = os.path.dirname(os.path.abspath(args.input))
     base_path, is_temp = load_base(theme, keep_base=args.keep_base)
     try:
-        render.build(deck, base_path, output)
+        render.build(deck, base_path, output, base_dir=base_dir)
     except Exception as e:  # 描画エラーも原因を表示して失敗させる（§7）．
         raise SystemExit(f"md2pptx: failed to render {args.input}: {e}")
     finally:

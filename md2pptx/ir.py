@@ -118,6 +118,65 @@ class Flow:
 
 
 @dataclass
+class Length:
+    """埋め込みサイズの 1 次元（画像の width / height）．
+
+    unit で解釈が変わる：
+        - "percent": セグメント（帯）矩形に対する割合（value は 0..100）．render で解決．
+        - "emu":     絶対サイズ（value は EMU 整数相当．parser が cm/pt/in/px から換算）．
+    """
+
+    unit: str
+    value: float
+
+
+@dataclass
+class Crop:
+    """画像トリミングの「残す矩形」（左上原点）．
+
+    unit で x/y/w/h の単位が変わる：
+        - "px":      ソース画像のピクセル座標（解像度依存）．
+        - "percent": ソース画像サイズに対する割合（0..100．解像度非依存）．
+    render がソース画像の実ピクセル寸法を読み，PowerPoint のクロップ割合
+    （各辺 0..1）へ換算する．
+    """
+
+    unit: str
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+@dataclass
+class Image:
+    """画像ブロック（jpg / png）．表・フロー図と同じ「オブジェクト」として中央帯に配置する．
+
+    Markdown の `![cap](src){opts}` ショートハンド，または ```image フェンス由来
+    （DESIGN.md §5.9）．描画（python-pptx の add_picture）は render の責務で，
+    ここ（IR）はパス・サイズ・トリミング等の宣言のみ保持する（外部依存なし）．
+
+    Attributes:
+        src: 画像ファイルのパス（Markdown ファイルからの相対 or 絶対）．
+        width: 埋め込み幅（Length）．None なら height かアスペクトから決める．
+        height: 埋め込み高（Length）．None なら width かアスペクトから決める．
+        crop: トリミングの残す矩形（Crop）．None ならトリミングなし．
+        align: セグメント内の水平寄せ．"left" / "center"（既定）/ "right"．
+        fit: width/height 両指定時の収め方．"contain"（既定・比維持で内接）/
+            "fill"（歪ませて充填）．片方のみ・省略時は常にアスペクト維持．
+        caption: 図下キャプション（省略可．ショートハンドは alt を採用）．
+    """
+
+    src: str
+    width: Length | None = None
+    height: Length | None = None
+    crop: Crop | None = None
+    align: str = "center"
+    fit: str = "contain"
+    caption: str | None = None
+
+
+@dataclass
 class Slide:
     """1 枚のコンテンツスライド．
 

@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import copy
 import math
+import os
+import struct
 import sys
 
 from pptx import Presentation
@@ -35,11 +37,52 @@ from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 try:  # パッケージ実行・単体実行のどちらでも import できるように
-    from .ir import Deck, Slide, TitleSlide, Line, Table, Flow
+    from .ir import Deck, Slide, TitleSlide, Line, Table, Flow, Image
     from .flow import plan_flow
 except ImportError:  # pragma: no cover - 単体実行時のフォールバック
-    from ir import Deck, Slide, TitleSlide, Line, Table, Flow
+    from ir import Deck, Slide, TitleSlide, Line, Table, Flow, Image
     from flow import plan_flow
+
+
+def _read_image_size(path):
+    """画像（png / jpg）のピクセル寸法 (width, height) をヘッダ解析で取得する．
+
+    python-pptx の内部クラスや Pillow に依存せず，標準ライブラリだけでファイル
+    ヘッダを読む（対応形式は png / jpeg）．寸法が読めない場合は ValueError．
+    """
+    with open(path, "rb") as f:
+        head = f.read(8)
+        if head[:8] == b"\x89PNG\r\n\x1a\n":
+            # PNG: シグネチャ(8B)の直後が IHDR チャンク．チャンク長(4B)＋チャンクタイプ
+            # "IHDR"(4B) を読み飛ばすと，先頭に width/height（ビッグエンディアン 4B×2）．
+            f.read(4 + 4)  # チャンク長(4) + チャンクタイプ"IHDR"(4)
+            w, h = struct.unpack(">II", f.read(8))
+            return w, h
+        if head[:2] == b"\xff\xd8":  # JPEG（SOI）．SOF マーカーまで走査する．
+            f.seek(2)
+            while True:
+                b = f.read(1)
+                if not b:
+                    break
+                if b != b"\xff":
+                    continue
+                marker = f.read(1)
+                while marker == b"\xff":  # 連続する 0xFF（フィルバイト）を読み飛ばす
+                    marker = f.read(1)
+                if not marker:
+                    break
+                m = marker[0]
+                # SOF0..SOF15（0xC0..0xCF）に寸法．ただし DHT/JPG/DAC は除く．
+                if 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):
+                    f.read(2 + 1)  # segment length(2) + precision(1)
+                    h, w = struct.unpack(">HH", f.read(4))
+                    return w, h
+                seg = f.read(2)
+                if len(seg) < 2:
+                    break
+                length = struct.unpack(">H", seg)[0]
+                f.seek(length - 2, os.SEEK_CUR)  # このセグメントを読み飛ばす
+    raise ValueError(f"cannot read image dimensions (png/jpeg only): {path}")
 
 
 class Renderer:
@@ -60,8 +103,11 @@ class Renderer:
     _SIZE_MIN_PT = 8.0
     _SIZE_MAX_PT = 96.0
 
-    def __init__(self, base_pptx_path):
+    def __init__(self, base_pptx_path, base_dir=None):
         self.prs = Presentation(base_pptx_path)
+        # 画像などの相対パスを解決する基準ディレクトリ（既定は Markdown ファイルの
+        # 置き場．cli が渡す）．None なら実行時のカレントを基準にする．
+        self.base_dir = base_dir
         # テーマに pptx を渡した場合，元々入っているスライド（テンプレート用の
         # プレースホルダ枚）が先頭に残らないよう，常に 0 枚から描画を始める．
         self._clear_slides()
@@ -644,6 +690,132 @@ class Renderer:
                     cell.fill.fore_color.theme_color = self.A2
         return gf
 
+    def _resolve_image_path(self, src):
+        """画像パスを base_dir 基準で解決し，存在しなければ fail fast する．"""
+        path = src if os.path.isabs(src) else os.path.join(self.base_dir or ".", src)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"image not found: {src}")
+        return path
+
+    @staticmethod
+    def _crop_fractions(crop, W, H):
+        """Crop（残す矩形）を PowerPoint のクロップ割合と可視画素サイズへ換算する．
+
+        戻り値 (cl, ct, cr, cb, vis_w_px, vis_h_px)．cl 等は各辺で削る割合（0..1）．
+        """
+        if crop is None:
+            return 0.0, 0.0, 0.0, 0.0, float(W), float(H)
+        if crop.unit == "px":
+            x, y, w, h = crop.x, crop.y, crop.w, crop.h
+        else:  # ソース画像サイズに対する割合
+            x, y = crop.x / 100.0 * W, crop.y / 100.0 * H
+            w, h = crop.w / 100.0 * W, crop.h / 100.0 * H
+        # 各辺で削る割合（0..1）に正規化して検証する．単位（px / %）に依らず
+        # 分数で評価できるうえ，許容誤差も相対値（eps）で一貫して扱える．
+        cl, ct = x / W, y / H
+        cr, cb = (W - (x + w)) / W, (H - (y + h)) / H
+        eps = 1e-6  # 割合換算の丸め誤差の吸収（絶対 px ではなく相対量で判定）
+        if (w <= 0 or h <= 0 or cl < -eps or ct < -eps
+                or cr < -eps or cb < -eps):
+            raise ValueError(
+                f"crop rectangle out of bounds for {W}x{H}px source: "
+                f"keep x={x:g},y={y:g},w={w:g},h={h:g}")
+        clamp = lambda v: min(1.0, max(0.0, v))  # 誤差ぶんを [0,1] に丸め込む
+        return clamp(cl), clamp(ct), clamp(cr), clamp(cb), w, h
+
+    @staticmethod
+    def _resolve_len(length, base_emu):
+        """Length を EMU（float）へ解決する．割合は base_emu 比，絶対はそのまま．None は None．"""
+        if length is None:
+            return None
+        if length.unit == "percent":
+            return length.value / 100.0 * base_emu
+        return float(length.value)
+
+    def render_image(self, slide, img, left, top, width, seg_h):
+        """Image ブロックをセグメント矩形 (left, top, width, seg_h) 内に配置する．
+
+        ソース画像のピクセル寸法を読み，crop（残す矩形）を PowerPoint のクロップ割合へ
+        換算．width/height はアスペクト維持で解決し（両指定かつ fit=fill のときのみ歪ませ），
+        align と縦中央でセグメント内へ収める．caption があれば画像下に描画する．
+        """
+        path = self._resolve_image_path(img.src)
+        W, H = _read_image_size(path)                   # ソースのピクセル寸法
+        cl, ct, cr, cb, vis_w, vis_h = self._crop_fractions(img.crop, W, H)
+        aspect = (vis_w / vis_h) if vis_h else 1.0      # クロップ後の可視領域の比
+
+        # キャプション用の高さを確保（1 行分）．
+        cap_h = int(Pt(self._body_font_size()) * 1.4) if img.caption else 0
+        avail_w = float(width)
+        avail_h = float(max(1, seg_h - cap_h))
+
+        # width/height を EMU へ解決（未指定は None）．
+        w = self._resolve_len(img.width, avail_w)
+        h = self._resolve_len(img.height, avail_h)
+        if w is None and h is None:                     # 両省略：領域に内接
+            w, h = self._fit_within(avail_w, avail_h, aspect)
+        elif h is None:                                 # 幅のみ：高さは比で
+            h = w / aspect
+        elif w is None:                                 # 高さのみ：幅は比で
+            w = h * aspect
+        elif img.fit != "fill":                         # 両指定・contain：比維持で内接
+            w, h = self._fit_within(w, h, aspect)
+        # 極端な指定（0% 等）でも非正にならないよう下限を張る（ゼロ除算・負サイズ回避）．
+        w, h = max(w, 1.0), max(h, 1.0)
+        # セグメントを超えないよう最終クランプ（比維持）．
+        w, h = self._fit_within(min(w, avail_w), min(h, avail_h), w / h)
+
+        # 水平寄せ（align）と縦中央でセグメント内へ配置．
+        if img.align == "left":
+            x = left
+        elif img.align == "right":
+            x = left + (avail_w - w)
+        else:
+            x = left + (avail_w - w) / 2.0
+        y = top + (avail_h - h) / 2.0
+
+        pic = slide.shapes.add_picture(path, int(x), int(y), int(w), int(h))
+        if img.crop is not None:
+            pic.crop_left, pic.crop_top = cl, ct
+            pic.crop_right, pic.crop_bottom = cr, cb
+
+        if img.caption:
+            # 画像直下に置く．h ≤ avail_h なので通常 y+h ≤ top+avail_h だが，丸め等で
+            # セグメント外へ出ないよう cap 上端を [.., top+seg_h-cap_h] にクランプする．
+            cap_top = min(int(y + h), int(top + seg_h - cap_h))
+            self._draw_caption(slide, img.caption, left, cap_top, width, cap_h)
+        return pic
+
+    @staticmethod
+    def _fit_within(box_w, box_h, aspect):
+        """アスペクト比 aspect の矩形を (box_w, box_h) に内接させた (w, h) を返す．
+
+        box_w / box_h / aspect が非正のときは安全側（最低 1 EMU）に倒し，ゼロ除算や
+        負サイズを避ける（極端に狭いセグメントでも描画を止めない）．
+        """
+        if aspect <= 0 or box_w <= 0 or box_h <= 0:
+            return max(box_w, 1.0), max(box_h, 1.0)
+        if box_w / aspect <= box_h:     # 幅が制約：幅いっぱい
+            return box_w, box_w / aspect
+        return box_h * aspect, box_h    # 高さが制約：高さいっぱい
+
+    def _draw_caption(self, slide, text, left, top, width, height):
+        """図下キャプションを中央寄せの小さめ本文サイズで描く．"""
+        tb = slide.shapes.add_textbox(left, top, width, max(height, Pt(12)))
+        tf = tb.text_frame
+        tf.word_wrap = True
+        # キャプションは短文前提（1 行分の高さを確保）．枠を内容で伸ばさない
+        # （長文で下方向へはみ出さないよう auto_size を無効化）．必要なら折り返す．
+        tf.auto_size = MSO_AUTO_SIZE.NONE
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        p.text = text
+        # 本文標準より 1 段小さめ（テーマ既定サイズ体系の中で縮小）．
+        levels = self._body_font_levels()
+        size = levels[1] if len(levels) > 1 else levels[0]
+        for r in p.runs:
+            r.font.size = Pt(size)
+
     # ------------------------------------------------------- content slide
     def render_slide(self, slide: Slide, slide_number=True, default_autofit=True):
         """コンテンツスライドを 1 枚追加して返す．
@@ -673,7 +845,7 @@ class Renderer:
         if slide.columns:
             self._render_columns(s, slide.columns, default_num_color, scale,
                                  default_autofit, default_size_delta)
-        elif any(isinstance(b, (Table, Flow)) for b in blocks):
+        elif any(isinstance(b, (Table, Flow, Image)) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
                                  self._col_ratios(directives), default_size_delta)
         else:
@@ -833,13 +1005,17 @@ class Renderer:
         return Line(text=t, kind="bullet")
 
     def _obj_weight(self, obj):
-        """オブジェクト（Table / Flow）の縦方向の重み（高さ配分用）．"""
+        """オブジェクト（Table / Flow / Image）の縦方向の重み（高さ配分用）．"""
         if isinstance(obj, Flow):
             return max(4, len(obj.nodes) + 2)
+        if isinstance(obj, Image):
+            # 画像は帯を広めに確保（キャプションぶんを少し足す）．細かな大きさは
+            # width/height でセグメント内に調整する．
+            return 8 + (1 if obj.caption else 0)
         return max(2, len(obj.rows) + (1 if obj.header else 0))
 
     def _stack_objects(self, slide, objects, left, top, width, height, col_ratios):
-        """Table / Flow を矩形領域内に重みづけで縦に積んで座標配置する．"""
+        """Table / Flow / Image を矩形領域内に重みづけで縦に積んで座標配置する．"""
         weights = [self._obj_weight(o) for o in objects]
         total = float(sum(weights)) or 1.0
         gap = Pt(6)
@@ -849,6 +1025,8 @@ class Renderer:
             seg_h = int(avail * w / total)
             if isinstance(obj, Flow):
                 self.render_flow(slide, obj, left, y, width, seg_h)
+            elif isinstance(obj, Image):
+                self.render_image(slide, obj, left, y, width, seg_h)
             else:
                 self.render_table(slide, obj, left, y, width, seg_h, col_ratios)
             y += seg_h + gap
@@ -870,7 +1048,7 @@ class Renderer:
         prose_before, objects, prose_after = [], [], []
         seen_obj = False
         for b in blocks:
-            if isinstance(b, (Table, Flow)):
+            if isinstance(b, (Table, Flow, Image)):
                 if isinstance(b, Flow) and b.note_top:
                     bucket = prose_after if seen_obj else prose_before
                     bucket.append(self._note_to_line(b.note_top))
@@ -960,13 +1138,17 @@ class Renderer:
         return path
 
 
-def build(deck, base_pptx_path, out_path):
+def build(deck, base_pptx_path, out_path, base_dir=None):
     """Deck を base pptx 上に描画して out_path に保存する（CLI 用エントリ）．
+
+    Args:
+        base_dir: 画像などの相対パスを解決する基準ディレクトリ（既定は Markdown の
+            置き場）．None なら実行時のカレントを基準にする．
 
     Returns:
         out_path（保存先パス）．
     """
-    r = Renderer(base_pptx_path)
+    r = Renderer(base_pptx_path, base_dir=base_dir)
     r.render(deck)
     r.save(out_path)
     return out_path
