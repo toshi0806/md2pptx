@@ -163,11 +163,14 @@ def _build_title_slide(meta: dict) -> TitleSlide | None:
 def _split_size_opt(value) -> tuple[int | None, str | None]:
     """front matter 値（None 可）の先頭相対サイズトークンを剥がして (段数, 文字列) を返す．
 
-    None はそのまま (None, None)．文字列以外（数値等）は文字列化してトークン判定する．
+    None はそのまま (None, None)．トークン判定は文字列のみ対象とし，数値等
+    （YAML が int/float で読んだ値）は素直に文字列化して段数なしで返す．
     """
     if value is None:
         return None, None
-    return _split_size(str(value))
+    if not isinstance(value, str):
+        return None, str(value)
+    return _split_size(value)
 
 
 # ---------------------------------------------------------------- 本文

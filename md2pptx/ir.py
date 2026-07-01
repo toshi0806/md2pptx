@@ -170,6 +170,8 @@ class TitleSlide:
         # 不変条件：affiliation_deltas は affiliation と同じ長さ（各行 1 対 1）．
         # 直接構築（テスト等）で長さがずれても None 詰め／切り詰めで揃え，
         # render 側が添字で安全に対応付けられるようにする．
+        # 揃えるのは構築時のみ．IR は parser が一度構築し render が消費する契約で，
+        # 構築後に affiliation を破壊的変更する運用は想定しない（同期はしない）．
         n = len(self.affiliation)
         d = self.affiliation_deltas
         if len(d) < n:
