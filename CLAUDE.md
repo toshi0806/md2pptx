@@ -18,12 +18,16 @@ input.md ──[parser]──▶ IR(Deck) ───────┘
 
 | ファイル | 役割 |
 |---|---|
-| `src/md2pptx` | CLI エントリポイント（拡張子なし・実行可能）。引数処理・全体結線 |
-| `src/thmx2pptx.py` | thmx → base pptx 変換（ステージ0）。`theme/`→`ppt/` 等の OPC 操作 |
-| `src/parser.py` | Markdown → 中間表現（IR）。python-pptx 非依存 |
-| `src/ir.py` | IR データクラス（`Deck`/`Slide`/`Line`/`Table`/`Flow`/`TitleSlide` 等）。外部依存なし |
-| `src/render.py` | IR → pptx 描画（`Renderer` クラス）。描画ヘルパーは手書きの参照スクリプトから移植 |
-| `src/flow.py` | フロー図 DSL のパーサ＋座標レイアウタ。python-pptx 非依存（EMU 計算のみ） |
+| `pyproject.toml` | パッケージ定義（依存・`md2pptx` コンソールスクリプト = `md2pptx.cli:main`） |
+| `md2pptx/cli.py` | CLI エントリポイント。引数処理・全体結線（`main()`／`python3 -m md2pptx`） |
+| `md2pptx/thmx2pptx.py` | thmx → base pptx 変換（ステージ0）。`theme/`→`ppt/` 等の OPC 操作 |
+| `md2pptx/parser.py` | Markdown → 中間表現（IR）。python-pptx 非依存 |
+| `md2pptx/ir.py` | IR データクラス（`Deck`/`Slide`/`Line`/`Table`/`Flow`/`TitleSlide` 等）。外部依存なし |
+| `md2pptx/render.py` | IR → pptx 描画（`Renderer` クラス）。描画ヘルパーは手書きの参照スクリプトから移植 |
+| `md2pptx/flow.py` | フロー図 DSL のパーサ＋座標レイアウタ。python-pptx 非依存（EMU 計算のみ） |
+
+パッケージ内モジュールは相対 import（`from .ir import …`）で結線する。`md2pptx/` は
+ルート直下の flat レイアウト（`pip install .` / `pipx install .` で `md2pptx` コマンドを生成）。
 
 `parser.py` と `flow.py` は **python-pptx に依存しない純モジュール**（描画は render の責務）。
 `ir.py` がパーサとレンダラの契約。新しい記法を足すときは「parser が IR を作る／render が IR を描く」
@@ -35,14 +39,19 @@ input.md ──[parser]──▶ IR(Deck) ───────┘
 ## コマンド
 
 ```bash
-# 生成（テーマは .thmx / .pptx 両対応）
-./src/md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
+# 開発中の実行（インストール不要・リポジトリルートで）
+python3 -m md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
 
-# デモ一式
-./src/md2pptx example.md --theme OfficeTheme.pptx -o example.pptx
+# インストール後は md2pptx コマンドで実行
+md2pptx example.md --theme OfficeTheme.pptx -o example.pptx
+
+# インストール（依存も自動導入）
+pipx install .        # 隔離環境（推奨）
+pip install -e .      # editable 開発用
 ```
 
-依存: `pip install python-pptx pyyaml`（環境は python-pptx 1.0.2 / PyYAML 6）。
+依存: `python-pptx>=1.0` / `PyYAML>=6`（`pyproject.toml` で宣言。インストール時に自動導入）。
+環境は python-pptx 1.0.2 / PyYAML 6 で検証。
 
 ## 変更の検証（重要）
 

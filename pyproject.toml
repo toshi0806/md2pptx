@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "md2pptx"
+version = "0.1.0"
+description = "Markdown と PowerPoint テーマ（thmx/pptx）から発表スライド（pptx）を生成するツール"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Toshihiko SHIMOKAWA" }]
+keywords = ["markdown", "powerpoint", "pptx", "slides", "presentation"]
+dependencies = [
+    "python-pptx>=1.0",
+    "PyYAML>=6",
+]
+
+[project.urls]
+Homepage = "https://github.com/toshi0806/md2pptx"
+Repository = "https://github.com/toshi0806/md2pptx"
+
+[project.scripts]
+md2pptx = "md2pptx.cli:main"
+
+[tool.setuptools]
+packages = ["md2pptx"]
