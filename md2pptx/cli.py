@@ -73,11 +73,18 @@ def _parse_args(argv):
 
 
 def main(argv=None):
+    """CLI のエントリポイント．成功時は終了コード 0 を返し，失敗は SystemExit で終える．
+
+    想定内の失敗（thmx 変換失敗・入力ファイルの不在／権限）は
+    ``md2pptx: <理由>`` に整形して SystemExit する．想定外の例外はあえて
+    握り潰さず（トレースバックのまま）伝播させ，バグを隠さない．
+    """
     try:
         return _run(args=_parse_args(argv))
-    except (ThmxError, OSError) as e:
-        # thmx 変換の失敗やファイル入出力の失敗（不在・権限・破損）は，
-        # トレースバックではなく整形したメッセージで失敗させる（§7）．
+    except (ThmxError, FileNotFoundError, PermissionError) as e:
+        # thmx 変換の失敗や，入力ファイルの不在・権限エラーはトレースバックでは
+        # なく整形メッセージで失敗させる（§7）．OSError 全般には広げない
+        # ——想定外の入出力エラー（例：ドライブ切断）はトレースバックを残す．
         raise SystemExit(f"md2pptx: {e}")
 
 
