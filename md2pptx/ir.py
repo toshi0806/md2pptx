@@ -151,12 +151,33 @@ class TitleSlide:
         subtitle: 副題段落．無ければ None．
         author: 発表者名．無ければ None．
         affiliation: 所属・日付などの行リスト（著者欄に複数行で並べる）．
+        subtitle_delta: 副題の相対フォントサイズ段数（先頭 "{-1}" 由来．None＝未指定）．
+        author_delta: 著者名の相対フォントサイズ段数（同上）．
+        affiliation_deltas: affiliation 各行と 1 対 1 対応する相対サイズ段数リスト
+            （各要素 int｜None．None＝未指定）．本文の Line.size_delta と同じ意味で，
+            render がテーマ既定サイズを基点に実サイズへ換算する．
     """
 
     title: str | None = None
     subtitle: str | None = None
     author: str | None = None
     affiliation: list[str] = field(default_factory=list)
+    subtitle_delta: int | None = None
+    author_delta: int | None = None
+    affiliation_deltas: list[int | None] = field(default_factory=list)
+
+    def __post_init__(self):
+        # 不変条件：affiliation_deltas は affiliation と同じ長さ（各行 1 対 1）．
+        # 直接構築（テスト等）で長さがずれても None 詰め／切り詰めで揃え，
+        # render 側が添字で安全に対応付けられるようにする．
+        # 揃えるのは構築時のみ．IR は parser が一度構築し render が消費する契約で，
+        # 構築後に affiliation を破壊的変更する運用は想定しない（同期はしない）．
+        n = len(self.affiliation)
+        d = self.affiliation_deltas
+        if len(d) < n:
+            self.affiliation_deltas = list(d) + [None] * (n - len(d))
+        elif len(d) > n:
+            self.affiliation_deltas = list(d[:n])
 
 
 @dataclass
