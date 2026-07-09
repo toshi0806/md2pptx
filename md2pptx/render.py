@@ -897,12 +897,25 @@ class Renderer:
         """多カラム（「2つのコンテンツ」）：各カラムを idx 1, 2 … へ流す．
 
         columns[i] を プレースホルダ idx=i+1 へ描画する（idx 0 はタイトル）．
-        当面は Line（箇条書き・採番・no_bullet）のみ対応し，表・図はスキップする．
+        Line（箇条書き・採番・no_bullet）はプレースホルダへ流し込み，Table/Image/
+        Flow を含むカラムはそのプレースホルダ矩形へ座標スタック配置する（地の文と
+        混在する場合は _render_stacked_into が空行帯で棲み分ける）．
         """
         for ci, col_blocks in enumerate(columns):
             ph = self._find_placeholder(slide, ci + 1)
             if ph is None:
                 continue  # レイアウトに該当プレースホルダが無ければスキップ
+            if any(isinstance(b, (Table, Flow, Image)) for b in col_blocks):
+                # カラム矩形へ表・図をスタック配置．継承ジオメトリはレイアウトで補い，
+                # それでも解決できなければ本文領域へフォールバックする．
+                left, top, width, height = self._effective_geom(ph, slide)
+                if None in (left, top, width, height):
+                    left, top, width, height = self._content_rect(slide)
+                # カラム内テーブルの内部列幅比は指定手段が無いため等幅（col_ratios=None）．
+                self._render_stacked_into(slide, col_blocks, ph, left, top,
+                                          width, height, default_num_color, scale,
+                                          default_autofit, None, default_size_delta)
+                continue
             lines = [b for b in col_blocks if isinstance(b, Line)]
             if lines:
                 tf = ph.text_frame
@@ -1042,7 +1055,20 @@ class Renderer:
         """
         left, top, width, height = self._content_rect(slide)
         body = self._body_placeholder(slide)
+        self._render_stacked_into(slide, blocks, body, left, top, width, height,
+                                  default_num_color, scale, default_autofit,
+                                  col_ratios, default_size_delta)
 
+    def _render_stacked_into(self, slide, blocks, body, left, top, width, height,
+                             default_num_color, scale, default_autofit, col_ratios,
+                             default_size_delta=None):
+        """``blocks`` を矩形 (left, top, width, height) 内へスタック描画する．
+
+        地の文（Line）は ``body`` プレースホルダへ流し込み，表・図は矩形内に
+        座標配置する．描画先（プレースホルダ＋矩形）を引数で受けるため，本文領域
+        （単一カラム）にも多カラムの各カラム矩形にも使える．``body`` が None の
+        場合は地の文を捨て，矩形全体にオブジェクトを積む．
+        """
         # 地の文（前後）とオブジェクト（表・図）に分ける．
         # Flow の note(top)/note(bottom) も地の文としてプレースホルダへ回す．
         prose_before, objects, prose_after = [], [], []
