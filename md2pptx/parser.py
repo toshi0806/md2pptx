@@ -281,6 +281,7 @@ def _parse_body(body: str) -> list[Slide]:
         # --- 表（ヘッダ行＋直後の区切り行）→ Table（§5.4）---------
         if "|" in stripped and i + 1 < n and _RE_TABLE_SEP.match(lines[i + 1].strip()):
             header = _split_row(stripped)
+            aligns = _parse_aligns(lines[i + 1].strip())
             j = i + 2
             rows: list[list[str]] = []
             while j < n:
@@ -291,7 +292,7 @@ def _parse_body(body: str) -> list[Slide]:
                     break  # 別ブロック開始
                 rows.append(_split_row(rs))
                 j += 1
-            add_block(Table(header=header, rows=rows))
+            add_block(Table(header=header, rows=rows, aligns=aligns))
             i = j
             continue
 
@@ -320,6 +321,31 @@ def _split_row(s: str) -> list[str]:
     if s.endswith("|"):
         s = s[:-1]
     return [c.strip() for c in s.split("|")]
+
+
+def _parse_aligns(sep_row: str) -> list[str]:
+    """区切り行のコロンから各列の水平寄せを解析する．
+
+    各セルの先頭・末尾のコロンで判定する：
+        ":--:" → "center" / "--:" → "right" / ":--" または "---" → "left"．
+    コロンが 1 つも無ければ「指定なし」として空リストを返し，既存テーブルの
+    左寄せ挙動を回帰させない（render は空/範囲外を左寄せとして触らない）．
+    """
+    aligns: list[str] = []
+    has_colon = False
+    for cell in _split_row(sep_row):
+        c = cell.strip()
+        left = c.startswith(":")
+        right = c.endswith(":")
+        if left or right:
+            has_colon = True
+        if left and right:
+            aligns.append("center")
+        elif right:
+            aligns.append("right")
+        else:
+            aligns.append("left")
+    return aligns if has_colon else []
 
 
 # ---------------------------------------------------------------- 画像（§5.9）

@@ -56,10 +56,15 @@ class Table:
     Attributes:
         header: ヘッダ行のセル文字列リスト（アクセント色で着色する想定）．
         rows: 本体行のリスト．各行はヘッダと同じ列数のセル文字列リスト．
+        aligns: 各列の水平寄せ（区切り行のコロン由来）．要素は
+            "left" / "center" / "right"．空リストは「指定なし＝すべて左」を
+            意味する既定．列数に満たない場合，未指定の列は左寄せとして扱う
+            （render 側で添字が範囲外なら "left"）．
     """
 
     header: list[str] = field(default_factory=list)
     rows: list[list[str]] = field(default_factory=list)
+    aligns: list[str] = field(default_factory=list)
 
 
 @dataclass
