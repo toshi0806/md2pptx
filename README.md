@@ -68,6 +68,7 @@ python3 -m md2pptx input.md
 | `--theme PATH` | テーマファイル（`.thmx` / `.pptx` 両対応）。フロントマター `theme:` を上書き |
 | `-o, --output PATH` | 出力 pptx。フロントマター `output:` を上書き |
 | `--keep-base PATH` | `.thmx` から作る中間 base pptx を破棄せず保存（デバッグ用） |
+| `--version` | バージョンを表示して終了（入力ファイルは不要） |
 
 `.thmx` を渡すと内部で base pptx に変換してから描画します（テーマ更新が即反映）。
 `.pptx` を渡すとそのまま土台に使います（変換をスキップ）。
