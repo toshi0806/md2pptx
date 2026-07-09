@@ -906,16 +906,27 @@ class Renderer:
             if ph is None:
                 continue  # レイアウトに該当プレースホルダが無ければスキップ
             if any(isinstance(b, (Table, Flow, Image)) for b in col_blocks):
-                # カラム矩形へ表・図をスタック配置．継承ジオメトリはレイアウトで補い，
-                # それでも解決できなければ本文領域へフォールバックする．
+                # カラム矩形へ表・図をスタック配置．継承ジオメトリはレイアウトで補う．
+                # 通常 layout 3 は idx1/idx2 のジオメトリを持つため，解決失敗はテーマ
+                # 異常時のみ．その場合は本文領域へフォールバックする（表が消えるより，
+                # 見えて重なる方が原因に気づきやすい）が，複数カラムが重なりうるので警告
+                # を出す．
                 left, top, width, height = self._effective_geom(ph, slide)
                 if None in (left, top, width, height):
+                    sys.stderr.write(
+                        f"md2pptx: warning: could not resolve geometry for "
+                        f"column {ci}; falling back to the body area "
+                        f"(columns may overlap)\n"
+                    )
                     left, top, width, height = self._content_rect(slide)
                 # カラム内テーブルの内部列幅比は指定手段が無いため等幅（col_ratios=None）．
                 self._render_stacked_into(slide, col_blocks, ph, left, top,
                                           width, height, default_num_color, scale,
                                           default_autofit, None, default_size_delta)
                 continue
+            # Line のみのカラムはプレースホルダへ直接流し込む．_render_stacked_into は
+            # objects（表・図）が空だと何も描画せず return する設計なので，ここを通すと
+            # 箇条書きが消える．そのため表・図を含むカラムとは意図的に経路を分ける．
             lines = [b for b in col_blocks if isinstance(b, Line)]
             if lines:
                 tf = ph.text_frame
