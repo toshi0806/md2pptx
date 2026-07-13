@@ -747,6 +747,8 @@ class Renderer:
         ソース画像のピクセル寸法を読み，crop（残す矩形）を PowerPoint のクロップ割合へ
         換算．width/height はアスペクト維持で解決し（両指定かつ fit=fill のときのみ歪ませ），
         align と縦中央でセグメント内へ収める．caption があれば画像下に描画する．
+        overflow=True の場合は最終クランプを行わず，明示サイズのまま下方向への
+        はみ出しを許可する（上端はセグメント上端まで．タイトル・導入文に重ねない）．
         """
         path = self._resolve_image_path(img.src)
         W, H = _read_image_size(path)                   # ソースのピクセル寸法
@@ -771,8 +773,10 @@ class Renderer:
             w, h = self._fit_within(w, h, aspect)
         # 極端な指定（0% 等）でも非正にならないよう下限を張る（ゼロ除算・負サイズ回避）．
         w, h = max(w, 1.0), max(h, 1.0)
-        # セグメントを超えないよう最終クランプ（比維持）．
-        w, h = self._fit_within(min(w, avail_w), min(h, avail_h), w / h)
+        # セグメントを超えないよう最終クランプ（比維持）．overflow 指定時は
+        # クランプせず，明示サイズのまま帯からのはみ出しを許可する．
+        if not img.overflow:
+            w, h = self._fit_within(min(w, avail_w), min(h, avail_h), w / h)
 
         # 水平寄せ（align）と縦中央でセグメント内へ配置．
         if img.align == "left":
@@ -782,17 +786,31 @@ class Renderer:
         else:
             x = left + (avail_w - w) / 2.0
         y = top + (avail_h - h) / 2.0
+        if img.overflow:
+            # はみ出しは下（結論文・罫線側）のみ．上端はセグメント上端で止め，
+            # タイトル・導入文には重ねない（top も y も同じ EMU 数値）．
+            y = max(y, top)
 
         pic = slide.shapes.add_picture(path, int(x), int(y), int(w), int(h))
         if img.crop is not None:
             pic.crop_left, pic.crop_top = cl, ct
             pic.crop_right, pic.crop_bottom = cr, cb
 
+        bottom = int(y + h)
         if img.caption:
             # 画像直下に置く．h ≤ avail_h なので通常 y+h ≤ top+avail_h だが，丸め等で
             # セグメント外へ出ないよう cap 上端を [.., top+seg_h-cap_h] にクランプする．
-            cap_top = min(int(y + h), int(top + seg_h - cap_h))
+            # overflow 時は画像に追従してさらに下がる（スライド外に出うる）．
+            cap_top = int(y + h)
+            if not img.overflow:
+                cap_top = min(cap_top, int(top + seg_h - cap_h))
             self._draw_caption(slide, img.caption, left, cap_top, width, cap_h)
+            bottom = cap_top + cap_h
+        if img.overflow and bottom > self.SH:
+            sys.stderr.write(
+                f"md2pptx: warning: overflowing image/caption ({img.src}) "
+                "extends beyond the slide bottom edge\n"
+            )
         return pic
 
     @staticmethod
