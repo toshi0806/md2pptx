@@ -447,14 +447,17 @@ caption: 実験結果の比較
 | `align` | 水平寄せ | `left` / `center`（既定）/ `right` |
 | `fit` | width/height 両指定時 | `contain`（既定・比維持で内接）/ `fill`（歪ませ充填） |
 | `caption` | 図下キャプション | 省略可 |
+| `overflow` | 帯からのはみ出し許可 | `true` / `false`（既定）。true でクランプ省略・下方向のみはみ出し |
 
 - **サイズ**：`width` のみ→高さは比で自動、`height` のみ→幅を自動、両省略→セグメントに内接、
   両指定→既定は内接（比維持）で `fit=fill` のみ歪ませる。最終的にセグメントを超えないよう
   比維持でクランプ（はみ出し防止。表と同じ「帯に収める」方針）。単位無しの数値は px 扱い。
+  `overflow: true` はこの最終クランプを外し、明示サイズのまま描画する（`y = max(y, top)` で
+  上端はセグメント上端に留め、はみ出しは下方向＝結論文・罫線側のみ。caption も画像下端に追従）。
 - **crop 換算**：ソース画素寸法 `W×H` を `pptx.parts.image.Image.from_file` で読み（Pillow 不要）、
   keep-rect を PowerPoint のクロップ割合へ換算：`cl=x/W, ct=y/H, cr=(W-(x+w))/W, cb=(H-(y+h))/H`
   （`%` 指定は `W=H=100` とみなす）。範囲外は明確なエラーで停止。
-- **IR**：`Image(src, width, height, crop, align, fit, caption)`。`width`/`height` は `Length`
+- **IR**：`Image(src, width, height, crop, align, fit, caption, overflow)`。`width`/`height` は `Length`
   （`percent` / `emu`）、`crop` は `Crop`（`px` / `percent` の keep-rect）。parser は絶対単位を
   EMU 整数へ換算（`flow.py` と同じ係数）、`%`・crop は render 時に解決（crop はソース寸法が要る）。
 - **相対パス**は Markdown ファイルの置き場（`base_dir`、cli が結線）を基準に解決。未検出は fail fast。

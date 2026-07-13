@@ -419,6 +419,14 @@ def _apply_image_opt(img: Image, key: str, val: str) -> None:
         img.fit = v
     elif key == "caption":
         img.caption = val
+    elif key == "overflow":
+        v = val.lower()
+        if v in ("true", "yes", "on", "1"):
+            img.overflow = True
+        elif v in ("false", "no", "off", "0"):
+            img.overflow = False
+        else:
+            raise ValueError(f"invalid overflow: {val!r} (true|false)")
     else:
         raise ValueError(f"unknown image option: {key!r}")
 
