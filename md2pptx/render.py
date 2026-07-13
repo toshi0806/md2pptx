@@ -808,8 +808,8 @@ class Renderer:
             bottom = cap_top + cap_h
         if img.overflow and bottom > self.SH:
             sys.stderr.write(
-                "md2pptx: warning: overflowing image/caption extends beyond "
-                "the slide bottom edge\n"
+                f"md2pptx: warning: overflowing image/caption ({img.src}) "
+                "extends beyond the slide bottom edge\n"
             )
         return pic
 
