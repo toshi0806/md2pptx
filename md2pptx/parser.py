@@ -421,14 +421,20 @@ def _apply_image_opt(img: Image, key: str, val: str) -> None:
         img.caption = val
     elif key == "overflow":
         v = val.lower()
-        if v in ("true", "yes", "on", "1"):
-            img.overflow = True
-        elif v in ("false", "no", "off", "0"):
-            img.overflow = False
-        else:
+        if v not in ("true", "false"):
             raise ValueError(f"invalid overflow: {val!r} (true|false)")
+        img.overflow = (v == "true")
     else:
         raise ValueError(f"unknown image option: {key!r}")
+
+
+def _validate_image(img: Image) -> None:
+    """Image のキー間の組み合わせ制約を検証する（単一キーは _apply_image_opt）．"""
+    if img.overflow and img.width is None and img.height is None:
+        raise ValueError(
+            "overflow: true requires an explicit width and/or height "
+            "(without a size the image is inscribed in the band and never "
+            "overflows)")
 
 
 def _parse_image_shorthand(alt: str, src: str, opts: str | None) -> Image:
@@ -451,6 +457,7 @@ def _parse_image_shorthand(alt: str, src: str, opts: str | None) -> Image:
         _apply_image_opt(img, k, v)
     if not img.src:
         raise ValueError("image requires a source path")
+    _validate_image(img)
     return img
 
 
@@ -467,6 +474,7 @@ def _parse_image_block(text: str) -> Image:
         _apply_image_opt(img, k, v)
     if not img.src:
         raise ValueError("image block requires 'src:'")
+    _validate_image(img)
     return img
 
 

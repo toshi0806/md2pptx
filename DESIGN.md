@@ -454,6 +454,8 @@ caption: 実験結果の比較
   比維持でクランプ（はみ出し防止。表と同じ「帯に収める」方針）。単位無しの数値は px 扱い。
   `overflow: true` はこの最終クランプを外し、明示サイズのまま描画する（`y = max(y, top)` で
   上端はセグメント上端に留め、はみ出しは下方向＝結論文・罫線側のみ。caption も画像下端に追従）。
+  `width`/`height` とも未指定の overflow は内接計算のままで意味を持たないため parser で
+  エラーにする（`_validate_image`）。描画結果がスライド下端を超えるときは stderr に警告。
 - **crop 換算**：ソース画素寸法 `W×H` を `pptx.parts.image.Image.from_file` で読み（Pillow 不要）、
   keep-rect を PowerPoint のクロップ割合へ換算：`cl=x/W, ct=y/H, cr=(W-(x+w))/W, cb=(H-(y+h))/H`
   （`%` 指定は `W=H=100` とみなす）。範囲外は明確なエラーで停止。

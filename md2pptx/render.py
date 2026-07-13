@@ -788,22 +788,29 @@ class Renderer:
         y = top + (avail_h - h) / 2.0
         if img.overflow:
             # はみ出しは下（結論文・罫線側）のみ．上端はセグメント上端で止め，
-            # タイトル・導入文には重ねない．
-            y = max(y, float(top))
+            # タイトル・導入文には重ねない（top も y も同じ EMU 数値）．
+            y = max(y, top)
 
         pic = slide.shapes.add_picture(path, int(x), int(y), int(w), int(h))
         if img.crop is not None:
             pic.crop_left, pic.crop_top = cl, ct
             pic.crop_right, pic.crop_bottom = cr, cb
 
+        bottom = int(y + h)
         if img.caption:
             # 画像直下に置く．h ≤ avail_h なので通常 y+h ≤ top+avail_h だが，丸め等で
             # セグメント外へ出ないよう cap 上端を [.., top+seg_h-cap_h] にクランプする．
-            # overflow 時は画像に追従してさらに下がる（スライド外に出うる点は利用者責務）．
+            # overflow 時は画像に追従してさらに下がる（スライド外に出うる）．
             cap_top = int(y + h)
             if not img.overflow:
                 cap_top = min(cap_top, int(top + seg_h - cap_h))
             self._draw_caption(slide, img.caption, left, cap_top, width, cap_h)
+            bottom = cap_top + cap_h
+        if img.overflow and bottom > self.SH:
+            sys.stderr.write(
+                "md2pptx: warning: overflowing image/caption extends beyond "
+                "the slide bottom edge\n"
+            )
         return pic
 
     @staticmethod
