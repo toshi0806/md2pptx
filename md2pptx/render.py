@@ -862,7 +862,7 @@ class Renderer:
         if slide.title is not None and s.shapes.title is not None:
             s.shapes.title.text = slide.title
 
-        # @ph-widths / @body-width によるプレースホルダ幅の上書きは，本文描画より
+        # @widths によるプレースホルダ幅の上書きは，本文描画より
         # 前に済ませる（以降の _effective_geom / _content_rect が上書き後を参照）．
         self._apply_placeholder_widths(s, directives,
                                        is_columns=bool(slide.columns))
@@ -953,7 +953,7 @@ class Renderer:
                         f"(columns may overlap)\n"
                     )
                     left, top, width, height = self._content_rect(slide)
-                # @col-widths はスライド共通で全カラムの表に適用する．列数が比率の
+                # @table-widths はスライド共通で全カラムの表に適用する．列数が比率の
                 # 要素数と一致しない表は _table_col_widths が等幅へフォールバックする．
                 self._render_stacked_into(slide, col_blocks, ph, left, top,
                                           width, height, default_num_color, scale,
@@ -1028,8 +1028,8 @@ class Renderer:
             self.fit_body(tf)
 
     def _col_ratios(self, directives):
-        """@col-widths ディレクティブ（"45,55" 等）を比率リストへ解釈する．"""
-        v = directives.get("col_widths")
+        """@table-widths ディレクティブ（"45,55" 等）を表の列幅比リストへ解釈する．"""
+        v = directives.get("table_widths")
         if not v:
             return None
         try:
@@ -1067,34 +1067,28 @@ class Renderer:
     _PH_MARGIN = Inches(0.1)   # プレースホルダ拡幅時にスライド端へ残す余白
 
     def _apply_placeholder_widths(self, slide, directives, is_columns):
-        """@ph-widths（多カラム）/ @body-width（単カラム）を振り分けて適用する．
+        """@widths をスライド種別（単カラム／多カラム）に応じて適用する．
 
         いずれも「標準の使用可能幅に対する百分率」で解釈する（詳細は各メソッド）．
+        値 1 個は単カラム本文幅（例: "104"），複数はカラムごとの幅（例: "62,40"）．
         拡幅は**左端固定・右余白のみ**が既定（箇条書きの行頭位置がスライド間で
         揃い，遷移時の見た目が安定する）．右余白で収まらない指定はクランプして
         警告する．値の末尾に ``!`` を付けると（例: "108!" / "62,47!"），収まら
         ない分だけ左余白へ逃がすことを許可する．その場合もスライド端は余白
         _PH_MARGIN でクランプし，それでも収まらない指定は警告のうえ比例縮小する．
 
-        スライド種別に合わない側のディレクティブは無視し，警告を出す．
+        スライド種別と値の個数が合わない指定は無視し，警告を出す．
         """
-        if is_columns:
-            if directives.get("body_width") is not None:
-                sys.stderr.write(
-                    "md2pptx: warning: @body-width is ignored on multi-column "
-                    "slides (use @ph-widths)\n")
-            if directives.get("ph_widths") is not None:
-                self._apply_ph_widths(slide, directives["ph_widths"])
+        val = directives.get("widths")
+        if val is None:
             return
-        if directives.get("ph_widths") is not None:
-            sys.stderr.write(
-                "md2pptx: warning: @ph-widths is ignored on single-column "
-                "slides (use @body-width)\n")
-        if directives.get("body_width") is not None:
-            self._apply_body_width(slide, directives["body_width"])
+        if is_columns:
+            self._apply_ph_widths(slide, val)
+        else:
+            self._apply_body_width(slide, val)
 
     def _apply_ph_widths(self, slide, val):
-        """@ph-widths: "55,45" — 多カラムのプレースホルダ幅を再指定する．
+        """@widths: "55,45" — 多カラムのプレースホルダ幅を再指定する．
 
         カラム群の合計スパンからカラム間ギャップを除いた幅を 100% とし，
         各カラム幅を百分率で再指定する（ギャップは維持）．合計が 100 を
@@ -1105,7 +1099,12 @@ class Renderer:
         pcts = self._parse_pct_list(val)
         if not pcts or any(p <= 0 for p in pcts):
             sys.stderr.write(
-                f"md2pptx: warning: ignoring invalid @ph-widths value {val!r}\n")
+                f"md2pptx: warning: ignoring invalid @widths value {val!r}\n")
+            return
+        if len(pcts) < 2:
+            sys.stderr.write(
+                "md2pptx: warning: @widths on a multi-column slide expects "
+                f"one value per column, got {val!r}; ignoring\n")
             return
         # md のカラム順＝プレースホルダ idx 順（_render_columns と同じ対応）で集める．
         phs = []
@@ -1113,13 +1112,13 @@ class Renderer:
             ph = self._find_placeholder(slide, i + 1)
             if ph is None:
                 sys.stderr.write(
-                    f"md2pptx: warning: @ph-widths has {len(pcts)} values but "
+                    f"md2pptx: warning: @widths has {len(pcts)} values but "
                     f"column placeholder {i + 1} does not exist; ignoring\n")
                 return
             geom = self._effective_geom(ph, slide)
             if None in geom:
                 sys.stderr.write(
-                    "md2pptx: warning: @ph-widths skipped "
+                    "md2pptx: warning: @widths skipped "
                     "(could not resolve column geometry)\n")
                 return
             phs.append((ph, geom))
@@ -1129,7 +1128,7 @@ class Renderer:
         if any(g < 0 for g in gaps):
             # 重なったプレースホルダ（負のギャップ）は usable を過大にするため 0 扱い．
             sys.stderr.write(
-                "md2pptx: warning: @ph-widths found overlapping column "
+                "md2pptx: warning: @widths found overlapping column "
                 "placeholders; treating the negative gap as 0\n")
             gaps = [max(g, 0) for g in gaps]
         span_l, span_r = lefts[0], rights[-1]
@@ -1141,7 +1140,7 @@ class Renderer:
                     else (self.SW - 2 * self._PH_MARGIN))
         if new_span > max_span:
             sys.stderr.write(
-                "md2pptx: warning: @ph-widths total exceeds the "
+                "md2pptx: warning: @widths total exceeds the "
                 f"{'slide' if allow_left else 'right margin'}; clamping"
                 f"{'' if allow_left else ' (append ! to use the left margin)'}\n")
             k = (max_span - sum(gaps)) / float(sum(widths))
@@ -1159,21 +1158,26 @@ class Renderer:
             x += nw + (gaps[i] if i < len(gaps) else 0)
 
     def _apply_body_width(self, slide, val):
-        """@body-width: "105" — 単カラム本文プレースホルダ幅を再指定する．
+        """@widths: "105" — 単カラム本文プレースホルダ幅を再指定する．
 
-        継承した本文プレースホルダ幅に対する百分率（% 付き可）．
-        ジオメトリを解決できない場合は何もしない（従来描画）．
+        継承した本文プレースホルダ幅に対する百分率（% 付き可）．値は 1 個のみ
+        （複数値は多カラム用）．ジオメトリを解決できない場合は何もしない（従来描画）．
         """
         val, allow_left = self._split_allow_left(val)
-        try:
-            pct = float(str(val).strip().rstrip("%％"))
-        except ValueError:
+        pcts = self._parse_pct_list(val)
+        if pcts is None:
             sys.stderr.write(
-                f"md2pptx: warning: ignoring invalid @body-width value {val!r}\n")
+                f"md2pptx: warning: ignoring invalid @widths value {val!r}\n")
             return
+        if len(pcts) != 1:
+            sys.stderr.write(
+                "md2pptx: warning: @widths on a single-column slide expects "
+                f"exactly 1 value, got {val!r}; ignoring\n")
+            return
+        pct = pcts[0]
         if pct <= 0:
             sys.stderr.write(
-                f"md2pptx: warning: ignoring non-positive @body-width value {val!r}\n")
+                f"md2pptx: warning: ignoring non-positive @widths value {val!r}\n")
             return
         ph = self._body_placeholder(slide)
         if ph is None:
@@ -1187,7 +1191,7 @@ class Renderer:
                  else (self.SW - 2 * self._PH_MARGIN))
         if new_w > max_w:
             sys.stderr.write(
-                "md2pptx: warning: @body-width exceeds the "
+                "md2pptx: warning: @widths exceeds the "
                 f"{'slide' if allow_left else 'right margin'}; clamping"
                 f"{'' if allow_left else ' (append ! to use the left margin)'}\n")
             new_w = max_w

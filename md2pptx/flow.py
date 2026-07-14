@@ -35,7 +35,7 @@ def _emu(inch):
 
 
 # 省略記号として扱うラベル．
-_ELLIPSIS = {"…", "...", "‥"}
+_ELLIPSIS = {"…", "..."}
 
 # 設定行（key: value 形式）．
 _RE_SETTING = re.compile(r"^(direction|caption|note\(top\)|note\(bottom\))\s*:\s*(.*)$")
@@ -60,7 +60,11 @@ def parse_flow(text: str) -> Flow:
         if m:
             key, val = m.group(1), m.group(2).strip()
             if key == "direction":
-                flow.direction = "tb" if val.lower().startswith("tb") else "lr"
+                d = val.lower()
+                if d not in ("lr", "tb"):
+                    raise ValueError(
+                        f"invalid flow direction: {val!r} (lr|tb)")
+                flow.direction = d
             elif key == "caption":
                 flow.caption = val or None
             elif key == "note(top)":
@@ -76,7 +80,11 @@ def parse_flow(text: str) -> Flow:
 
 
 def _tokenize(s: str):
-    """ノード／エッジのトークン列を返す（出現順）．"""
+    """ノード／エッジのトークン列を返す（出現順）．
+
+    ノード "[…]"／エッジ "->" 以外の文字列はタイポの可能性が高いので
+    黙殺せずエラーにする（設定行は parse_flow が先に取り除いている）．
+    """
     tokens = []
     i, n = 0, len(s)
     while i < n:
@@ -87,15 +95,19 @@ def _tokenize(s: str):
         if c == "[":
             j = s.find("]", i)
             if j < 0:
-                break
+                raise ValueError(
+                    f"unclosed flow node (missing ']'): {s[i:i + 30]!r}")
             inner = s[i + 1:j]
             i = j + 1
             color = None
             if i < n and s[i] == "{":
                 k = s.find("}", i)
-                if k >= 0:
-                    color = s[i + 1:k]
-                    i = k + 1
+                if k < 0:
+                    raise ValueError(
+                        f"unclosed flow node color (missing '}}'): "
+                        f"{s[i:i + 30]!r}")
+                color = s[i + 1:k]
+                i = k + 1
             tokens.append(("node", inner, color))
             continue
         if c == "-":
@@ -104,7 +116,9 @@ def _tokenize(s: str):
                 tokens.append(("edge", (m.group(1) or "").strip() or None))
                 i = m.end()
                 continue
-        i += 1  # 解釈できない文字は読み飛ばす
+        raise ValueError(
+            f"invalid flow syntax near {s[i:i + 30]!r} "
+            "(expected '[label | sublabel]' or '->' / '-label->')")
     return tokens
 
 
