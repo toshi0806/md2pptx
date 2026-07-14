@@ -60,6 +60,25 @@ _RE_SIZE = re.compile(r"^\{\s*([+-]?\d+)\s*\}\s*(.*)$")
 # body_size はスライド既定の相対フォントサイズ段数（@body-size）．
 _INT_DIRECTIVES = {"layout", "autofit", "body_size"}
 
+# 受理するディレクティブキー（正規化後の名前）．未知のキーはタイポの可能性が
+# 高いので黙殺せずエラーにする（§5.6）．@col は値を取らない専用形式（_RE_COL）．
+_KNOWN_DIRECTIVES = {
+    "layout", "autofit", "body_size", "autonum_color", "widths", "table_widths",
+}
+
+# v0.7 で改名した旧ディレクティブ名 → 新名称（エラーメッセージで案内する）．
+_RENAMED_DIRECTIVES = {
+    "ph_widths": "@widths",
+    "body_width": "@widths",
+    "col_widths": "@table-widths",
+}
+
+# フロントマターの既知キー．未知のキーはエラー（ディレクティブと同方針）．
+_KNOWN_META_KEYS = {
+    "theme", "output", "slide_number", "default_autofit",
+    "title", "subtitle", "author", "affiliation",
+}
+
 # 画像ショートハンド（標準 Markdown 画像＋末尾 "{opts}"）．§5.9．
 # 例: "![実験結果](fig.png){width=70% align=left}"．opts は省略可．
 _RE_IMAGE = re.compile(r"^!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]*)\)\s*(?:\{(?P<opts>[^}]*)\})?\s*$")
@@ -81,10 +100,10 @@ def parse(md_text: str) -> Deck:
         slides（コンテンツスライド列）を保持する．
     """
     text = _normalize_newlines(md_text)
-    meta, body = _split_front_matter(text)
+    meta, body, body_offset = _split_front_matter(text)
     deck = Deck(meta=meta)
     deck.title_slide = _build_title_slide(meta)
-    deck.slides = _parse_body(body)
+    deck.slides = _parse_body(body, body_offset)
     return deck
 
 
@@ -101,11 +120,12 @@ def _normalize_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _split_front_matter(text: str) -> tuple[dict, str]:
+def _split_front_matter(text: str) -> tuple[dict, str, int]:
     """先頭の "---" 〜 "---" を YAML として切り出す．
 
     Returns:
-        (meta, body). フロントマターが無ければ ({}, text)．
+        (meta, body, body_offset). フロントマターが無ければ ({}, text, 0)．
+        body_offset は本文開始までに消費したファイル行数（本文行番号の換算用）．
     """
     lines = text.split("\n")
     if lines and lines[0].strip() == "---":
@@ -128,8 +148,15 @@ def _split_front_matter(text: str) -> tuple[dict, str]:
                     raise ValueError(f"invalid YAML front matter: {e}")
                 if not isinstance(meta, dict):
                     meta = {}
-                return meta, body
-    return {}, text
+                unknown = [k for k in meta if k not in _KNOWN_META_KEYS]
+                if unknown:
+                    keys = ", ".join(repr(k) for k in unknown)
+                    known = ", ".join(sorted(_KNOWN_META_KEYS))
+                    raise ValueError(
+                        f"unknown front matter key(s): {keys} (known keys: {known})"
+                    )
+                return meta, body, i + 1
+    return {}, text, 0
 
 
 def _build_title_slide(meta: dict) -> TitleSlide | None:
@@ -183,8 +210,12 @@ def _split_size_opt(value) -> tuple[int | None, str | None]:
 
 # ---------------------------------------------------------------- 本文
 
-def _parse_body(body: str) -> list[Slide]:
-    """本文をスライド列へ分割し，各行を IR ブロックへ変換する．"""
+def _parse_body(body: str, body_offset: int = 0) -> list[Slide]:
+    """本文をスライド列へ分割し，各行を IR ブロックへ変換する．
+
+    body_offset はフロントマターが消費したファイル行数（エラー報告の行番号を
+    ファイル先頭基準へ換算するために使う）．
+    """
     slides: list[Slide] = []
     current: Slide | None = None
 
@@ -206,17 +237,24 @@ def _parse_body(body: str) -> list[Slide]:
     while i < n:
         raw = lines[i]
         stripped = raw.strip()
+        lineno = body_offset + i + 1  # ファイル先頭基準の 1 始まり行番号
 
         # --- スライド分割マーカー ---------------------------------
         m = _RE_HEADING.match(raw.lstrip())
         if m:
             hashes, htext = m.group(1), m.group(2)
+            # "# 見出し"（H1）はセクションスライド（レイアウト2），
+            # "## 見出し" はコンテンツスライド（レイアウト1）．
+            # H3〜H6 は未定義（将来のスライド内小見出し用に予約）．
+            if len(hashes) > 2:
+                raise ValueError(
+                    f"H{len(hashes)} heading is not supported at line {lineno}: "
+                    f"{stripped!r} (use '#' for a section slide or '##' for a "
+                    f"content slide)")
             # タイトル内の <br> を行内改行（\v）へ変換する．
             htext = _RE_TITLE_BR.sub("\v", htext)
             if current is not None:
                 slides.append(current)
-            # "# 見出し"（H1）はセクションスライド（レイアウト2），
-            # "## 見出し" 以上はコンテンツスライド（レイアウト1）．
             layout = 2 if len(hashes) == 1 else 1
             current = Slide(title=htext or None, layout=layout)
             i += 1
@@ -245,7 +283,7 @@ def _parse_body(body: str) -> list[Slide]:
         md = _RE_DIRECTIVE.match(stripped)
         if md:
             slide = ensure_slide()
-            _apply_directive(slide, md.group(1), md.group(2))
+            _apply_directive(slide, md.group(1), md.group(2), lineno)
             i += 1
             continue
 
@@ -399,7 +437,7 @@ def _apply_image_opt(img: Image, key: str, val: str) -> None:
     """画像オプション 1 件（key=val / key: val）を Image へ反映する．"""
     key = key.strip().lower()
     val = val.strip()
-    if key in ("src", "source", "path"):
+    if key == "src":
         img.src = val
     elif key == "width":
         img.width = _parse_length(val)
@@ -478,13 +516,28 @@ def _parse_image_block(text: str) -> Image:
     return img
 
 
-def _apply_directive(slide: Slide, key: str, value: str) -> None:
+def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
     """HTML コメント由来のディレクティブを Slide へ反映する．
 
     キー名はハイフンをアンダースコアへ正規化する
-    （@autonum-color → autonum_color）．未知のキーも素直に格納する．
+    （@autonum-color → autonum_color）．未知のキーはタイポの可能性が高いので
+    黙殺せずエラーにする（v0.4 で改名した旧名称は新名称を案内する）．
     """
     norm = key.replace("-", "_")
+    if norm == "col":
+        # 値なしの "<!-- @col -->" は _RE_COL が先に拾う．ここへ来るのは
+        # "@col: 2" のような値付きで，カラム区切りとしては不正．
+        raise ValueError(
+            f"@col takes no value at line {lineno} (write '<!-- @col -->')")
+    if norm in _RENAMED_DIRECTIVES:
+        raise ValueError(
+            f"@{key} was renamed in v0.7; use {_RENAMED_DIRECTIVES[norm]} "
+            f"(line {lineno})")
+    if norm not in _KNOWN_DIRECTIVES:
+        known = ", ".join("@" + k.replace("_", "-") for k in sorted(_KNOWN_DIRECTIVES))
+        raise ValueError(
+            f"unknown directive @{key} at line {lineno} "
+            f"(known directives: @col, {known})")
     val: object = value
     if norm in _INT_DIRECTIVES:
         try:
@@ -563,13 +616,10 @@ def _parse_content_line(raw: str) -> Line | None:
 
     # 矢印："→ …" → 行頭記号なし（no_bullet 相当）．"→" は本文に残す
     # （結論・補足行の視覚的な導線として表示する）．トークンは "→" の後ろに置く．
+    # 他の行種と同様，"→ 本文" へ空白を正規化する（トークン有無で挙動を変えない）．
     if s.startswith(ARROW):
         delta, rest = _split_size(s[len(ARROW):].lstrip())
-        if delta is None:
-            text = s  # トークン無し → 原文の間隔をそのまま保持（従来挙動）
-        else:
-            # トークンを剥がした分は復元できないので "→ 本文" に正規化する．
-            text = f"{ARROW} {rest}" if rest else ARROW
+        text = f"{ARROW} {rest}" if rest else ARROW
         return Line(text=text, level=level, kind="plain", size_delta=delta)
 
     # 上記以外 → 既定の箇条書き（インデントに応じたレベル）
