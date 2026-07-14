@@ -1055,15 +1055,18 @@ class Renderer:
     def _apply_placeholder_widths(self, slide, directives, is_columns):
         """@ph-widths（多カラム）/ @body-width（単カラム）を適用する．
 
-        いずれも「標準の使用可能幅に対する百分率・中央維持」で解釈する:
+        いずれも「標準の使用可能幅に対する百分率」で解釈する:
 
         - @ph-widths: "55,45" — カラム群の合計スパンからカラム間ギャップを除いた
           幅を 100% とし，各カラム幅を百分率で再指定する．合計が 100 を超えると
-          全体が中央を保ったまま広がる（55,50 → 全体が標準の 105%）．
+          全体が広がる（55,50 → 全体が標準の 105%）．
         - @body-width: "105" — 継承した本文プレースホルダ幅の百分率（% 付き可）．
 
-        スライド端は余白 _PH_MARGIN でクランプし，収まらない指定は警告のうえ
-        比例縮小する．ジオメトリを解決できない場合は何もしない（従来描画）．
+        拡幅は**左端固定・右方向**へ行う（箇条書きの行頭位置がスライド間で揃い，
+        遷移時の見た目が安定する）．右余白で収まらない分だけ左へ逃がす．
+        スライド端は余白 _PH_MARGIN でクランプし，それでも収まらない指定は
+        警告のうえ比例縮小する．ジオメトリを解決できない場合は何もしない
+        （従来描画）．
         """
         if is_columns:
             val = directives.get("ph_widths")
@@ -1106,10 +1109,12 @@ class Renderer:
                 k = (max_span - sum(gaps)) / float(sum(widths))
                 widths = [w * k for w in widths]
                 new_span = max_span
-            center = (span_l + span_r) / 2.0
-            new_left = center - new_span / 2.0
-            new_left = min(max(new_left, self._PH_MARGIN),
-                           self.SW - self._PH_MARGIN - new_span)
+            # 左端固定で右へ拡張し，右余白で収まらない分だけ左へ逃がす．
+            new_left = span_l
+            overflow = (new_left + new_span) - (self.SW - self._PH_MARGIN)
+            if overflow > 0:
+                new_left -= overflow
+            new_left = max(new_left, self._PH_MARGIN)
             x = new_left
             for i, ((ph, (_l, t, _w, h)), nw) in enumerate(zip(phs, widths)):
                 self._override_geom(ph, x, t, nw, h)
@@ -1140,9 +1145,12 @@ class Renderer:
             sys.stderr.write(
                 "md2pptx: warning: @body-width exceeds the slide; clamping\n")
             new_w = max_w
-        new_l = left + (width - new_w) / 2.0
-        new_l = min(max(new_l, self._PH_MARGIN),
-                    self.SW - self._PH_MARGIN - new_w)
+        # 左端固定で右へ拡張し，右余白で収まらない分だけ左へ逃がす．
+        new_l = left
+        overflow = (new_l + new_w) - (self.SW - self._PH_MARGIN)
+        if overflow > 0:
+            new_l -= overflow
+        new_l = max(new_l, self._PH_MARGIN)
         self._override_geom(ph, new_l, top, new_w, height)
 
     def _content_rect(self, slide):
