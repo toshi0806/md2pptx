@@ -862,6 +862,11 @@ class Renderer:
         if slide.title is not None and s.shapes.title is not None:
             s.shapes.title.text = slide.title
 
+        # @ph-widths / @body-width によるプレースホルダ幅の上書きは，本文描画より
+        # 前に済ませる（以降の _effective_geom / _content_rect が上書き後を参照）．
+        self._apply_placeholder_widths(s, directives,
+                                       is_columns=bool(slide.columns))
+
         # スライド既定の採番色（@autonum-color）．Line.num_color が優先．
         default_num_color = directives.get("autonum_color")
         # スライド既定の相対サイズ段数（@body-size）．Line.size_delta が優先．
@@ -1027,6 +1032,118 @@ class Renderer:
             return [float(x) for x in str(v).replace("，", ",").split(",")]
         except ValueError:
             return None
+
+    def _parse_pct_list(self, value):
+        """"55,45" / "55%,45%" を百分率の float リストへ解釈する（不正値は None）．"""
+        try:
+            return [float(str(x).strip().rstrip("%"))
+                    for x in str(value).replace("，", ",").split(",")]
+        except ValueError:
+            return None
+
+    def _override_geom(self, ph, left, top, width, height):
+        """スライド側へ明示ジオメトリを書き，レイアウト継承を上書きする．
+
+        4 値すべて設定するのは，一部のみ明示すると xfrm が不完全になり
+        PowerPoint 側の解釈が実装依存になるため（継承値で補って全指定する）．
+        """
+        ph.left, ph.top = int(left), int(top)
+        ph.width, ph.height = int(width), int(height)
+
+    _PH_MARGIN = Inches(0.1)   # プレースホルダ拡幅時にスライド端へ残す余白
+
+    def _apply_placeholder_widths(self, slide, directives, is_columns):
+        """@ph-widths（多カラム）/ @body-width（単カラム）を適用する．
+
+        いずれも「標準の使用可能幅に対する百分率・中央維持」で解釈する:
+
+        - @ph-widths: "55,45" — カラム群の合計スパンからカラム間ギャップを除いた
+          幅を 100% とし，各カラム幅を百分率で再指定する．合計が 100 を超えると
+          全体が中央を保ったまま広がる（55,50 → 全体が標準の 105%）．
+        - @body-width: "105" — 継承した本文プレースホルダ幅の百分率（% 付き可）．
+
+        スライド端は余白 _PH_MARGIN でクランプし，収まらない指定は警告のうえ
+        比例縮小する．ジオメトリを解決できない場合は何もしない（従来描画）．
+        """
+        if is_columns:
+            val = directives.get("ph_widths")
+            if val is None:
+                return
+            pcts = self._parse_pct_list(val)
+            if not pcts or any(p <= 0 for p in pcts):
+                sys.stderr.write(
+                    f"md2pptx: warning: ignoring invalid @ph-widths value {val!r}\n")
+                return
+            phs = []
+            for i in range(len(pcts)):
+                ph = self._find_placeholder(slide, i + 1)
+                if ph is None:
+                    break
+                geom = self._effective_geom(ph, slide)
+                if None in geom:
+                    sys.stderr.write(
+                        "md2pptx: warning: @ph-widths skipped "
+                        "(could not resolve column geometry)\n")
+                    return
+                phs.append((ph, geom))
+            if len(phs) != len(pcts):
+                sys.stderr.write(
+                    f"md2pptx: warning: @ph-widths has {len(pcts)} values but "
+                    f"only {len(phs)} column placeholders exist; ignoring\n")
+                return
+            lefts = [g[0] for _, g in phs]
+            rights = [g[0] + g[2] for _, g in phs]
+            gaps = [lefts[i + 1] - rights[i] for i in range(len(phs) - 1)]
+            span_l, span_r = lefts[0], rights[-1]
+            usable = (span_r - span_l) - sum(gaps)
+            widths = [usable * p / 100.0 for p in pcts]
+            new_span = sum(widths) + sum(gaps)
+            max_span = self.SW - 2 * self._PH_MARGIN
+            if new_span > max_span:
+                sys.stderr.write(
+                    "md2pptx: warning: @ph-widths total exceeds the slide; "
+                    "clamping\n")
+                k = (max_span - sum(gaps)) / float(sum(widths))
+                widths = [w * k for w in widths]
+                new_span = max_span
+            center = (span_l + span_r) / 2.0
+            new_left = center - new_span / 2.0
+            new_left = min(max(new_left, self._PH_MARGIN),
+                           self.SW - self._PH_MARGIN - new_span)
+            x = new_left
+            for i, ((ph, (_l, t, _w, h)), nw) in enumerate(zip(phs, widths)):
+                self._override_geom(ph, x, t, nw, h)
+                x += nw + (gaps[i] if i < len(gaps) else 0)
+            return
+        val = directives.get("body_width")
+        if val is None:
+            return
+        try:
+            pct = float(str(val).strip().rstrip("%"))
+        except ValueError:
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring invalid @body-width value {val!r}\n")
+            return
+        if pct <= 0:
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring non-positive @body-width value {val!r}\n")
+            return
+        ph = self._body_placeholder(slide)
+        if ph is None:
+            return
+        left, top, width, height = self._effective_geom(ph, slide)
+        if None in (left, top, width, height):
+            return
+        new_w = width * pct / 100.0
+        max_w = self.SW - 2 * self._PH_MARGIN
+        if new_w > max_w:
+            sys.stderr.write(
+                "md2pptx: warning: @body-width exceeds the slide; clamping\n")
+            new_w = max_w
+        new_l = left + (width - new_w) / 2.0
+        new_l = min(max(new_l, self._PH_MARGIN),
+                    self.SW - self._PH_MARGIN - new_w)
+        self._override_geom(ph, new_l, top, new_w, height)
 
     def _content_rect(self, slide):
         """本文領域の矩形 (left, top, width, height) を返す（座標配置の基準）．"""
