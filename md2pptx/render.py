@@ -876,7 +876,8 @@ class Renderer:
 
         if slide.columns:
             self._render_columns(s, slide.columns, default_num_color, scale,
-                                 default_autofit, default_size_delta)
+                                 default_autofit, default_size_delta,
+                                 self._col_ratios(directives))
         elif any(isinstance(b, (Table, Flow, Image)) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
                                  self._col_ratios(directives), default_size_delta)
@@ -925,7 +926,8 @@ class Renderer:
         return iv if iv != 0 else None
 
     def _render_columns(self, slide, columns, default_num_color, scale,
-                        default_autofit, default_size_delta=None):
+                        default_autofit, default_size_delta=None,
+                        col_ratios=None):
         """多カラム（「2つのコンテンツ」）：各カラムを idx 1, 2 … へ流す．
 
         columns[i] を プレースホルダ idx=i+1 へ描画する（idx 0 はタイトル）．
@@ -951,10 +953,12 @@ class Renderer:
                         f"(columns may overlap)\n"
                     )
                     left, top, width, height = self._content_rect(slide)
-                # カラム内テーブルの内部列幅比は指定手段が無いため等幅（col_ratios=None）．
+                # @col-widths はスライド共通で全カラムの表に適用する．列数が比率の
+                # 要素数と一致しない表は _table_col_widths が等幅へフォールバックする．
                 self._render_stacked_into(slide, col_blocks, ph, left, top,
                                           width, height, default_num_color, scale,
-                                          default_autofit, None, default_size_delta)
+                                          default_autofit, col_ratios,
+                                          default_size_delta)
                 continue
             # Line のみのカラムはプレースホルダへ直接流し込む．_render_stacked_into は
             # objects（表・図）が空だと何も描画せず return する設計なので，ここを通すと
