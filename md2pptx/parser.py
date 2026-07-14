@@ -64,6 +64,7 @@ _INT_DIRECTIVES = {"layout", "autofit", "body_size"}
 # 高いので黙殺せずエラーにする（§5.6）．@col は値を取らない専用形式（_RE_COL）．
 _KNOWN_DIRECTIVES = {
     "layout", "autofit", "body_size", "autonum_color", "widths", "table_widths",
+    "overflow",
 }
 
 # v0.7 で改名した旧ディレクティブ名 → 新名称（エラーメッセージで案内する）．
@@ -544,6 +545,14 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
             val = int(value)
         except ValueError:
             val = value  # 数値でなければ文字列のまま保持（堅牢性）．
+    elif norm == "overflow":
+        # スライド単位の overflow（表・画像共通）．画像ブロックの overflow: と同じく
+        # true/false のみ受理し，それ以外は行番号付きでエラーにする．
+        v = value.strip().lower()
+        if v not in ("true", "false"):
+            raise ValueError(
+                f"invalid @overflow value {value!r} at line {lineno} (true|false)")
+        val = (v == "true")
 
     slide.directives[norm] = val
 
