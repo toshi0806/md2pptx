@@ -862,6 +862,11 @@ class Renderer:
         if slide.title is not None and s.shapes.title is not None:
             s.shapes.title.text = slide.title
 
+        # @ph-widths / @body-width によるプレースホルダ幅の上書きは，本文描画より
+        # 前に済ませる（以降の _effective_geom / _content_rect が上書き後を参照）．
+        self._apply_placeholder_widths(s, directives,
+                                       is_columns=bool(slide.columns))
+
         # スライド既定の採番色（@autonum-color）．Line.num_color が優先．
         default_num_color = directives.get("autonum_color")
         # スライド既定の相対サイズ段数（@body-size）．Line.size_delta が優先．
@@ -1027,6 +1032,168 @@ class Renderer:
             return [float(x) for x in str(v).replace("，", ",").split(",")]
         except ValueError:
             return None
+
+    def _split_allow_left(self, value):
+        """値末尾の ``!``（左余白の使用許可）を分離して (本体文字列, フラグ) を返す．"""
+        v = str(value).strip()
+        if v.endswith(("!", "！")):
+            return v[:-1].strip(), True
+        return v, False
+
+    def _parse_pct_list(self, value):
+        """百分率リスト（例: "55,45"，"55%,45%"）を float の list へ解釈する．
+
+        全角の区切り（，／％）も受理する．不正値は None を返す．
+        """
+        try:
+            return [float(str(x).strip().rstrip("%％"))
+                    for x in str(value).replace("，", ",").split(",")]
+        except ValueError:
+            return None
+
+    def _override_geom(self, ph, left, top, width, height):
+        """スライド側へ明示ジオメトリを書き，レイアウト継承を上書きする．
+
+        4 値すべて設定するのは，一部のみ明示すると xfrm が不完全になり
+        PowerPoint 側の解釈が実装依存になるため（継承値で補って全指定する）．
+        """
+        ph.left, ph.top = int(left), int(top)
+        ph.width, ph.height = int(width), int(height)
+
+    _PH_MARGIN = Inches(0.1)   # プレースホルダ拡幅時にスライド端へ残す余白
+
+    def _apply_placeholder_widths(self, slide, directives, is_columns):
+        """@ph-widths（多カラム）/ @body-width（単カラム）を振り分けて適用する．
+
+        いずれも「標準の使用可能幅に対する百分率」で解釈する（詳細は各メソッド）．
+        拡幅は**左端固定・右余白のみ**が既定（箇条書きの行頭位置がスライド間で
+        揃い，遷移時の見た目が安定する）．右余白で収まらない指定はクランプして
+        警告する．値の末尾に ``!`` を付けると（例: "108!" / "62,47!"），収まら
+        ない分だけ左余白へ逃がすことを許可する．その場合もスライド端は余白
+        _PH_MARGIN でクランプし，それでも収まらない指定は警告のうえ比例縮小する．
+
+        スライド種別に合わない側のディレクティブは無視し，警告を出す．
+        """
+        if is_columns:
+            if directives.get("body_width") is not None:
+                sys.stderr.write(
+                    "md2pptx: warning: @body-width is ignored on multi-column "
+                    "slides (use @ph-widths)\n")
+            if directives.get("ph_widths") is not None:
+                self._apply_ph_widths(slide, directives["ph_widths"])
+            return
+        if directives.get("ph_widths") is not None:
+            sys.stderr.write(
+                "md2pptx: warning: @ph-widths is ignored on single-column "
+                "slides (use @body-width)\n")
+        if directives.get("body_width") is not None:
+            self._apply_body_width(slide, directives["body_width"])
+
+    def _apply_ph_widths(self, slide, val):
+        """@ph-widths: "55,45" — 多カラムのプレースホルダ幅を再指定する．
+
+        カラム群の合計スパンからカラム間ギャップを除いた幅を 100% とし，
+        各カラム幅を百分率で再指定する（ギャップは維持）．合計が 100 を
+        超えると全体が右方向へ広がる（55,50 → 全体が標準の 105%）．
+        ジオメトリを解決できない場合は警告して何もしない（従来描画）．
+        """
+        val, allow_left = self._split_allow_left(val)
+        pcts = self._parse_pct_list(val)
+        if not pcts or any(p <= 0 for p in pcts):
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring invalid @ph-widths value {val!r}\n")
+            return
+        # md のカラム順＝プレースホルダ idx 順（_render_columns と同じ対応）で集める．
+        phs = []
+        for i, _pct in enumerate(pcts):
+            ph = self._find_placeholder(slide, i + 1)
+            if ph is None:
+                sys.stderr.write(
+                    f"md2pptx: warning: @ph-widths has {len(pcts)} values but "
+                    f"column placeholder {i + 1} does not exist; ignoring\n")
+                return
+            geom = self._effective_geom(ph, slide)
+            if None in geom:
+                sys.stderr.write(
+                    "md2pptx: warning: @ph-widths skipped "
+                    "(could not resolve column geometry)\n")
+                return
+            phs.append((ph, geom))
+        lefts = [g[0] for _, g in phs]
+        rights = [g[0] + g[2] for _, g in phs]
+        gaps = [lefts[i + 1] - rights[i] for i in range(len(phs) - 1)]
+        if any(g < 0 for g in gaps):
+            # 重なったプレースホルダ（負のギャップ）は usable を過大にするため 0 扱い．
+            sys.stderr.write(
+                "md2pptx: warning: @ph-widths found overlapping column "
+                "placeholders; treating the negative gap as 0\n")
+            gaps = [max(g, 0) for g in gaps]
+        span_l, span_r = lefts[0], rights[-1]
+        usable = (span_r - span_l) - sum(gaps)
+        widths = [usable * p / 100.0 for p in pcts]
+        new_span = sum(widths) + sum(gaps)
+        # 既定は左端固定（右余白のみ使用）．"...!" で左余白の使用を許可する．
+        max_span = ((self.SW - self._PH_MARGIN - span_l) if not allow_left
+                    else (self.SW - 2 * self._PH_MARGIN))
+        if new_span > max_span:
+            sys.stderr.write(
+                "md2pptx: warning: @ph-widths total exceeds the "
+                f"{'slide' if allow_left else 'right margin'}; clamping"
+                f"{'' if allow_left else ' (append ! to use the left margin)'}\n")
+            k = (max_span - sum(gaps)) / float(sum(widths))
+            widths = [w * k for w in widths]
+            new_span = max_span
+        new_left = span_l
+        if allow_left:
+            overflow = (new_left + new_span) - (self.SW - self._PH_MARGIN)
+            if overflow > 0:
+                new_left -= overflow
+            new_left = max(new_left, self._PH_MARGIN)
+        x = new_left
+        for i, ((ph, (_l, t, _w, h)), nw) in enumerate(zip(phs, widths)):
+            self._override_geom(ph, x, t, nw, h)
+            x += nw + (gaps[i] if i < len(gaps) else 0)
+
+    def _apply_body_width(self, slide, val):
+        """@body-width: "105" — 単カラム本文プレースホルダ幅を再指定する．
+
+        継承した本文プレースホルダ幅に対する百分率（% 付き可）．
+        ジオメトリを解決できない場合は何もしない（従来描画）．
+        """
+        val, allow_left = self._split_allow_left(val)
+        try:
+            pct = float(str(val).strip().rstrip("%％"))
+        except ValueError:
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring invalid @body-width value {val!r}\n")
+            return
+        if pct <= 0:
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring non-positive @body-width value {val!r}\n")
+            return
+        ph = self._body_placeholder(slide)
+        if ph is None:
+            return
+        left, top, width, height = self._effective_geom(ph, slide)
+        if None in (left, top, width, height):
+            return
+        new_w = width * pct / 100.0
+        # 既定は左端固定（右余白のみ使用）．"...!" で左余白の使用を許可する．
+        max_w = ((self.SW - self._PH_MARGIN - left) if not allow_left
+                 else (self.SW - 2 * self._PH_MARGIN))
+        if new_w > max_w:
+            sys.stderr.write(
+                "md2pptx: warning: @body-width exceeds the "
+                f"{'slide' if allow_left else 'right margin'}; clamping"
+                f"{'' if allow_left else ' (append ! to use the left margin)'}\n")
+            new_w = max_w
+        new_l = left
+        if allow_left:
+            overflow = (new_l + new_w) - (self.SW - self._PH_MARGIN)
+            if overflow > 0:
+                new_l -= overflow
+            new_l = max(new_l, self._PH_MARGIN)
+        self._override_geom(ph, new_l, top, new_w, height)
 
     def _content_rect(self, slide):
         """本文領域の矩形 (left, top, width, height) を返す（座標配置の基準）．"""
