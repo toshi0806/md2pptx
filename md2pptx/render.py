@@ -646,12 +646,18 @@ class Renderer:
             total_pt += row_h
         return int(total_pt * safety * 12700)
 
-    def render_table(self, slide, table, left, top, width, height, col_ratios=None):
+    def render_table(self, slide, table, left, top, width, height, col_ratios=None,
+                     overflow=False, has_prose_after=False):
         """Table ブロックを座標指定で 1 つ描画する（ヘッダ行をアクセント色で着色）．
 
         ``参照スクリプト`` の表描画を移植・一般化したもの．列幅は既定で均等，
         ``col_ratios`` を与えると比率配分する．配色はテーマ任せ（ヘッダのみ
         アクセント色 A2＋背景色 BG の文字）．
+
+        overflow=True（@overflow）の場合はフォント縮小（_fit_font）を行わず，
+        本文標準（lvl1）サイズのまま必要な高さで描画する．上端は帯上端に固定し，
+        はみ出しは下（結論文・罫線側）のみ（画像の overflow と同じ規約）．
+        帯に収まる表は通常配置と同じで，はみ出しは発生しない．
         """
         nrows = len(table.rows) + (1 if table.header else 0)
         ncols = max(
@@ -661,17 +667,42 @@ class Renderer:
         if nrows == 0 or ncols == 0:
             return None
 
+        col_w = self._table_col_widths(ncols, width, col_ratios)
+        data = ([table.header] if table.header else []) + list(table.rows)
+
+        if overflow:
+            # 縮小せず本文標準サイズを維持し，収まらない分は下へはみ出す．
+            fsize = self._body_font_size()
+            est_h = self._table_height_emu(data, col_w, fsize)
+            if est_h > height:
+                if has_prose_after:
+                    sys.stderr.write(
+                        "md2pptx: warning: overflowing table extends into the "
+                        "concluding text below its band\n")
+                if top + est_h > self.SH:
+                    sys.stderr.write(
+                        "md2pptx: warning: overflowing table extends beyond "
+                        "the slide bottom edge\n")
+            # 帯に収まるなら従来どおり帯高で描く（overflow は no-op）．
+            height = max(height, est_h)
+        else:
+            # フォントは本文標準（lvl1）を基本に，収まらなければ下位レベルへ切り替える．
+            fsize = self._fit_font(
+                lambda sz: self._table_height_emu(data, col_w, sz) <= height)
+            if self._table_height_emu(data, col_w, fsize) > height:
+                # 最小レベルまで縮小しても収まらない見積もり．PowerPoint は行を
+                # 最小行高以上へ自動拡張するため，黙って帯を超過しうる（従来は
+                # 無警告）．気づけるよう警告し，@overflow への誘導も添える．
+                sys.stderr.write(
+                    "md2pptx: warning: table does not fit its band even at the "
+                    "smallest body font size and may overlap following content "
+                    "(consider '<!-- @overflow: true -->')\n")
+
         gf = slide.shapes.add_table(nrows, ncols, left, top, width, height)
         tbl = gf.table
 
-        col_w = self._table_col_widths(ncols, width, col_ratios)
         for ci, cw in enumerate(col_w):
             tbl.columns[ci].width = cw
-
-        data = ([table.header] if table.header else []) + list(table.rows)
-        # フォントは本文標準（lvl1）を基本に，収まらなければ下位レベルへ切り替える．
-        fsize = self._fit_font(
-            lambda sz: self._table_height_emu(data, col_w, sz) <= height)
 
         for ri, row in enumerate(data):
             is_header = bool(table.header) and ri == 0
@@ -741,7 +772,8 @@ class Renderer:
             return length.value / 100.0 * base_emu
         return float(length.value)
 
-    def render_image(self, slide, img, left, top, width, seg_h):
+    def render_image(self, slide, img, left, top, width, seg_h,
+                     overflow=None, has_prose_after=False):
         """Image ブロックをセグメント矩形 (left, top, width, seg_h) 内に配置する．
 
         ソース画像のピクセル寸法を読み，crop（残す矩形）を PowerPoint のクロップ割合へ
@@ -749,7 +781,11 @@ class Renderer:
         align と縦中央でセグメント内へ収める．caption があれば画像下に描画する．
         overflow=True の場合は最終クランプを行わず，明示サイズのまま下方向への
         はみ出しを許可する（上端はセグメント上端まで．タイトル・導入文に重ねない）．
+        overflow はブロック指定とスライド @overflow を解決した実効値を受ける
+        （None なら Image.overflow のみ参照＝直接呼び出し時の後方互換）．
         """
+        if overflow is None:
+            overflow = bool(img.overflow)
         path = self._resolve_image_path(img.src)
         W, H = _read_image_size(path)                   # ソースのピクセル寸法
         cl, ct, cr, cb, vis_w, vis_h = self._crop_fractions(img.crop, W, H)
@@ -775,7 +811,7 @@ class Renderer:
         w, h = max(w, 1.0), max(h, 1.0)
         # セグメントを超えないよう最終クランプ（比維持）．overflow 指定時は
         # クランプせず，明示サイズのまま帯からのはみ出しを許可する．
-        if not img.overflow:
+        if not overflow:
             w, h = self._fit_within(min(w, avail_w), min(h, avail_h), w / h)
 
         # 水平寄せ（align）と縦中央でセグメント内へ配置．
@@ -786,7 +822,7 @@ class Renderer:
         else:
             x = left + (avail_w - w) / 2.0
         y = top + (avail_h - h) / 2.0
-        if img.overflow:
+        if overflow:
             # はみ出しは下（結論文・罫線側）のみ．上端はセグメント上端で止め，
             # タイトル・導入文には重ねない（top も y も同じ EMU 数値）．
             y = max(y, top)
@@ -802,11 +838,16 @@ class Renderer:
             # セグメント外へ出ないよう cap 上端を [.., top+seg_h-cap_h] にクランプする．
             # overflow 時は画像に追従してさらに下がる（スライド外に出うる）．
             cap_top = int(y + h)
-            if not img.overflow:
+            if not overflow:
                 cap_top = min(cap_top, int(top + seg_h - cap_h))
             self._draw_caption(slide, img.caption, left, cap_top, width, cap_h)
             bottom = cap_top + cap_h
-        if img.overflow and bottom > self.SH:
+        if overflow and bottom > top + seg_h and has_prose_after:
+            sys.stderr.write(
+                f"md2pptx: warning: overflowing image/caption ({img.src}) "
+                "extends into the concluding text below its band\n"
+            )
+        if overflow and bottom > self.SH:
             sys.stderr.write(
                 f"md2pptx: warning: overflowing image/caption ({img.src}) "
                 "extends beyond the slide bottom edge\n"
@@ -872,15 +913,19 @@ class Renderer:
         # スライド既定の相対サイズ段数（@body-size）．Line.size_delta が優先．
         default_size_delta = self._body_size_delta(directives)
         scale = self._autofit_scale(directives)
+        # スライド単位の overflow（@overflow）．表・画像に共通で効き，
+        # 画像はブロックの overflow: 明示があればそちらが優先する．
+        slide_overflow = bool(directives.get("overflow", False))
         blocks = slide.blocks or []
 
         if slide.columns:
             self._render_columns(s, slide.columns, default_num_color, scale,
                                  default_autofit, default_size_delta,
-                                 self._col_ratios(directives))
+                                 self._col_ratios(directives), slide_overflow)
         elif any(isinstance(b, (Table, Flow, Image)) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
-                                 self._col_ratios(directives), default_size_delta)
+                                 self._col_ratios(directives), default_size_delta,
+                                 slide_overflow)
         else:
             line_blocks = [b for b in blocks if isinstance(b, Line)]
             body = self._body_placeholder(s)
@@ -927,7 +972,7 @@ class Renderer:
 
     def _render_columns(self, slide, columns, default_num_color, scale,
                         default_autofit, default_size_delta=None,
-                        col_ratios=None):
+                        col_ratios=None, slide_overflow=False):
         """多カラム（「2つのコンテンツ」）：各カラムを idx 1, 2 … へ流す．
 
         columns[i] を プレースホルダ idx=i+1 へ描画する（idx 0 はタイトル）．
@@ -958,7 +1003,7 @@ class Renderer:
                 self._render_stacked_into(slide, col_blocks, ph, left, top,
                                           width, height, default_num_color, scale,
                                           default_autofit, col_ratios,
-                                          default_size_delta)
+                                          default_size_delta, slide_overflow)
                 continue
             # Line のみのカラムはプレースホルダへ直接流し込む．_render_stacked_into は
             # objects（表・図）が空だと何も描画せず return する設計なので，ここを通すと
@@ -1240,8 +1285,14 @@ class Renderer:
             return 8 + (1 if obj.caption else 0)
         return max(2, len(obj.rows) + (1 if obj.header else 0))
 
-    def _stack_objects(self, slide, objects, left, top, width, height, col_ratios):
-        """Table / Flow / Image を矩形領域内に重みづけで縦に積んで座標配置する．"""
+    def _stack_objects(self, slide, objects, left, top, width, height, col_ratios,
+                       slide_overflow=False, has_prose_after=False):
+        """Table / Flow / Image を矩形領域内に重みづけで縦に積んで座標配置する．
+
+        slide_overflow（@overflow）は表・画像に共通で効く．画像はブロックの
+        overflow: 明示（Image.overflow が True/False）を優先する．Flow は帯に
+        内接固定のため対象外（将来拡張）．
+        """
         weights = [self._obj_weight(o) for o in objects]
         total = float(sum(weights)) or 1.0
         gap = Pt(6)
@@ -1252,13 +1303,18 @@ class Renderer:
             if isinstance(obj, Flow):
                 self.render_flow(slide, obj, left, y, width, seg_h)
             elif isinstance(obj, Image):
-                self.render_image(slide, obj, left, y, width, seg_h)
+                eff = obj.overflow if obj.overflow is not None else slide_overflow
+                self.render_image(slide, obj, left, y, width, seg_h,
+                                  overflow=eff, has_prose_after=has_prose_after)
             else:
-                self.render_table(slide, obj, left, y, width, seg_h, col_ratios)
+                self.render_table(slide, obj, left, y, width, seg_h, col_ratios,
+                                  overflow=slide_overflow,
+                                  has_prose_after=has_prose_after)
             y += seg_h + gap
 
     def _render_stacked(self, slide, blocks, default_num_color, scale,
-                        default_autofit, col_ratios, default_size_delta=None):
+                        default_autofit, col_ratios, default_size_delta=None,
+                        slide_overflow=False):
         """表／図を含むスライドを描画する．
 
         地の文（Line）は **標準の本文プレースホルダ**へ流し込み，表・図だけを
@@ -1270,11 +1326,11 @@ class Renderer:
         body = self._body_placeholder(slide)
         self._render_stacked_into(slide, blocks, body, left, top, width, height,
                                   default_num_color, scale, default_autofit,
-                                  col_ratios, default_size_delta)
+                                  col_ratios, default_size_delta, slide_overflow)
 
     def _render_stacked_into(self, slide, blocks, body, left, top, width, height,
                              default_num_color, scale, default_autofit, col_ratios,
-                             default_size_delta=None):
+                             default_size_delta=None, slide_overflow=False):
         """``blocks`` を矩形 (left, top, width, height) 内へスタック描画する．
 
         地の文（Line）は ``body`` プレースホルダへ流し込み，表・図は矩形内に
@@ -1320,7 +1376,8 @@ class Renderer:
         if not prose_before and not prose_after:
             if body is not None:
                 body._element.getparent().remove(body._element)
-            self._stack_objects(slide, objects, left, top, width, height, col_ratios)
+            self._stack_objects(slide, objects, left, top, width, height, col_ratios,
+                                slide_overflow, has_prose_after=False)
             return
 
         # 地の文あり：プレースホルダに導入文＋空行＋結論文を流して中央帯を確保．
@@ -1351,7 +1408,8 @@ class Renderer:
 
         # 結論文との重なりを避けるため帯を少しだけ詰めてオブジェクトを置く．
         obj_h = max(Inches(0.8), band_h - Pt(8))
-        self._stack_objects(slide, objects, left, band_top, width, obj_h, col_ratios)
+        self._stack_objects(slide, objects, left, band_top, width, obj_h, col_ratios,
+                            slide_overflow, has_prose_after=bool(prose_after))
 
     # ------------------------------------------------------------- deck
     def render(self, deck: Deck):

@@ -171,8 +171,10 @@ class Image:
             "fill"（歪ませて充填）．片方のみ・省略時は常にアスペクト維持．
         caption: 図下キャプション（省略可．ショートハンドは alt を採用）．
         overflow: True なら帯（セグメント）に収める最終クランプを行わず，
-            width/height で明示したサイズのままはみ出しを許可する（既定 False）．
+            width/height で明示したサイズのままはみ出しを許可する．
             はみ出す方向は下（結論文・罫線側）のみで，タイトル側へは重ねない．
+            None は「ブロックでの指定なし」＝スライドの @overflow ディレクティブ
+            （既定 False）に従う．ブロック指定（True/False）はスライド指定に優先する．
     """
 
     src: str
@@ -182,7 +184,7 @@ class Image:
     align: str = "center"
     fit: str = "contain"
     caption: str | None = None
-    overflow: bool = False
+    overflow: bool | None = None
 
 
 @dataclass
