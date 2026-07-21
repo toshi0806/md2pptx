@@ -201,6 +201,9 @@ class Slide:
         columns: 多カラム（「2つのコンテンツ」レイアウト）時の各カラムのブロック列．
             空なら単一カラム（blocks を使用）．非空なら columns[i] が i 番目の
             カラム内容で，レイアウトは 3 を既定とする（DESIGN.md §5.7）．
+        notes: 発表者ノート（```note フェンス由来．DESIGN.md §5.10）．
+            スライド面には描画せず，notes slide のテキストになる．
+            "\\n" は段落区切り．無ければ None．
     """
 
     title: str | None = None
@@ -208,6 +211,7 @@ class Slide:
     blocks: list = field(default_factory=list)
     directives: dict = field(default_factory=dict)
     columns: list = field(default_factory=list)
+    notes: str | None = None
 
 
 @dataclass
@@ -226,6 +230,8 @@ class TitleSlide:
         affiliation_deltas: affiliation 各行と 1 対 1 対応する相対サイズ段数リスト
             （各要素 int｜None．None＝未指定）．本文の Line.size_delta と同じ意味で，
             render がテーマ既定サイズを基点に実サイズへ換算する．
+        notes: 発表者ノート（本文開始前の ```note フェンス由来．DESIGN.md §5.10）．
+            Slide.notes と同じ意味．無ければ None．
     """
 
     title: str | None = None
@@ -235,6 +241,7 @@ class TitleSlide:
     subtitle_delta: int | None = None
     author_delta: int | None = None
     affiliation_deltas: list[int | None] = field(default_factory=list)
+    notes: str | None = None
 
     def __post_init__(self):
         # 不変条件：affiliation_deltas は affiliation と同じ長さ（各行 1 対 1）．

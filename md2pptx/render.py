@@ -434,7 +434,20 @@ class Renderer:
                 for para, delta in zip(tf.paragraphs, sub_deltas):
                     if delta is not None:
                         para.font.size = Pt(self._size_from_delta(base, delta))
+        self._set_notes(s, ts.notes)
         return s
+
+    def _set_notes(self, slide, notes):
+        """発表者ノート（```note 由来）を notes slide へ書き込む（§5.10）．
+
+        notes_slide への初回アクセスで python-pptx がノートスライドを生成する．
+        None・空文字なら何もしない（ノートスライド自体を作らない）．
+        text 代入は既存段落をすべて消して置き換える（python-pptx の setter は
+        clear_content 後に "\\n" 区切りで段落を再構築する）．md2pptx は常に
+        0 枚の base から描画する（_clear_slides）ため，ここで消える既存ノートはない．
+        """
+        if notes:
+            slide.notes_slide.notes_text_frame.text = notes
 
     def _effective_geom(self, ph, slide):
         """プレースホルダの実効ジオメトリ (left, top, width, height) を返す．
@@ -937,6 +950,7 @@ class Renderer:
 
         if slide_number:
             self.add_slide_number(s)
+        self._set_notes(s, slide.notes)
         return s
 
     def _body_size_delta(self, directives):
