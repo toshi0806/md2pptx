@@ -12,6 +12,7 @@ python-pptx には依存しない（描画は render.py の責務）．
     - 行頭マーカー解釈（"-"/"*"/"1."/丸数字/"(n)"/"→"）（§5.3）
     - 表（§5.4）・flow 図（§5.5）・画像（§5.9）のブロック生成
     - スライド単位ディレクティブ（HTML コメント）の収集（§5.6）
+    - 発表者ノート（```note フェンス）の収集（§5.10）
 
 描画（python-pptx）は一切行わない．flow の座標計算は flow.py，画像の実寸読み取り・
 配置は render.py が担う．
@@ -104,7 +105,10 @@ def parse(md_text: str) -> Deck:
     meta, body, body_offset = _split_front_matter(text)
     deck = Deck(meta=meta)
     deck.title_slide = _build_title_slide(meta)
-    deck.slides = _parse_body(body, body_offset)
+    deck.slides, title_notes = _parse_body(
+        body, body_offset, has_title_slide=deck.title_slide is not None)
+    if title_notes is not None:
+        deck.title_slide.notes = title_notes
     return deck
 
 
@@ -211,14 +215,21 @@ def _split_size_opt(value) -> tuple[int | None, str | None]:
 
 # ---------------------------------------------------------------- 本文
 
-def _parse_body(body: str, body_offset: int = 0) -> list[Slide]:
+def _parse_body(body: str, body_offset: int = 0,
+                has_title_slide: bool = False) -> tuple[list[Slide], str | None]:
     """本文をスライド列へ分割し，各行を IR ブロックへ変換する．
 
     body_offset はフロントマターが消費したファイル行数（エラー報告の行番号を
-    ファイル先頭基準へ換算するために使う）．
+    ファイル先頭基準へ換算するために使う）．has_title_slide はフロントマター
+    由来のタイトルスライドの有無（本文開始前の ```note の宛先判定に使う）．
+
+    Returns:
+        (slides, title_notes)．title_notes は本文開始前に現れた ```note の
+        内容（タイトルスライドの発表者ノート）．無ければ None．
     """
     slides: list[Slide] = []
     current: Slide | None = None
+    title_notes: list[str] = []
 
     def ensure_slide() -> Slide:
         """直前にスライド開始マーカーが無いまま本文が来た場合のフォールバック．"""
@@ -305,7 +316,23 @@ def _parse_body(body: str, body_offset: int = 0) -> list[Slide]:
                 add_block(_parse_flow("\n".join(buf)))
             elif info == "image":
                 add_block(_parse_image_block("\n".join(buf)))
-            # flow / image 以外のコードブロックは範囲外（無視）．
+            elif info in ("note", "notes"):
+                # 発表者ノート（§5.10）．スライド面には出さず notes へ蓄積する．
+                # 本文開始前（スライドマーカーより先）ならタイトルスライド宛て．
+                text = "\n".join(buf).strip("\n")
+                if text:
+                    if current is None and not slides:
+                        if not has_title_slide:
+                            raise ValueError(
+                                f"```note block at line {lineno} appears before "
+                                f"any slide, but there is no title slide "
+                                f"(add 'title:' to the front matter or move the "
+                                f"block after a slide heading)")
+                        title_notes.append(text)
+                    else:
+                        s = ensure_slide()
+                        s.notes = text if s.notes is None else s.notes + "\n" + text
+            # flow / image / note 以外のコードブロックは範囲外（無視）．
             i = j + 1  # 閉じフェンスの次へ（無い場合も末尾へ）
             continue
 
@@ -349,7 +376,7 @@ def _parse_body(body: str, body_offset: int = 0) -> list[Slide]:
     if current is not None:
         slides.append(current)
 
-    return slides
+    return slides, ("\n".join(title_notes) if title_notes else None)
 
 
 def _split_row(s: str) -> list[str]:
