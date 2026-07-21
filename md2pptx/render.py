@@ -442,7 +442,9 @@ class Renderer:
 
         notes_slide への初回アクセスで python-pptx がノートスライドを生成する．
         None・空文字なら何もしない（ノートスライド自体を作らない）．
-        text 代入の "\\n" は段落区切りとして展開される．
+        text 代入は既存段落をすべて消して置き換える（python-pptx の setter は
+        clear_content 後に "\\n" 区切りで段落を再構築する）．md2pptx は常に
+        0 枚の base から描画する（_clear_slides）ため，ここで消える既存ノートはない．
         """
         if notes:
             slide.notes_slide.notes_text_frame.text = notes

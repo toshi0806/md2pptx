@@ -107,6 +107,10 @@ def parse(md_text: str) -> Deck:
     deck.title_slide = _build_title_slide(meta)
     deck.slides, title_notes = _parse_body(
         body, body_offset, has_title_slide=deck.title_slide is not None)
+    # 不変条件：title_notes が非 None なのは has_title_slide=True のときだけ
+    # （タイトルスライド無しの本文前 ```note は _parse_body が ValueError にする．
+    # 空の ```note は捨てられ title_notes に積まれない）．よってここで
+    # deck.title_slide は必ず存在する．
     if title_notes is not None:
         deck.title_slide.notes = title_notes
     return deck
@@ -319,6 +323,9 @@ def _parse_body(body: str, body_offset: int = 0,
             elif info in ("note", "notes"):
                 # 発表者ノート（§5.10）．スライド面には出さず notes へ蓄積する．
                 # 本文開始前（スライドマーカーより先）ならタイトルスライド宛て．
+                # strip("\n") はフェンス境界に接する空行の正規化（先頭・末尾のみ）．
+                # ノート冒頭の空段落は表示上意味を持たないため意図的に落とす
+                # （内部の空行＝段落区切りは保持される）．
                 text = "\n".join(buf).strip("\n")
                 if text:
                     if current is None and not slides:
