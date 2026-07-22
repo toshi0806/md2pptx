@@ -5,6 +5,6 @@
 使う場合は parser.parse_file() で Deck を得て render.build() で描画できる．
 """
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 
 __all__ = ["__version__"]
