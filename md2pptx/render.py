@@ -552,11 +552,13 @@ class Renderer:
         return shp
 
     def note(self, slide, l, t, w, h, text, size, tc=None, bold=False,
-             align=PP_ALIGN.LEFT):
+             align=PP_ALIGN.LEFT, anchor=None):
         """注記用テキストボックスを描く（キャプション・矢印ラベル・省略記号）．"""
         tb = slide.shapes.add_textbox(l, t, w, h)
         tf = tb.text_frame
         tf.word_wrap = True
+        if anchor is not None:
+            tf.vertical_anchor = anchor
         pa = tf.paragraphs[0]
         pa.alignment = align
         pa.text = text
@@ -614,8 +616,10 @@ class Renderer:
             self.box(slide, bl, bt, bw, bh, node.label, tc,
                      sub=node.sublabel or None, fsize=bsz, ssize=bsz)
         for label, bl, bt, bw, bh in plan["ellipses"]:
+            # 省略記号スロットは固定幅／固定高（flow.py）なので上下中央に置き，
+            # 隣接する矢印との重なりを避ける．
             self.note(slide, bl, bt, bw, bh, label, bsz, tc=self.T2, bold=True,
-                      align=PP_ALIGN.CENTER)
+                      align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
         # ノード間のすき間に塗りつぶしのブロック矢印を置く（太さは box 高に比例）．
         box_h_emu = boxes[0][4] if boxes else Inches(1.0)
         thick = int(box_h_emu * 0.34)

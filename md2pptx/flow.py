@@ -198,24 +198,34 @@ def _plan_horizontal(plan, flow, left, top, width, height, cap_reserve):
     nodes = flow.nodes
     n = len(nodes)
     gx = _emu(0.65)
-    bw = (width - (n - 1) * gx) // n
-    bw = max(_emu(1.1), min(_emu(2.4), bw))
+    # 省略記号は「…」1 文字の注記なので box と同じ幅は不要．固定幅で確保し，
+    # 残りをすべて box に配分する（省略記号を挟んでも box が縮まないように）．
+    ne = sum(1 for node in nodes if node.kind == "ellipsis")
+    nb = n - ne
+    ew = _emu(0.4)
+    if nb:
+        bw = (width - (n - 1) * gx - ne * ew) // nb
+        bw = max(_emu(1.1), min(_emu(2.4), bw))
+    else:
+        bw = ew
     bh = min(_emu(1.4), int((height - cap_reserve) * 0.7))
     bh = max(_emu(0.6), bh)
-    total = n * bw + (n - 1) * gx
+    total = nb * bw + ne * ew + (n - 1) * gx
     startx = left + (width - total) // 2
     # box＋キャプションのまとまりを縦中央に置く．
     group_h = bh + cap_reserve
     by = top + max(0, (height - group_h) // 2)
 
     centers = []
-    for i, node in enumerate(nodes):
-        bl = startx + i * (bw + gx)
+    bl = startx
+    for node in nodes:
+        w = ew if node.kind == "ellipsis" else bw
         if node.kind == "ellipsis":
-            plan["ellipses"].append((node.label or "…", bl, by, bw, bh))
+            plan["ellipses"].append((node.label or "…", bl, by, w, bh))
         else:
-            plan["boxes"].append((node, bl, by, bw, bh))
-        centers.append((bl, bl + bw // 2, bl + bw, by + bh // 2))
+            plan["boxes"].append((node, bl, by, w, bh))
+        centers.append((bl, bl + w // 2, bl + w, by + bh // 2))
+        bl += w + gx
 
     for e in flow.edges:
         if not (0 <= e.src < n and 0 <= e.dst < n):
@@ -236,21 +246,30 @@ def _plan_vertical(plan, flow, left, top, width, height, cap_reserve):
     n = len(nodes)
     gy = _emu(0.35)
     avail = height - cap_reserve
-    bh = (avail - (n - 1) * gy) // n
-    bh = max(_emu(0.6), min(_emu(1.2), bh))
+    # 横並びと同じく，省略記号は 1 行分の固定高で確保して残りを box に配分する．
+    ne = sum(1 for node in nodes if node.kind == "ellipsis")
+    nb = n - ne
+    eh = _emu(0.35)
+    if nb:
+        bh = (avail - (n - 1) * gy - ne * eh) // nb
+        bh = max(_emu(0.6), min(_emu(1.2), bh))
+    else:
+        bh = eh
     bw = min(_emu(3.2), int(width * 0.5))
     bx = left + (width - bw) // 2
-    total = n * bh + (n - 1) * gy
+    total = nb * bh + ne * eh + (n - 1) * gy
     starty = top + max(0, (avail - total) // 2)
 
     centers = []
-    for i, node in enumerate(nodes):
-        bt = starty + i * (bh + gy)
+    bt = starty
+    for node in nodes:
+        h = eh if node.kind == "ellipsis" else bh
         if node.kind == "ellipsis":
-            plan["ellipses"].append((node.label or "…", bx, bt, bw, bh))
+            plan["ellipses"].append((node.label or "…", bx, bt, bw, h))
         else:
-            plan["boxes"].append((node, bx, bt, bw, bh))
-        centers.append((bx + bw // 2, bt, bt + bh))
+            plan["boxes"].append((node, bx, bt, bw, h))
+        centers.append((bx + bw // 2, bt, bt + h))
+        bt += h + gy
 
     for e in flow.edges:
         if not (0 <= e.src < n and 0 <= e.dst < n):
