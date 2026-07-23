@@ -50,8 +50,8 @@ _RE_COL = re.compile(r"^<!--\s*@col\s*-->$")
 _RE_COMMENT = re.compile(r"^<!--.*-->$")
 # Markdown テーブルの区切り行（例 "| --- | :--: |"）．ヘッダ行の直後に現れる．
 _RE_TABLE_SEP = re.compile(r"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$")
-# タイトル内の明示改行マーカー（<br> / <br/>）．"\v"（行内改行）へ変換する．
-_RE_TITLE_BR = re.compile(r"\s*<br\s*/?>\s*")
+# タイトル・本文行内の明示改行マーカー（<br> / <br/>）．"\v"（行内改行）へ変換する．
+_RE_BR = re.compile(r"\s*<br\s*/?>\s*")
 
 # 相対フォントサイズトークン．マーカー直後・本文直前の "{+1}"/"{-2}"/"{0}"．
 # 符号は省略可（"{2}" は "+2" と同義）．render がテーマ基準で実サイズへ換算する．
@@ -268,7 +268,7 @@ def _parse_body(body: str, body_offset: int = 0,
                     f"{stripped!r} (use '#' for a section slide or '##' for a "
                     f"content slide)")
             # タイトル内の <br> を行内改行（\v）へ変換する．
-            htext = _RE_TITLE_BR.sub("\v", htext)
+            htext = _RE_BR.sub("\v", htext)
             if current is not None:
                 slides.append(current)
             layout = 2 if len(hashes) == 1 else 1
@@ -632,7 +632,12 @@ def _parse_content_line(raw: str) -> Line | None:
 
     def _mk(text, **kw):
         """本文が空（マーカー／サイズトークンだけの行）なら Line を作らず None．
-        マーカー除去後に空の行を IR に入れない（先頭の空行チェックと整合）．"""
+        マーカー除去後に空の行を IR に入れない（先頭の空行チェックと整合）．
+
+        本文中の <br> はタイトルと同じ規則で行内改行（\v）へ変換する．
+        render 側は本文をそのまま段落 text へ渡すため，python-pptx が
+        "\v" を段落内改行（<a:br/>）として出力する．"""
+        text = _RE_BR.sub("\v", text)
         return Line(text=text, level=level, **kw) if text else None
 
     # 通常箇条書き："- " / "* "
@@ -663,6 +668,7 @@ def _parse_content_line(raw: str) -> Line | None:
     if s.startswith(ARROW):
         delta, rest = _split_size(s[len(ARROW):].lstrip())
         text = f"{ARROW} {rest}" if rest else ARROW
+        text = _RE_BR.sub("\v", text)
         return Line(text=text, level=level, kind="plain", size_delta=delta)
 
     # 上記以外 → 既定の箇条書き（インデントに応じたレベル）
