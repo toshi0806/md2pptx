@@ -20,14 +20,17 @@ DSL 例::
 from __future__ import annotations
 
 import re
+from typing import Literal
 
-try:  # パッケージ実行・単体実行のどちらでも import できるように
-    from .ir import Flow, FlowNode, FlowEdge
-except ImportError:  # pragma: no cover - 単体実行時のフォールバック
-    from ir import Flow, FlowNode, FlowEdge
+from .ir import Flow, FlowNode, FlowEdge
 
 
 EMU = 914400  # 1 インチ = 914400 EMU
+
+# 受理する値の集合．型付きなので "not in で弾いた残り" が Literal に絞られる
+# （検証と型の単一の情報源にもなる）．
+_DIRECTIONS: tuple[Literal["lr", "tb"], ...] = ("lr", "tb")
+_NODE_KINDS: tuple[Literal["box", "ellipsis"], ...] = ("box", "ellipsis")
 
 
 def _emu(inch):
@@ -61,7 +64,7 @@ def parse_flow(text: str) -> Flow:
             key, val = m.group(1), m.group(2).strip()
             if key == "direction":
                 d = val.lower()
-                if d not in ("lr", "tb"):
+                if d not in _DIRECTIONS:
                     raise ValueError(
                         f"invalid flow direction: {val!r} (lr|tb)")
                 flow.direction = d
@@ -85,7 +88,8 @@ def _tokenize(s: str):
     ノード "[…]"／エッジ "->" 以外の文字列はタイポの可能性が高いので
     黙殺せずエラーにする（設定行は parse_flow が先に取り除いている）．
     """
-    tokens = []
+    # ("node", label, color) と ("edge", label) が混在するので要素長は一定でない．
+    tokens: list[tuple] = []
     i, n = 0, len(s)
     while i < n:
         c = s[i]
@@ -149,7 +153,8 @@ def _make_node(inner: str, color) -> FlowNode:
     sublabel = parts[1].strip() if len(parts) > 1 else None
     if sublabel == "":
         sublabel = None
-    kind = "ellipsis" if label in _ELLIPSIS else "box"
+    kind: Literal["box", "ellipsis"] = (
+        "ellipsis" if label in _ELLIPSIS else "box")
     return FlowNode(label=label, sublabel=sublabel, kind=kind, color=color)
 
 
@@ -168,7 +173,8 @@ def plan_flow(flow: Flow, left, top, width, height):
           "captions": [(text, l, t, w, h, role), ...],  # note_top/caption/note_bottom
         }
     """
-    plan = {"boxes": [], "ellipses": [], "arrows": [], "labels": [], "captions": []}
+    plan: dict[str, list] = {
+        "boxes": [], "ellipses": [], "arrows": [], "labels": [], "captions": []}
     nodes = flow.nodes
     if not nodes:
         return plan

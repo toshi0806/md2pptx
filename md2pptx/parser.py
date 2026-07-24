@@ -20,18 +20,22 @@ python-pptx には依存しない（描画は render.py の責務）．
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 import yaml
 
-try:  # パッケージ実行・単体実行のどちらでも import できるように
-    from .ir import Crop, Deck, Image, Length, Line, Slide, Table, TitleSlide
-    from .flow import parse_flow as _parse_flow
-except ImportError:  # pragma: no cover - 単体実行時のフォールバック
-    from ir import Crop, Deck, Image, Length, Line, Slide, Table, TitleSlide
-    from flow import parse_flow as _parse_flow
+from .ir import (
+    Align, Crop, Deck, Flow, Image, Length, Line, Slide, Table, TitleSlide,
+)
+from .flow import parse_flow as _parse_flow
 
 
 # ---------------------------------------------------------------- 定数
+
+# 画像オプションで受理する値の集合．型付きなので "not in で弾いた残り" が
+# Literal に絞られる（検証と型の単一の情報源にもなる）．
+_ALIGNS: tuple[Align, ...] = ("left", "center", "right")
+_FITS: tuple[Literal["contain", "fill"], ...] = ("contain", "fill")
 
 # 丸数字 ①(U+2460) 〜 ⑳(U+2473)．行頭にあれば circleNumDbPlain として採番する．
 CIRCLED_DIGITS = "".join(chr(c) for c in range(0x2460, 0x2474))
@@ -112,6 +116,7 @@ def parse(md_text: str) -> Deck:
     # 空の ```note は捨てられ title_notes に積まれない）．よってここで
     # deck.title_slide は必ず存在する．
     if title_notes is not None:
+        assert deck.title_slide is not None  # 上の不変条件（型チェッカ向け）
         deck.title_slide.notes = title_notes
     return deck
 
@@ -183,14 +188,21 @@ def _build_title_slide(meta: dict) -> TitleSlide | None:
     subtitle_delta, subtitle = _split_size_opt(meta.get("subtitle"))
     author_delta, author = _split_size_opt(meta.get("author"))
 
-    affiliation_raw = meta.get("affiliation") or []
-    if isinstance(affiliation_raw, str):
+    affiliation_raw = meta.get("affiliation")
+    if affiliation_raw is None:
+        # 未指定のみ空扱い．`affiliation: 0` のような falsy な値まで捨てないよう
+        # `or []` にはしない（非文字列スカラーは下で 1 行へ正規化する）．
+        affiliation_raw = []
+    if not isinstance(affiliation_raw, list):
+        # スカラー（"affiliation: 所属" や YAML が数値として読んだ値）は 1 行扱い．
         affiliation_raw = [affiliation_raw]
-    affiliation = []
-    affiliation_deltas = []
+    affiliation: list[str] = []
+    affiliation_deltas: list[int | None] = []
     for line in affiliation_raw:
         delta, text = _split_size_opt(line)
-        affiliation.append(text)
+        # YAML の空要素（"-" だけの行）は None になる．空行として残す
+        # （None のままだと affiliation: list[str] を破り，render で落ちる）．
+        affiliation.append(text if text is not None else "")
         affiliation_deltas.append(delta)
 
     return TitleSlide(
@@ -396,7 +408,7 @@ def _split_row(s: str) -> list[str]:
     return [c.strip() for c in s.split("|")]
 
 
-def _parse_aligns(sep_row: str) -> list[str]:
+def _parse_aligns(sep_row: str) -> list[Align]:
     """区切り行のコロンから各列の水平寄せを解析する．
 
     各セルの先頭・末尾のコロンで判定する：
@@ -404,7 +416,7 @@ def _parse_aligns(sep_row: str) -> list[str]:
     コロンが 1 つも無ければ「指定なし」として空リストを返し，既存テーブルの
     左寄せ挙動を回帰させない（render は空/範囲外を左寄せとして触らない）．
     """
-    aligns: list[str] = []
+    aligns: list[Align] = []
     has_colon = False
     for cell in _split_row(sep_row):
         c = cell.strip()
@@ -456,7 +468,7 @@ def _parse_crop(s: str) -> Crop | None:
     pct = [p.endswith("%") for p in parts]
     if any(pct) and not all(pct):
         raise ValueError(f"crop values must be all px or all %: {s!r}")
-    unit = "percent" if all(pct) else "px"
+    unit: Literal["px", "percent"] = "percent" if all(pct) else "px"
     vals = [_to_float(p[:-1] if p.endswith("%") else p, "crop") for p in parts]
     return Crop(unit, *vals)
 
@@ -482,12 +494,12 @@ def _apply_image_opt(img: Image, key: str, val: str) -> None:
         img.crop = _parse_crop(val)
     elif key == "align":
         v = val.lower()
-        if v not in ("left", "center", "right"):
+        if v not in _ALIGNS:
             raise ValueError(f"invalid align: {val!r} (left|center|right)")
         img.align = v
     elif key == "fit":
         v = val.lower()
-        if v not in ("contain", "fill"):
+        if v not in _FITS:
             raise ValueError(f"invalid fit: {val!r} (contain|fill)")
         img.fit = v
     elif key == "caption":
@@ -678,6 +690,8 @@ def _parse_content_line(raw: str) -> Line | None:
 
 # ---------------------------------------------------------------- 自己検証
 
+# パッケージ内 import は相対のみなので `python3 -m md2pptx.parser` で実行する
+# （cli.py / thmx2pptx.py の自己検証も同じ流儀）．
 if __name__ == "__main__":
     import io
 
@@ -718,7 +732,36 @@ affiliation:
   - IR を pptx に描画
 
 → 色やフォントはコードに持たず、テーマに委ねる
+
+## ブロック混在
+
+導入：Line 以外のブロックもダンプ対象。
+
+| 課題 | 対応 |
+|---|---:|
+| デザイン | テーマに委譲 |
+
+```flow
+[md] -変換-> [pptx]
+```
+
+→ 表・フロー図が Line 決め打ちで落ちないことの確認を兼ねる
 """
+
+    def _dump_block(b) -> str:
+        """ブロックを 1 行で表す．blocks は Line 以外も持つので型で分岐する．"""
+        if isinstance(b, Line):
+            return (f"Line(kind={b.kind!r} level={b.level} "
+                    f"num_style={b.num_style!r} text={b.text!r})")
+        if isinstance(b, Table):
+            return (f"Table(cols={len(b.header)} rows={len(b.rows)} "
+                    f"aligns={b.aligns!r})")
+        if isinstance(b, Flow):
+            return (f"Flow(direction={b.direction!r} nodes={len(b.nodes)} "
+                    f"edges={len(b.edges)} caption={b.caption!r})")
+        if isinstance(b, Image):
+            return f"Image(src={b.src!r} align={b.align!r} overflow={b.overflow!r})"
+        return f"{type(b).__name__}({b!r})"
 
     deck = parse(sample)
     buf = io.StringIO()
@@ -726,17 +769,19 @@ affiliation:
     print("=== meta ===", file=buf)
     print(deck.meta, file=buf)
     print("=== title_slide ===", file=buf)
-    print(f"title={ts.title!r}", file=buf)
-    print(f"subtitle={ts.subtitle!r}", file=buf)
-    print(f"author={ts.author!r}", file=buf)
-    print(f"affiliation={ts.affiliation!r}", file=buf)
+    if ts is None:
+        print("(none)", file=buf)
+    else:
+        print(f"title={ts.title!r}", file=buf)
+        print(f"subtitle={ts.subtitle!r}", file=buf)
+        print(f"author={ts.author!r}", file=buf)
+        print(f"affiliation={ts.affiliation!r}", file=buf)
     print(f"=== slides ({len(deck.slides)}) ===", file=buf)
     for si, sl in enumerate(deck.slides):
         print(f"[slide {si}] title={sl.title!r} layout={sl.layout} "
               f"directives={sl.directives}", file=buf)
         for b in sl.blocks:
-            print(f"    Line(kind={b.kind!r} level={b.level} "
-                  f"num_style={b.num_style!r} text={b.text!r})", file=buf)
+            print(f"    {_dump_block(b)}", file=buf)
 
     with open("/tmp/parser_chk.txt", "w", encoding="utf-8") as f:
         f.write(buf.getvalue())
