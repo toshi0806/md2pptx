@@ -146,11 +146,14 @@ def _convert_custom(command: str, src: str, dst: str) -> None:
     if not parts:
         raise PdfError(f"empty {ENV_CONVERTER}/--pdf-converter command")
     # 判定はすべて分割後のトークン（parts）で行い，元文字列との二重基準を避ける．
+    # ツールが PDF をどこへ書くかは指定形式で決まる：
+    #   {output} あり … その場所へ直接書く → dst をそのまま検査
+    #   {outdir} あり … そのディレクトリに <入力 basename>.pdf を書く（soffice 方式）
+    #   どちらも無し  … 入力の隣に <入力 basename>.pdf を書く（ppt2pdf 方式．{input} を補う）
     has_output = any("{output}" in p for p in parts)
-    has_ph = has_output or any(
-        ("{input}" in p or "{outdir}" in p) for p in parts)
-    if not has_ph:
-        # 出力パスを取らないツール（例: ppt2pdf out.pptx）向け：入力を末尾に補う．
+    has_outdir = any("{outdir}" in p for p in parts)
+    has_input = any("{input}" in p for p in parts)
+    if not (has_output or has_outdir or has_input):
         parts.append("{input}")
     subst = {"input": src, "output": dst, "outdir": outdir}
     cmd = [p.format(**subst) for p in parts]
@@ -160,8 +163,11 @@ def _convert_custom(command: str, src: str, dst: str) -> None:
         if not os.path.isfile(dst):
             raise PdfError(f"converter did not write {dst}")
         return
-    # {output} を渡していない場合，ツールは入力の隣に <basename>.pdf を書く想定．
-    produced = os.path.splitext(os.path.abspath(src))[0] + ".pdf"
+    base = os.path.splitext(os.path.basename(src))[0] + ".pdf"
+    if has_outdir:
+        produced = os.path.join(outdir, base)
+    else:
+        produced = os.path.join(os.path.dirname(os.path.abspath(src)), base)
     _finish(produced, dst, "converter")
 
 
