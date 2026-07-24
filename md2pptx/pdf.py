@@ -100,6 +100,8 @@ def _convert_libreoffice(src: str, dst: str) -> None:
             "--convert-to", "pdf", "--outdir", outdir, src,
         ], "libreoffice")
     # soffice は <入力 basename>.pdf を outdir に書く．期待名と違えば移動する．
+    # 使い捨てプロファイル（with）は変換が終わった時点で不要なので，PDF の移動は
+    # with を抜けてから行う（プロファイルの寿命と成果物の移動を分離）．
     produced = os.path.join(
         outdir, os.path.splitext(os.path.basename(src))[0] + ".pdf")
     _finish(produced, dst, "libreoffice")
@@ -126,6 +128,9 @@ def _convert_powerpoint(src: str, dst: str) -> None:
         src_ps = src_abs.replace("'", "''")
         dst_ps = dst_abs.replace("'", "''")
         ps = (
+            # COM の失敗は既定では非ゼロ終了にならず _run の returncode 検査を
+            # すり抜ける．Stop にして例外＝非ゼロで終わらせ、原因を拾えるようにする．
+            "$ErrorActionPreference = 'Stop'; "
             "$ppt = New-Object -ComObject PowerPoint.Application; "
             "$pres = $ppt.Presentations.Open("
             f"'{src_ps}', $true, $false, $false); "
@@ -201,13 +206,20 @@ def convert(src: str, dst: str, converter: str | None) -> None:
     """
     if not os.path.isfile(src):
         raise PdfError(f"pptx not found: {src}")
+    # 出力先ディレクトリの不在は，各バックエンドで「PDF ができない」曖昧な失敗に
+    # なる．ここで一度だけ明示エラーにする（自動生成はしない——利用者の明示パス
+    # を尊重し，タイポで勝手にディレクトリを作らない）．
+    dst_dir = os.path.dirname(os.path.abspath(dst))
+    if not os.path.isdir(dst_dir):
+        raise PdfError(f"output directory does not exist: {dst_dir}")
 
     name = (converter or "auto").strip()
 
     if name == "auto":
-        # 使える系統を順に試す．PowerPoint が無ければ LibreOffice へ．
+        # native PowerPoint → LibreOffice の順に試す．native PowerPoint を試すのは
+        # Windows のみ（macOS の PowerPoint は非対応で必ず失敗するため試さない）．
         errors: list[str] = []
-        if sys.platform == "darwin" or sys.platform.startswith("win"):
+        if sys.platform.startswith("win"):
             try:
                 _convert_powerpoint(src, dst)
                 return
