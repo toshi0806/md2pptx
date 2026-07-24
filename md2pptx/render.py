@@ -36,12 +36,8 @@ from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
-try:  # パッケージ実行・単体実行のどちらでも import できるように
-    from .ir import Deck, Slide, TitleSlide, Line, Table, Flow, Image
-    from .flow import plan_flow
-except ImportError:  # pragma: no cover - 単体実行時のフォールバック
-    from ir import Deck, Slide, TitleSlide, Line, Table, Flow, Image
-    from flow import plan_flow
+from .ir import Deck, Slide, TitleSlide, Line, Table, Flow, Image
+from .flow import plan_flow
 
 
 # Table.aligns の寄せ名 → PowerPoint の段落水平アラインメント．
@@ -115,6 +111,10 @@ class Renderer:
         # テーマに pptx を渡した場合，元々入っているスライド（テンプレート用の
         # プレースホルダ枚）が先頭に残らないよう，常に 0 枚から描画を始める．
         self._clear_slides()
+        # python-pptx はスライド寸法を Optional で返す（寸法未設定の pptx がありうる）．
+        # 以降の座標計算は全てこの 2 つを基準にするので，ここで一度だけ確定させる．
+        if self.prs.slide_width is None or self.prs.slide_height is None:
+            raise ValueError("theme has no slide size (slide_width/height)")
         self.SW = self.prs.slide_width
         self.SH = self.prs.slide_height
 
@@ -322,7 +322,10 @@ class Renderer:
         if self.title_layout is None:
             return 28.0
         try:
-            for ph in self.title_layout.placeholders:
+            # python-pptx の LayoutPlaceholders は __iter__ をメソッドでなく
+            # Callable 属性として宣言しており（upstream 自身も pyright 用の
+            # ignore を付けている），mypy が "self を取らない" と誤検出する．
+            for ph in self.title_layout.placeholders:  # type: ignore[misc]
                 if ph.placeholder_format.idx == 1:
                     for dr in ph._element.iter(qn("a:defRPr")):
                         if dr.get("sz"):
@@ -910,10 +913,13 @@ class Renderer:
         配置（テキスト→表→テキスト …）で描画する．Flow は Phase 3 でスキップ．
         """
         directives = slide.directives or {}
-        layout_idx = directives.get("layout", slide.layout)
+        # directives の値はキーごとに型が違う（int/str/bool）．@layout に数値以外が
+        # 来たら既定レイアウトへ倒す（parser 側でも int 化を試みている）．
+        raw_layout = directives.get("layout", slide.layout)
+        layout_idx = raw_layout if isinstance(raw_layout, int) else None
         try:
-            layout = self.layouts[layout_idx]
-        except (IndexError, TypeError):
+            layout = self.L1 if layout_idx is None else self.layouts[layout_idx]
+        except IndexError:
             layout = self.L1
 
         s = self.prs.slides.add_slide(layout)
@@ -1358,7 +1364,10 @@ class Renderer:
         """
         # 地の文（前後）とオブジェクト（表・図）に分ける．
         # Flow の note(top)/note(bottom) も地の文としてプレースホルダへ回す．
-        prose_before, objects, prose_after = [], [], []
+        # 地の文は Line，objects は Table/Flow/Image（帯に座標配置するブロック）．
+        prose_before: list = []
+        objects: list = []
+        prose_after: list = []
         seen_obj = False
         for b in blocks:
             if isinstance(b, (Table, Flow, Image)):

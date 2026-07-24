@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      # mypy 2.x は 3.10 未満を解析対象にできないため，型チェックは新しい処理系で
+      # 1 回だけ走らせる．最古 3.9 の担保は下の generate ジョブが受け持つ．
+      - run: pip install -e ".[dev]"
+      - run: mypy
+
+  generate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 下限は pyproject の requires-python，上限は開発機の版．
+        python-version: ["3.9", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e .
+      # import が通るだけでなく実際に pptx を生成させる．3.9 と 3.14 で出力が
+      # 一致することは実測済みなので，生成まで通すほうが保証が強い．
+      - run: md2pptx example.md --theme OfficeTheme.pptx -o out.pptx
+      - name: Check the deck was produced as expected
+        run: |
+          python - <<'PY'
+          from pptx import Presentation
+          p = Presentation("out.pptx")
+          notes = sum(
+              1 for s in p.slides
+              if s.has_notes_slide and s.notes_slide.notes_text_frame.text.strip()
+          )
+          print(f"slides={len(p.slides)} slides_with_notes={notes}")
+          assert len(p.slides) == 14, f"expected 14 slides, got {len(p.slides)}"
+          assert notes == 2, f"expected 2 slides with notes, got {notes}"
+          PY
+      - name: Self-check the parser debug harness
+        run: python -m md2pptx.parser

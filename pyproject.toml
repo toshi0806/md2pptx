@@ -17,6 +17,13 @@ dependencies = [
     "PyYAML>=6",
 ]
 
+[project.optional-dependencies]
+# 型チェック用（実行には不要）．CI と手元で同じものを入れる．
+dev = [
+    "mypy>=1.11",
+    "types-PyYAML>=6",
+]
+
 [project.urls]
 Repository = "https://github.com/toshi0806/md2pptx"
 
@@ -29,3 +36,13 @@ packages = ["md2pptx"]
 # バージョンは md2pptx/__init__.py の __version__ を単一の情報源にする（二重管理を避ける）．
 [tool.setuptools.dynamic]
 version = { attr = "md2pptx.__version__" }
+
+[tool.mypy]
+files = ["md2pptx"]
+# python_version は指定しない：mypy 2.x は 3.10 未満を解析対象にできない
+# （"Python 3.9 is not supported" で拒否される）．最古 3.9 の担保は CI の
+# 実行マトリクス（3.9 で実際に生成まで通す）が受け持つ．
+warn_unused_ignores = true
+warn_redundant_casts = true
+# 未注釈の関数の中身も見る（描画ヘルパーは注釈が薄いので取りこぼしを減らす）．
+check_untyped_defs = true

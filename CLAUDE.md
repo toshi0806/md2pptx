@@ -48,10 +48,22 @@ md2pptx example.md --theme OfficeTheme.pptx -o example.pptx
 # インストール（依存も自動導入）
 pipx install .        # 隔離環境（推奨）
 pip install -e .      # editable 開発用
+
+# 型チェック（設定は pyproject.toml の [tool.mypy]。CI と同じもの）
+pip install -e ".[dev]"
+mypy
+
+# 各モジュールの自己検証は -m で（相対 import のみなので直接実行はできない）
+python3 -m md2pptx.parser
 ```
 
 依存: `python-pptx>=1.0` / `PyYAML>=6`（`pyproject.toml` で宣言。インストール時に自動導入）。
 環境は python-pptx 1.0.2 / PyYAML 6 で検証。
+
+CI（`.github/workflows/ci.yml`）は 2 ジョブ。`typecheck` が mypy を 1 回、`generate` が
+**3.9 と 3.14 のマトリクス**で `example.md` の生成まで通す。mypy 2.x は 3.10 未満を解析対象に
+できないため、`requires-python = ">=3.9"` の担保は後者の実行が受け持つ（PEP 604 の `|` を
+実行時に評価する書き方などは 3.9 で実際に落ちる）。
 
 ## 変更の検証（重要）
 

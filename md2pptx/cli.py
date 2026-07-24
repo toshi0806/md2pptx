@@ -53,6 +53,21 @@ def load_base(theme_path, keep_base=None):
     )
 
 
+def _as_path(value, key):
+    """CLI 引数／フロントマター由来のパス値を str へ検証する．
+
+    front matter は YAML なので `theme: 123` のように非文字列が来うる．素通しすると
+    os.path が TypeError を投げてトレースバックが出るため，ここで原因の分かる
+    メッセージに変える（未指定を表す None はそのまま返す）．
+    """
+    if value is None or isinstance(value, str):
+        return value
+    raise SystemExit(
+        f"md2pptx: front matter '{key}' must be a string, got "
+        f"{type(value).__name__} ({value!r})"
+    )
+
+
 def _parse_args(argv):
     ap = argparse.ArgumentParser(
         prog="md2pptx",
@@ -108,7 +123,7 @@ def _run(args):
     meta = deck.meta or {}
 
     # 2) テーマ・出力先を解決（CLI 引数 > フロントマター）．
-    theme = args.theme or meta.get("theme")
+    theme = _as_path(args.theme or meta.get("theme"), "theme")
     if not theme:
         raise SystemExit(
             "md2pptx: no theme specified (use --theme or front matter 'theme')"
@@ -119,7 +134,7 @@ def _run(args):
         if os.path.isfile(cand):
             theme = cand
 
-    output = args.output or meta.get("output")
+    output = _as_path(args.output or meta.get("output"), "output")
     if not output:
         raise SystemExit(
             "md2pptx: no output specified (use -o or front matter 'output')"
