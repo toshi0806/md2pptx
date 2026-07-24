@@ -189,7 +189,12 @@ def _finish(produced: str, dst: str, what: str) -> None:
             # produced と dst が別ファイルシステム（EXDEV）だと os.replace は失敗する．
             # 例: 入力の隣（/tmp）に書かせ，dst が別マウント上のとき．コピー＋削除で凌ぐ．
             shutil.copy2(produced, dst)
-            os.remove(produced)
+            # dst は書けたので変換は成功．元ファイルの削除に失敗しても（残骸が残るだけ
+            # なので）成否は変えない——未捕捉の OSError で落とさない．
+            try:
+                os.remove(produced)
+            except OSError:
+                pass
 
 
 def default_pdf_path(output_pptx: str) -> str:
