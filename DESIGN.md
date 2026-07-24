@@ -228,9 +228,8 @@ class Image:                 # ![](){opts} / ```image 由来
     caption: str | None = None
     overflow: bool | None = None  # None=スライドの @overflow に従う
 
-# スライド本文を構成するブロック。実行時に評価される別名なので
-# Python 3.9 を切らないよう Union で書く（`|` は 3.10 以降）
-Block = Union[Line, Table, Flow, Image]
+# スライド本文を構成するブロック
+Block = Line | Table | Flow | Image
 
 @dataclass
 class Slide:

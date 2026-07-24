@@ -27,7 +27,7 @@ input.md    ┘
 
 ## 必要環境
 
-- Python 3.9+
+- Python 3.11+
 - [python-pptx](https://python-pptx.readthedocs.io/) 1.0.2（インストール時に自動導入）
 - [PyYAML](https://pyyaml.org/)（同上）
 
