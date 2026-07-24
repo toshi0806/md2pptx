@@ -228,8 +228,10 @@ class Image:                 # ![](){opts} / ```image 由来
     caption: str | None = None
     overflow: bool | None = None  # None=スライドの @overflow に従う
 
-# スライド本文を構成するブロック
-Block = Line | Table | Flow | Image
+# 帯へ座標配置するブロック（地の文と違い本文プレースホルダへは入らない）
+ObjectBlock = Table | Flow | Image
+# スライド本文を構成するブロック（平坦化され Line | Table | Flow | Image と同一）
+Block = Line | ObjectBlock
 
 @dataclass
 class Slide:
