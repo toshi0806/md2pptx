@@ -183,7 +183,13 @@ def _finish(produced: str, dst: str, what: str) -> None:
     if not os.path.isfile(produced):
         raise PdfError(f"{what} did not produce a PDF (expected {produced})")
     if produced != dst:
-        os.replace(produced, dst)
+        try:
+            os.replace(produced, dst)   # 同一デバイスならアトミック
+        except OSError:
+            # produced と dst が別ファイルシステム（EXDEV）だと os.replace は失敗する．
+            # 例: 入力の隣（/tmp）に書かせ，dst が別マウント上のとき．コピー＋削除で凌ぐ．
+            shutil.copy2(produced, dst)
+            os.remove(produced)
 
 
 def default_pdf_path(output_pptx: str) -> str:

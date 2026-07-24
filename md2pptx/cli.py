@@ -176,6 +176,9 @@ def _run(args):
         pdf_out = args.pdf if isinstance(args.pdf, str) \
             else pdf_backend.default_pdf_path(output)
         converter = args.pdf_converter or os.environ.get(ENV_CONVERTER)
+        # 変換は数秒かかる（LibreOffice は例で ~4 秒）．無音で止まって見えないよう
+        # 開始を stderr に出す（stdout の saved: 行は汚さない）．
+        sys.stderr.write(f"md2pptx: converting to PDF: {pdf_out}\n")
         try:
             pdf_backend.convert(output, pdf_out, converter)
             print(f"saved: {pdf_out}")
