@@ -556,7 +556,7 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
 
     キー名はハイフンをアンダースコアへ正規化する
     （@autonum-color → autonum_color）．未知のキーはタイポの可能性が高いので
-    黙殺せずエラーにする（v0.4 で改名した旧名称は新名称を案内する）．
+    黙殺せずエラーにする（v0.7 で改名した旧名称は新名称を案内する）．
     """
     norm = key.replace("-", "_")
     if norm == "col":

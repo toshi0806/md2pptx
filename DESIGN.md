@@ -54,12 +54,16 @@
 
 | ファイル | 役割 |
 |---|---|
-| `md2pptx.py` | CLI エントリポイント。引数処理・全体オーケストレーション |
-| `thmx2pptx.py` | **thmx → base pptx 変換**（ステージ 0）。本ツールの前提を成立させる要 |
-| `parser.py` | Markdown → 中間表現（IR）。行頭マーカー・表・flow を解釈 |
-| `ir.py` | 中間表現のデータクラス定義 |
-| `render.py` | IR → pptx。`参照スクリプト` のヘルパーをライブラリ化して再利用 |
-| `flow.py` | ` ```flow ` DSL のパーサ＋レイアウタ（box/arrow 配置計算） |
+| `md2pptx/cli.py` | CLI エントリポイント。引数処理・全体オーケストレーション |
+| `md2pptx/thmx2pptx.py` | **thmx → base pptx 変換**（ステージ 0）。本ツールの前提を成立させる要 |
+| `md2pptx/parser.py` | Markdown → 中間表現（IR）。行頭マーカー・表・flow を解釈 |
+| `md2pptx/ir.py` | 中間表現のデータクラス定義 |
+| `md2pptx/render.py` | IR → pptx。`参照スクリプト` のヘルパーをライブラリ化して再利用 |
+| `md2pptx/flow.py` | ` ```flow ` DSL のパーサ＋レイアウタ（box/arrow 配置計算） |
+
+パッケージはルート直下の flat レイアウト（`md2pptx/`）で、`pyproject.toml` の
+`[project.scripts]` が `md2pptx = "md2pptx.cli:main"` としてコンソールスクリプトを生成する。
+モジュール間は相対 import（`from .ir import …`）で結線する。
 
 `参照スクリプト` のヘルパー（`content_slide`, `box`, `arrow`, `note`, `set_autonum`,
 `no_bullet`, `fit_body`, `enum_items`, `add_slide_number` 等）は **`render.py` へ移植**し、
@@ -127,16 +131,21 @@ docProps/thumbnail.jpeg ほか画像
 ```
 
 ```python
-def load_base(theme_path):
+def load_base(theme_path, keep_base=None):
+    """テーマを base pptx の「パス」へ収束させる（Presentation は開かない）．"""
     ext = os.path.splitext(theme_path)[1].lower()
     if ext == ".thmx":
-        base_path = thmx_to_pptx(theme_path)   # ステージ0（一時ファイル）
-    elif ext == ".pptx":
-        base_path = theme_path                  # そのまま土台に
-    else:
-        raise SystemExit(f"未対応のテーマ形式: {ext}（.thmx か .pptx を指定）")
-    return Presentation(base_path)
+        if keep_base:
+            return thmx_to_pptx(theme_path, keep_base), False  # 破棄しない
+        return thmx_to_pptx(theme_path), True                  # 一時ファイル
+    if ext == ".pptx":
+        return theme_path, False                               # そのまま土台に
+    raise SystemExit(f"unsupported theme format: {ext}（.thmx か .pptx を指定）")
 ```
+
+戻り値は `(base_path, is_temp)`。`is_temp` が真のとき、呼び出し側（`cli.main`）が
+レンダリング後に一時ファイルを削除する。base pptx を開くのは `Renderer` の責務で、
+`load_base` はパス解決だけを行う。
 
 使い分け:
 
@@ -149,39 +158,94 @@ def load_base(theme_path):
 
 パーサとレンダラの契約。Markdown の方言や DSL の詳細をレンダラから隠蔽する。
 
+以下は骨格のスケッチ。各フィールドの詳細な意味は §5（記法仕様）と `ir.py` の
+docstring を正とする。
+
 ```python
-# ir.py （イメージ）
+# ir.py （スケッチ：型と既定値のみ。詳細は ir.py の docstring 参照）
 @dataclass
-class Line:
+class Line:                  # 本文の 1 段落
     text: str
-    level: int             # 箇条書きの深さ 0,1,2...
-    kind: str              # "bullet" | "autonum" | "plain"(=no_bullet)
-    num_style: str | None  # autonum 時: "arabicPeriod" | "circleNumDbPlain" | "arabicParenBoth" ...
-    num_color: str | None  # 採番記号色のテーマ名（例 "tx1"）
+    level: int = 0           # 箇条書きの深さ 0,1,2...
+    kind: str = "bullet"     # "bullet" | "autonum" | "plain"(=no_bullet)
+    num_style: str | None = None  # autonum 時: "arabicPeriod" | "circleNumDbPlain" | ...
+    num_color: str | None = None  # 採番記号色のテーマ名（例 "tx1"）
+    size_delta: int | None = None # {+N}/{-N} の相対段数（None=未指定, 0=テーマ既定へ固定）
 
 @dataclass
 class Table:
-    header: list[str]
-    rows: list[list[str]]
+    header: list[str] = ...
+    rows: list[list[str]] = ...
+    aligns: list[str] = ...  # 列ごとの寄せ（区切り行のコロン由来）"left"|"center"|"right"
 
 @dataclass
-class Flow:                 # ```flow ブロック由来
-    nodes: list              # box / ellipsis
-    edges: list              # arrow + ラベル
-    caption: str | None
+class FlowNode:              # フロー図のノード
+    label: str = ""
+    sublabel: str | None = None
+    kind: str = "box"        # "box" | "ellipsis"（"…" 単独）
+    color: str | None = None # テーマ色名の個別指定（例 "accent6"）
+
+@dataclass
+class FlowEdge:              # ノード間の矢印
+    src: int = 0             # Flow.nodes 内の index
+    dst: int = 0
+    label: str | None = None # -PR-> の "PR"
+
+@dataclass
+class Flow:                  # ```flow ブロック由来
+    direction: str = "lr"    # "lr"（左→右）| "tb"（上→下）
+    nodes: list = ...        # FlowNode の列
+    edges: list = ...        # FlowEdge の列
+    caption: str | None = None
+    note_top: str | None = None
+    note_bottom: str | None = None
+
+@dataclass
+class Length:                # 画像の width / height 1 次元
+    unit: str                # "percent"（帯に対する割合）| "emu"（絶対）
+    value: float
+
+@dataclass
+class Crop:                  # 画像トリミングの「残す矩形」（左上原点）
+    unit: str                # "px" | "percent"
+    x: float; y: float; w: float; h: float
+
+@dataclass
+class Image:                 # ![](){opts} / ```image 由来
+    src: str
+    width: Length | None = None
+    height: Length | None = None
+    crop: Crop | None = None
+    align: str = "center"    # "left" | "center" | "right"
+    fit: str = "contain"     # width/height 両指定時: "contain" | "fill"
+    caption: str | None = None
+    overflow: bool | None = None  # None=スライドの @overflow に従う
 
 @dataclass
 class Slide:
-    title: str | None
-    layout: int              # 既定 1（タイトルとコンテンツ）
-    blocks: list             # Line | Table | Flow を順に保持
-    directives: dict         # スライド単位の指示（autofit など）
+    title: str | None = None
+    layout: int = 1          # 既定 1（タイトルとコンテンツ）
+    blocks: list = ...       # Line | Table | Flow | Image を順に保持（単一カラム時）
+    directives: dict = ...   # スライド単位の指示（autofit など）
+    columns: list = ...      # 多カラム時の各カラムのブロック列（空なら単一カラム）
+    notes: str | None = None # ```note 由来の発表者ノート
+
+@dataclass
+class TitleSlide:            # front matter 由来（あれば 1 枚目）
+    title: str | None = None
+    subtitle: str | None = None
+    author: str | None = None
+    affiliation: list[str] = ...
+    subtitle_delta: int | None = None      # 相対サイズ段数（Line.size_delta と同義）
+    author_delta: int | None = None
+    affiliation_deltas: list[int | None] = ...  # affiliation と 1 対 1（長さを揃える）
+    notes: str | None = None
 
 @dataclass
 class Deck:
-    meta: dict               # front matter
-    title_slide: object | None
-    slides: list
+    meta: dict = ...             # front matter
+    title_slide: TitleSlide | None = None
+    slides: list = ...           # Slide の列
 ```
 
 ## 5. Markdown 記法仕様
@@ -564,14 +628,15 @@ caption: 実験結果の比較
 ## 7. CLI
 
 ```bash
-pip install python-pptx pyyaml
-./md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
+pipx install .                                            # 依存も自動導入（開発中は python3 -m md2pptx）
+md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
 ```
 
 - 位置引数：Markdown ファイル。
 - `--theme`：テーマファイル。**`.thmx` / `.pptx` 両対応**（拡張子で自動分岐。§3.5）。フロントマター `theme:` を上書き。
 - `-o/--output`：出力 pptx。フロントマター `output:` を上書き。
 - `--keep-base PATH`：ステージ 0 で作った base pptx を破棄せず保存（デバッグ用）。
+- `--version`：バージョンを表示して終了（`md2pptx.__version__` が単一の情報源）。
 - 終了時に `saved: <out> slides: <n>` を出力。
 - thmx 変換・パースのエラーは「原因＋（パース時は行番号）」を表示して失敗させる。
 
