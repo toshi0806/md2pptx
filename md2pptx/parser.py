@@ -188,7 +188,11 @@ def _build_title_slide(meta: dict) -> TitleSlide | None:
     subtitle_delta, subtitle = _split_size_opt(meta.get("subtitle"))
     author_delta, author = _split_size_opt(meta.get("author"))
 
-    affiliation_raw = meta.get("affiliation") or []
+    affiliation_raw = meta.get("affiliation")
+    if affiliation_raw is None:
+        # 未指定のみ空扱い．`affiliation: 0` のような falsy な値まで捨てないよう
+        # `or []` にはしない（非文字列スカラーは下で 1 行へ正規化する）．
+        affiliation_raw = []
     if not isinstance(affiliation_raw, list):
         # スカラー（"affiliation: 所属" や YAML が数値として読んだ値）は 1 行扱い．
         affiliation_raw = [affiliation_raw]
