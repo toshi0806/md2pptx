@@ -16,12 +16,19 @@
   無ければ末尾に ``{input}`` を補う（出力パスを取らないツール向け）．その場合
   ツールは入力の隣に ``<basename>.pdf`` を書く想定で，期待パスと違えば移動する．
 
+**macOS の native PowerPoint は非対応**：この PowerPoint ビルドの AppleScript 辞書には
+``export`` コマンドが無く，標準 ``save … as save as PDF`` は宛先型により無反応または保存
+ダイアログでハングする（実測）。ハングは実害なので試みず明示エラーにし，``auto`` は
+LibreOffice へフォールバックする．忠実な mac 変換は VM 経由の ``ppt2pdf`` を
+``--pdf-converter`` で使う．Windows の PowerPoint は COM（``SaveAs`` format 32）で対応．
+
 このモジュールは cli 以外に依存しない（python-pptx 非依存）．外部プロセスの
 起動と，どのバイナリを使うかの解決だけを担う．
 """
 from __future__ import annotations
 
 import os
+import pathlib
 import shlex
 import shutil
 import subprocess
@@ -59,7 +66,11 @@ def _which_libreoffice() -> str | None:
 
 
 def _run(cmd: list[str], what: str) -> None:
-    """外部コマンドを実行し，失敗を PdfError に変換する（stdout/stderr は捨てる）．"""
+    """外部コマンドを実行し，失敗を PdfError に変換する．
+
+    成功時の出力は捨てる．失敗時のみ stderr（無ければ stdout）の末尾 1 行を
+    原因として拾う（cli が警告に整形する）．
+    """
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True)
     except FileNotFoundError:
@@ -80,7 +91,9 @@ def _convert_libreoffice(src: str, dst: str) -> None:
     outdir = os.path.dirname(os.path.abspath(dst)) or "."
     # 同一プロファイルの多重起動は失敗しうるので，毎回使い捨てのプロファイルを渡す．
     with tempfile.TemporaryDirectory(prefix="md2pptx-lo-") as profile:
-        uri = "file://" + os.path.abspath(profile).replace(os.sep, "/")
+        # as_uri() は Windows のドライブレターも file:///C:/... と正しく組む
+        # （手組みの "file://"+path だと file://C:/... になり不正）．
+        uri = pathlib.Path(os.path.abspath(profile)).as_uri()
         _run([
             soffice, "--headless",
             f"-env:UserInstallation={uri}",
@@ -97,29 +110,26 @@ def _convert_powerpoint(src: str, dst: str) -> None:
     src_abs = os.path.abspath(src)
     dst_abs = os.path.abspath(dst)
     if sys.platform == "darwin":
-        # `export ... as save as PDF` を使う．`save ... as save as PDF` は保存
-        # ダイアログが出て GUI でハングする（実測）が，export は無人で書き出せる．
-        # in/to は辞書上 type="text" なので dst は POSIX パス文字列をそのまま渡す．
-        # open の戻り値は束縛できないので active presentation を取る
-        # （ppt2pdf.ps1 の COM 版が ActivePresentation へフォールバックするのと同じ）．
-        script = (
-            'on run {srcPath, dstPath}\n'
-            '  tell application "Microsoft PowerPoint"\n'
-            '    open srcPath\n'
-            '    set pres to active presentation\n'
-            '    export pres to dstPath as save as PDF\n'
-            '    close pres saving no\n'
-            '  end tell\n'
-            'end run'
-        )
-        _run(["osascript", "-e", script, src_abs, dst_abs], "powerpoint")
-    elif sys.platform.startswith("win"):
-        # PowerShell + COM．32 = ppSaveAsPDF．
+        # macOS の PowerPoint（AppleScript）は無人 PDF 化が不安定．sdef に `export`
+        # コマンドは無く，標準 `save … in <file> as save as PDF` は宛先の型次第で
+        # 無反応（POSIX パス文字列）か保存ダイアログでハング（POSIX file）になる
+        # （このビルドで実測）．ハングは実害なので試みず，明示エラーにして呼び出し側に
+        # 委ねる：`auto` は LibreOffice へフォールバックし，忠実な変換は VM 経由の
+        # `--pdf-converter 'ppt2pdf -o {output} {input}'` を使う．
+        raise PdfError(
+            "native PowerPoint on macOS is not supported for headless PDF "
+            "(no reliable AppleScript path on this build); use LibreOffice or "
+            "'--pdf-converter \"ppt2pdf -o {output} {input}\"'")
+    if sys.platform.startswith("win"):
+        # PowerShell + COM．32 = ppSaveAsPDF．パスは単一引用符文字列に埋めるので，
+        # パス内の ' は '' にエスケープする（O'Brien 等でコマンドが壊れるのを防ぐ）．
+        src_ps = src_abs.replace("'", "''")
+        dst_ps = dst_abs.replace("'", "''")
         ps = (
             "$ppt = New-Object -ComObject PowerPoint.Application; "
             "$pres = $ppt.Presentations.Open("
-            f"'{src_abs}', $true, $false, $false); "
-            f"$pres.SaveAs('{dst_abs}', 32); "
+            f"'{src_ps}', $true, $false, $false); "
+            f"$pres.SaveAs('{dst_ps}', 32); "
             "$pres.Close(); $ppt.Quit()"
         )
         _run(["powershell", "-NoProfile", "-Command", ps], "powerpoint")
@@ -135,15 +145,17 @@ def _convert_custom(command: str, src: str, dst: str) -> None:
     parts = shlex.split(command)
     if not parts:
         raise PdfError(f"empty {ENV_CONVERTER}/--pdf-converter command")
-    has_ph = any(
-        ("{input}" in p or "{output}" in p or "{outdir}" in p) for p in parts)
+    # 判定はすべて分割後のトークン（parts）で行い，元文字列との二重基準を避ける．
+    has_output = any("{output}" in p for p in parts)
+    has_ph = has_output or any(
+        ("{input}" in p or "{outdir}" in p) for p in parts)
     if not has_ph:
         # 出力パスを取らないツール（例: ppt2pdf out.pptx）向け：入力を末尾に補う．
         parts.append("{input}")
     subst = {"input": src, "output": dst, "outdir": outdir}
     cmd = [p.format(**subst) for p in parts]
     _run(cmd, "converter")
-    if has_ph and "{output}" in command:
+    if has_output:
         # ツールが {output} をそのまま書いたはず．そこに無ければ失敗．
         if not os.path.isfile(dst):
             raise PdfError(f"converter did not write {dst}")
@@ -189,7 +201,7 @@ def convert(src: str, dst: str, converter: str | None) -> None:
     if name == "auto":
         # 使える系統を順に試す．PowerPoint が無ければ LibreOffice へ．
         errors: list[str] = []
-        if sys.platform in ("darwin",) or sys.platform.startswith("win"):
+        if sys.platform == "darwin" or sys.platform.startswith("win"):
             try:
                 _convert_powerpoint(src, dst)
                 return
