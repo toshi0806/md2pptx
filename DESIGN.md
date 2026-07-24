@@ -163,6 +163,7 @@ docstring を正とする。
 
 ```python
 # ir.py （スケッチ：型と既定値のみ。詳細は ir.py の docstring 参照）
+# 既定値のないフィールドは必須（field は dataclasses.field）
 @dataclass
 class Line:                  # 本文の 1 段落
     text: str
@@ -174,9 +175,10 @@ class Line:                  # 本文の 1 段落
 
 @dataclass
 class Table:
-    header: list[str] = ...
-    rows: list[list[str]] = ...
-    aligns: list[str] = ...  # 列ごとの寄せ（区切り行のコロン由来）"left"|"center"|"right"
+    header: list[str] = field(default_factory=list)
+    rows: list[list[str]] = field(default_factory=list)
+    # 列ごとの寄せ（区切り行のコロン由来）"left"|"center"|"right"
+    aligns: list[str] = field(default_factory=list)
 
 @dataclass
 class FlowNode:              # フロー図のノード
@@ -194,8 +196,8 @@ class FlowEdge:              # ノード間の矢印
 @dataclass
 class Flow:                  # ```flow ブロック由来
     direction: str = "lr"    # "lr"（左→右）| "tb"（上→下）
-    nodes: list = ...        # FlowNode の列
-    edges: list = ...        # FlowEdge の列
+    nodes: list = field(default_factory=list)  # FlowNode の列
+    edges: list = field(default_factory=list)  # FlowEdge の列
     caption: str | None = None
     note_top: str | None = None
     note_bottom: str | None = None
@@ -208,7 +210,10 @@ class Length:                # 画像の width / height 1 次元
 @dataclass
 class Crop:                  # 画像トリミングの「残す矩形」（左上原点）
     unit: str                # "px" | "percent"
-    x: float; y: float; w: float; h: float
+    x: float
+    y: float
+    w: float
+    h: float
 
 @dataclass
 class Image:                 # ![](){opts} / ```image 由来
@@ -225,9 +230,12 @@ class Image:                 # ![](){opts} / ```image 由来
 class Slide:
     title: str | None = None
     layout: int = 1          # 既定 1（タイトルとコンテンツ）
-    blocks: list = ...       # Line | Table | Flow | Image を順に保持（単一カラム時）
-    directives: dict = ...   # スライド単位の指示（autofit など）
-    columns: list = ...      # 多カラム時の各カラムのブロック列（空なら単一カラム）
+    # Line | Table | Flow | Image を順に保持（単一カラム時）
+    blocks: list = field(default_factory=list)
+    # スライド単位の指示（autofit など）
+    directives: dict = field(default_factory=dict)
+    # 多カラム時の各カラムのブロック列（空なら単一カラム）
+    columns: list = field(default_factory=list)
     notes: str | None = None # ```note 由来の発表者ノート
 
 @dataclass
@@ -235,17 +243,18 @@ class TitleSlide:            # front matter 由来（あれば 1 枚目）
     title: str | None = None
     subtitle: str | None = None
     author: str | None = None
-    affiliation: list[str] = ...
+    affiliation: list[str] = field(default_factory=list)
     subtitle_delta: int | None = None      # 相対サイズ段数（Line.size_delta と同義）
     author_delta: int | None = None
-    affiliation_deltas: list[int | None] = ...  # affiliation と 1 対 1（長さを揃える）
+    # affiliation と 1 対 1（__post_init__ で長さを揃える）
+    affiliation_deltas: list[int | None] = field(default_factory=list)
     notes: str | None = None
 
 @dataclass
 class Deck:
-    meta: dict = ...             # front matter
+    meta: dict = field(default_factory=dict)   # front matter
     title_slide: TitleSlide | None = None
-    slides: list = ...           # Slide の列
+    slides: list = field(default_factory=list) # Slide の列
 ```
 
 ## 5. Markdown 記法仕様
