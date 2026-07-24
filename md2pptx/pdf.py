@@ -11,7 +11,7 @@
 
 - ``auto``（既定）: native PowerPoint → LibreOffice の順に，使えるものを試す．
 - ``powerpoint`` / ``libreoffice``: その系統を名指し．
-- 任意のコマンド行: ``ppt2pdf -o {output} {input}`` のように直接指定．
+- 任意のコマンド行: ``mytool -o {output} {input}`` のように直接指定．
   プレースホルダ ``{input}`` / ``{output}`` / ``{outdir}`` を置換する．1 つも
   無ければ末尾に ``{input}`` を補う（出力パスを取らないツール向け）．その場合
   ツールは入力の隣に ``<basename>.pdf`` を書く想定で，期待パスと違えば移動する．
@@ -19,8 +19,9 @@
 **macOS の native PowerPoint は非対応**：この PowerPoint ビルドの AppleScript 辞書には
 ``export`` コマンドが無く，標準 ``save … as save as PDF`` は宛先型により無反応または保存
 ダイアログでハングする（実測）。ハングは実害なので試みず明示エラーにし，``auto`` は
-LibreOffice へフォールバックする．忠実な mac 変換は VM 経由の ``ppt2pdf`` を
-``--pdf-converter`` で使う．Windows の PowerPoint は COM（``SaveAs`` format 32）で対応．
+LibreOffice へフォールバックする．実 PowerPoint 相当の忠実な変換が要る場合は，実 PowerPoint
+を叩く外部変換ツールを ``--pdf-converter`` に指定する．Windows の PowerPoint は
+COM（``SaveAs`` format 32）で対応．
 
 このモジュールは cli 以外に依存しない（python-pptx 非依存）．外部プロセスの
 起動と，どのバイナリを使うかの解決だけを担う．
@@ -116,12 +117,12 @@ def _convert_powerpoint(src: str, dst: str) -> None:
         # コマンドは無く，標準 `save … in <file> as save as PDF` は宛先の型次第で
         # 無反応（POSIX パス文字列）か保存ダイアログでハング（POSIX file）になる
         # （このビルドで実測）．ハングは実害なので試みず，明示エラーにして呼び出し側に
-        # 委ねる：`auto` は LibreOffice へフォールバックし，忠実な変換は VM 経由の
-        # `--pdf-converter 'ppt2pdf -o {output} {input}'` を使う．
+        # 委ねる：`auto` は LibreOffice へフォールバックし，実 PowerPoint 相当の忠実な
+        # 変換が要る場合は実 PowerPoint を叩く外部ツールを --pdf-converter に指定する．
         raise PdfError(
             "native PowerPoint on macOS is not supported for headless PDF "
-            "(no reliable AppleScript path on this build); use LibreOffice or "
-            "'--pdf-converter \"ppt2pdf -o {output} {input}\"'")
+            "(no reliable AppleScript path on this build); use LibreOffice, or "
+            "point --pdf-converter at an external converter")
     if sys.platform.startswith("win"):
         # PowerShell + COM．32 = ppSaveAsPDF．パスは単一引用符文字列に埋めるので，
         # パス内の ' は '' にエスケープする（O'Brien 等でコマンドが壊れるのを防ぐ）．
@@ -154,7 +155,7 @@ def _convert_custom(command: str, src: str, dst: str) -> None:
     # ツールが PDF をどこへ書くかは指定形式で決まる：
     #   {output} あり … その場所へ直接書く → dst をそのまま検査
     #   {outdir} あり … そのディレクトリに <入力 basename>.pdf を書く（soffice 方式）
-    #   どちらも無し  … 入力の隣に <入力 basename>.pdf を書く（ppt2pdf 方式．{input} を補う）
+    #   どちらも無し  … 入力の隣に <入力 basename>.pdf を書く（出力パス非対応ツール．{input} を補う）
     has_output = any("{output}" in p for p in parts)
     has_outdir = any("{outdir}" in p for p in parts)
     has_input = any("{input}" in p for p in parts)

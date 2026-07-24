@@ -676,7 +676,7 @@ md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
 ## 9. 再現検証の結果【Phase 4 完了】
 
 参照スクリプト出力（実在の 24 枚デッキ）を Markdown で再現し，
-`ppt2pdf`（実 PowerPoint レンダリング）＋ `pdftoppm` で 1 枚ずつ突き合わせた．
+実 PowerPoint レンダリング＋ `pdftoppm` で 1 枚ずつ突き合わせた．
 ※ 検証に使った個人デッキ・テーマは本リポジトリには含めない。
 
 | 機能 | 想定 Markdown | 再現 |
