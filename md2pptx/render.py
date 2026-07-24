@@ -36,7 +36,9 @@ from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
-from .ir import Deck, Slide, TitleSlide, Line, Table, Flow, Image
+from .ir import (
+    Block, Deck, Flow, Image, Line, ObjectBlock, Slide, Table, TitleSlide,
+)
 from .flow import plan_flow
 
 
@@ -1039,7 +1041,7 @@ class Renderer:
                 self._apply_autofit(tf, scale, default_autofit)
 
     # ----------------------------------------------------- 描画ユーティリティ
-    def _append_lines(self, tf, line_blocks, first, default_num_color,
+    def _append_lines(self, tf, line_blocks: list[Line], first, default_num_color,
                       default_size_delta=None):
         """Line 列を text_frame に段落として追記する（採番／no_bullet を適用）．
 
@@ -1070,7 +1072,8 @@ class Renderer:
             self._apply_size_delta(p, blk.level, delta)
         return first
 
-    def _fill_lines(self, tf, line_blocks, default_num_color, default_size_delta=None):
+    def _fill_lines(self, tf, line_blocks: list[Line], default_num_color,
+                    default_size_delta=None):
         """Line 列を text_frame の段落として流し込む（先頭から）．"""
         self._append_lines(tf, line_blocks, True, default_num_color,
                            default_size_delta)
@@ -1299,7 +1302,7 @@ class Renderer:
             return Line(text=t, kind="plain")
         return Line(text=t, kind="bullet")
 
-    def _obj_weight(self, obj):
+    def _obj_weight(self, obj: ObjectBlock):
         """オブジェクト（Table / Flow / Image）の縦方向の重み（高さ配分用）．"""
         if isinstance(obj, Flow):
             return max(4, len(obj.nodes) + 2)
@@ -1309,7 +1312,8 @@ class Renderer:
             return 8 + (1 if obj.caption else 0)
         return max(2, len(obj.rows) + (1 if obj.header else 0))
 
-    def _stack_objects(self, slide, objects, left, top, width, height, col_ratios,
+    def _stack_objects(self, slide, objects: list[ObjectBlock], left, top, width,
+                       height, col_ratios,
                        slide_overflow=False, has_prose_after=False):
         """Table / Flow / Image を矩形領域内に重みづけで縦に積んで座標配置する．
 
@@ -1336,7 +1340,7 @@ class Renderer:
                                   has_prose_after=has_prose_after)
             y += seg_h + gap
 
-    def _render_stacked(self, slide, blocks, default_num_color, scale,
+    def _render_stacked(self, slide, blocks: list[Block], default_num_color, scale,
                         default_autofit, col_ratios, default_size_delta=None,
                         slide_overflow=False):
         """表／図を含むスライドを描画する．
@@ -1352,7 +1356,8 @@ class Renderer:
                                   default_num_color, scale, default_autofit,
                                   col_ratios, default_size_delta, slide_overflow)
 
-    def _render_stacked_into(self, slide, blocks, body, left, top, width, height,
+    def _render_stacked_into(self, slide, blocks: list[Block], body, left, top,
+                             width, height,
                              default_num_color, scale, default_autofit, col_ratios,
                              default_size_delta=None, slide_overflow=False):
         """``blocks`` を矩形 (left, top, width, height) 内へスタック描画する．
@@ -1364,10 +1369,9 @@ class Renderer:
         """
         # 地の文（前後）とオブジェクト（表・図）に分ける．
         # Flow の note(top)/note(bottom) も地の文としてプレースホルダへ回す．
-        # 地の文は Line，objects は Table/Flow/Image（帯に座標配置するブロック）．
-        prose_before: list = []
-        objects: list = []
-        prose_after: list = []
+        prose_before: list[Line] = []
+        objects: list[ObjectBlock] = []
+        prose_after: list[Line] = []
         seen_obj = False
         for b in blocks:
             if isinstance(b, (Table, Flow, Image)):

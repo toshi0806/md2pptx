@@ -192,8 +192,14 @@ class Image:
     overflow: bool | None = None
 
 
+# 帯（中央領域）へ座標配置するブロック．地の文（Line）と違い，本文プレースホルダ
+# ではなく矩形に直接置かれる．render の _stack_objects / _obj_weight はこの 3 種
+# だけを扱う（Line を渡すと属性が無く落ちる）．
+ObjectBlock = Table | Flow | Image
+
 # スライド本文を構成するブロック．parser が出現順に並べ，render が型で分岐する．
-Block = Line | Table | Flow | Image
+# Union は平坦化されるので Line | Table | Flow | Image と同一．
+Block = Line | ObjectBlock
 
 
 @dataclass
