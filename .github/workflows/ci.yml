@@ -17,8 +17,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      # mypy 2.x は 3.10 未満を解析対象にできないため，型チェックは新しい処理系で
-      # 1 回だけ走らせる．最古 3.9 の担保は下の generate ジョブが受け持つ．
+      # mypy は pyproject の python_version（= サポート最古）として解析するので，
+      # 実行する処理系は 1 つで足りる．
       - run: pip install -e ".[dev]"
       - run: mypy
 
@@ -28,15 +28,15 @@ jobs:
       fail-fast: false
       matrix:
         # 下限は pyproject の requires-python，上限は開発機の版．
-        python-version: ["3.9", "3.14"]
+        python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e .
-      # import が通るだけでなく実際に pptx を生成させる．3.9 と 3.14 で出力が
-      # 一致することは実測済みなので，生成まで通すほうが保証が強い．
+      # mypy が通ることと実際に動くことは別（#32 では cli.py の future import 欠落を
+      # 実行側だけが捕まえた）．import 確認に留めず生成まで通し，出力も検査する．
       - run: md2pptx example.md --theme OfficeTheme.pptx -o out.pptx
       - name: Check the deck was produced as expected
         run: |

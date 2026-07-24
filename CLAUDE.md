@@ -61,9 +61,10 @@ python3 -m md2pptx.parser
 環境は python-pptx 1.0.2 / PyYAML 6 で検証。
 
 CI（`.github/workflows/ci.yml`）は 2 ジョブ。`typecheck` が mypy を 1 回、`generate` が
-**3.9 と 3.14 のマトリクス**で `example.md` の生成まで通す。mypy 2.x は 3.10 未満を解析対象に
-できないため、`requires-python = ">=3.9"` の担保は後者の実行が受け持つ（PEP 604 の `|` を
-実行時に評価する書き方などは 3.9 で実際に落ちる）。
+**3.11 と 3.14 のマトリクス**で `example.md` の生成まで通す。mypy は `pyproject.toml` の
+`python_version`（= サポート最古）として解析するので実行処理系は 1 つで足りるが、
+**実行マトリクスは別途必要**。mypy が通ることと実際に動くことは別で、#32 では
+`cli.py` の future import 欠落を実行側だけが捕まえた。
 
 ## 変更の検証（重要）
 

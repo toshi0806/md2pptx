@@ -13,7 +13,7 @@ DESIGN.md §4 に対応．外部依存を持たない（python-pptx 等は impor
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Union
+from typing import Literal
 
 # 水平寄せ．表の列・画像の配置で共通に使う．
 Align = Literal["left", "center", "right"]
@@ -193,8 +193,7 @@ class Image:
 
 
 # スライド本文を構成するブロック．parser が出現順に並べ，render が型で分岐する．
-# Python 3.9 を切らないため実行時に評価される別名は Union で書く（`|` は 3.10 以降）．
-Block = Union[Line, Table, Flow, Image]
+Block = Line | Table | Flow | Image
 
 
 @dataclass
