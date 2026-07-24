@@ -13,6 +13,10 @@ DESIGN.md §4 に対応．外部依存を持たない（python-pptx 等は impor
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal, Union
+
+# 水平寄せ．表の列・画像の配置で共通に使う．
+Align = Literal["left", "center", "right"]
 
 
 @dataclass
@@ -28,6 +32,7 @@ class Line:
             - "bullet"  : テーマ既定の箇条書き記号（add_bullets 相当）．
             - "autonum" : 自動採番（set_autonum 相当）．num_style で形式を指定．
             - "plain"   : 行頭記号なし（no_bullet 相当．結論・補足行など）．
+            取りうる値は注釈（Literal）が正．
         num_style: kind=="autonum" のときの採番形式．python-pptx の
             buAutoNum type 値をそのまま使う．
             "arabicPeriod"（1. 2. 3.）/ "circleNumDbPlain"（丸数字 ①②③）/
@@ -43,7 +48,7 @@ class Line:
 
     text: str
     level: int = 0
-    kind: str = "bullet"
+    kind: Literal["bullet", "autonum", "plain"] = "bullet"
     num_style: str | None = None
     num_color: str | None = None
     size_delta: int | None = None
@@ -56,15 +61,14 @@ class Table:
     Attributes:
         header: ヘッダ行のセル文字列リスト（アクセント色で着色する想定）．
         rows: 本体行のリスト．各行はヘッダと同じ列数のセル文字列リスト．
-        aligns: 各列の水平寄せ（区切り行のコロン由来）．要素は
-            "left" / "center" / "right"．空リストは「指定なし＝すべて左」を
-            意味する既定．列数に満たない場合，未指定の列は左寄せとして扱う
-            （render 側で添字が範囲外なら "left"）．
+        aligns: 各列の水平寄せ（区切り行のコロン由来）．空リストは
+            「指定なし＝すべて左」を意味する既定．列数に満たない場合，
+            未指定の列は左寄せとして扱う（render 側で添字が範囲外なら "left"）．
     """
 
     header: list[str] = field(default_factory=list)
     rows: list[list[str]] = field(default_factory=list)
-    aligns: list[str] = field(default_factory=list)
+    aligns: list[Align] = field(default_factory=list)
 
 
 @dataclass
@@ -74,13 +78,14 @@ class FlowNode:
     Attributes:
         label: 主ラベル（[ラベル | サブラベル] の前半）．
         sublabel: 副ラベル（後半）．無ければ None．
-        kind: "box"（角丸四角）または "ellipsis"（"…" 単独の省略記号）．
+        kind: "box"（角丸四角）または "ellipsis"（"…" 単独の省略記号．
+            入力記法 `[…]` に対応する活字の省略記号のこと）．
         color: テーマ色名の個別指定（例 "accent6"）．None なら自動割当．
     """
 
     label: str = ""
     sublabel: str | None = None
-    kind: str = "box"
+    kind: Literal["box", "ellipsis"] = "box"
     color: str | None = None
 
 
@@ -107,16 +112,16 @@ class Flow:
 
     Attributes:
         direction: 並び方向．"lr"（左→右，既定）/ "tb"（上→下）．
-        nodes: FlowNode の列（出現順）．
-        edges: FlowEdge の列（隣接ノードを結ぶ）．
+        nodes: ノードの列（出現順）．
+        edges: エッジの列（隣接ノードを結ぶ）．
         caption: 図下キャプション．無ければ None．
         note_top: 図の上に置く注記．無ければ None．
         note_bottom: 図の下に置く注記．無ければ None．
     """
 
-    direction: str = "lr"
-    nodes: list = field(default_factory=list)
-    edges: list = field(default_factory=list)
+    direction: Literal["lr", "tb"] = "lr"
+    nodes: list[FlowNode] = field(default_factory=list)
+    edges: list[FlowEdge] = field(default_factory=list)
     caption: str | None = None
     note_top: str | None = None
     note_bottom: str | None = None
@@ -131,7 +136,7 @@ class Length:
         - "emu":     絶対サイズ（value は EMU 整数相当．parser が cm/pt/in/px から換算）．
     """
 
-    unit: str
+    unit: Literal["percent", "emu"]
     value: float
 
 
@@ -146,7 +151,7 @@ class Crop:
     （各辺 0..1）へ換算する．
     """
 
-    unit: str
+    unit: Literal["px", "percent"]
     x: float
     y: float
     w: float
@@ -166,7 +171,7 @@ class Image:
         width: 埋め込み幅（Length）．None なら height かアスペクトから決める．
         height: 埋め込み高（Length）．None なら width かアスペクトから決める．
         crop: トリミングの残す矩形（Crop）．None ならトリミングなし．
-        align: セグメント内の水平寄せ．"left" / "center"（既定）/ "right"．
+        align: セグメント内の水平寄せ（既定は中央）．
         fit: width/height 両指定時の収め方．"contain"（既定・比維持で内接）/
             "fill"（歪ませて充填）．片方のみ・省略時は常にアスペクト維持．
         caption: 図下キャプション（省略可．ショートハンドは alt を採用）．
@@ -181,10 +186,15 @@ class Image:
     width: Length | None = None
     height: Length | None = None
     crop: Crop | None = None
-    align: str = "center"
-    fit: str = "contain"
+    align: Align = "center"
+    fit: Literal["contain", "fill"] = "contain"
     caption: str | None = None
     overflow: bool | None = None
+
+
+# スライド本文を構成するブロック．parser が出現順に並べ，render が型で分岐する．
+# Python 3.9 を切らないため実行時に評価される別名は Union で書く（`|` は 3.10 以降）．
+Block = Union[Line, Table, Flow, Image]
 
 
 @dataclass
@@ -194,10 +204,12 @@ class Slide:
     Attributes:
         title: スライドタイトル（"## 見出し" 由来）．タイトルなしなら None．
         layout: 使用するスライドレイアウト番号．既定 1（タイトルとコンテンツ）．
-        blocks: スライド本文を構成するブロック列．Line / Table / Flow を
-            出現順に保持する（混在可）．単一カラム時に使用．
+        blocks: スライド本文を構成するブロック列．出現順に保持する（混在可）．
+            単一カラム時に使用．
         directives: スライド単位の上書き指示（DESIGN.md §5.6）．
-            例: {"autonum_color": "tx1", "layout": 5, "autofit": 90}．
+            キーは parser の _KNOWN_DIRECTIVES に正規化済み．値はキーごとに
+            int / str / bool と異なるため，使う側で narrowing する
+            （例: {"autonum_color": "tx1", "layout": 5, "overflow": True}）．
         columns: 多カラム（「2つのコンテンツ」レイアウト）時の各カラムのブロック列．
             空なら単一カラム（blocks を使用）．非空なら columns[i] が i 番目の
             カラム内容で，レイアウトは 3 を既定とする（DESIGN.md §5.7）．
@@ -208,9 +220,9 @@ class Slide:
 
     title: str | None = None
     layout: int = 1
-    blocks: list = field(default_factory=list)
-    directives: dict = field(default_factory=dict)
-    columns: list = field(default_factory=list)
+    blocks: list[Block] = field(default_factory=list)
+    directives: dict[str, object] = field(default_factory=dict)
+    columns: list[list[Block]] = field(default_factory=list)
     notes: str | None = None
 
 
@@ -263,11 +275,12 @@ class Deck:
 
     Attributes:
         meta: front matter 全体（theme / output / slide_number /
-            default_autofit などを含む生の dict）．
+            default_autofit などを含む生の dict）．YAML 由来なので値の型は
+            キーごとに異なる（使う側で narrowing する）．
         title_slide: タイトルスライド．無ければ None．
         slides: コンテンツスライドの列（出現順）．
     """
 
-    meta: dict = field(default_factory=dict)
+    meta: dict[str, object] = field(default_factory=dict)
     title_slide: TitleSlide | None = None
-    slides: list = field(default_factory=list)
+    slides: list[Slide] = field(default_factory=list)

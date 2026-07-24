@@ -164,11 +164,13 @@ docstring を正とする。
 ```python
 # ir.py （スケッチ：型と既定値のみ。詳細は ir.py の docstring 参照）
 # 既定値のないフィールドは必須（field は dataclasses.field）
+Align = Literal["left", "center", "right"]   # 表の列・画像で共通の水平寄せ
+
 @dataclass
 class Line:                  # 本文の 1 段落
     text: str
     level: int = 0           # 箇条書きの深さ 0,1,2...
-    kind: str = "bullet"     # "bullet" | "autonum" | "plain"(=no_bullet)
+    kind: Literal["bullet", "autonum", "plain"] = "bullet"  # plain=no_bullet
     num_style: str | None = None  # autonum 時: "arabicPeriod" | "circleNumDbPlain" | ...
     num_color: str | None = None  # 採番記号色のテーマ名（例 "tx1"）
     size_delta: int | None = None # {+N}/{-N} の相対段数（None=未指定, 0=テーマ既定へ固定）
@@ -177,14 +179,14 @@ class Line:                  # 本文の 1 段落
 class Table:
     header: list[str] = field(default_factory=list)
     rows: list[list[str]] = field(default_factory=list)
-    # 列ごとの寄せ（区切り行のコロン由来）"left"|"center"|"right"
-    aligns: list[str] = field(default_factory=list)
+    # 列ごとの寄せ（区切り行のコロン由来）。空＝すべて左
+    aligns: list[Align] = field(default_factory=list)
 
 @dataclass
 class FlowNode:              # フロー図のノード
     label: str = ""
     sublabel: str | None = None
-    kind: str = "box"        # "box" | "ellipsis"（"…" 単独）
+    kind: Literal["box", "ellipsis"] = "box"  # ellipsis は "…" 単独（入力の [...]）
     color: str | None = None # テーマ色名の個別指定（例 "accent6"）
 
 @dataclass
@@ -195,21 +197,21 @@ class FlowEdge:              # ノード間の矢印
 
 @dataclass
 class Flow:                  # ```flow ブロック由来
-    direction: str = "lr"    # "lr"（左→右）| "tb"（上→下）
-    nodes: list = field(default_factory=list)  # FlowNode の列
-    edges: list = field(default_factory=list)  # FlowEdge の列
+    direction: Literal["lr", "tb"] = "lr"      # 左→右 / 上→下
+    nodes: list[FlowNode] = field(default_factory=list)
+    edges: list[FlowEdge] = field(default_factory=list)
     caption: str | None = None
     note_top: str | None = None
     note_bottom: str | None = None
 
 @dataclass
 class Length:                # 画像の width / height 1 次元
-    unit: str                # "percent"（帯に対する割合）| "emu"（絶対）
+    unit: Literal["percent", "emu"]  # percent=帯に対する割合 / emu=絶対
     value: float
 
 @dataclass
 class Crop:                  # 画像トリミングの「残す矩形」（左上原点）
-    unit: str                # "px" | "percent"
+    unit: Literal["px", "percent"]
     x: float
     y: float
     w: float
@@ -221,21 +223,25 @@ class Image:                 # ![](){opts} / ```image 由来
     width: Length | None = None
     height: Length | None = None
     crop: Crop | None = None
-    align: str = "center"    # "left" | "center" | "right"
-    fit: str = "contain"     # width/height 両指定時: "contain" | "fill"
+    align: Align = "center"
+    fit: Literal["contain", "fill"] = "contain"  # width/height 両指定時
     caption: str | None = None
     overflow: bool | None = None  # None=スライドの @overflow に従う
+
+# スライド本文を構成するブロック。実行時に評価される別名なので
+# Python 3.9 を切らないよう Union で書く（`|` は 3.10 以降）
+Block = Union[Line, Table, Flow, Image]
 
 @dataclass
 class Slide:
     title: str | None = None
     layout: int = 1          # 既定 1（タイトルとコンテンツ）
-    # Line | Table | Flow | Image を順に保持（単一カラム時）
-    blocks: list = field(default_factory=list)
-    # スライド単位の指示（autofit など）
-    directives: dict = field(default_factory=dict)
+    # 出現順に保持（単一カラム時）
+    blocks: list[Block] = field(default_factory=list)
+    # スライド単位の指示（autofit など）。値はキーごとに int/str/bool
+    directives: dict[str, object] = field(default_factory=dict)
     # 多カラム時の各カラムのブロック列（空なら単一カラム）
-    columns: list = field(default_factory=list)
+    columns: list[list[Block]] = field(default_factory=list)
     notes: str | None = None # ```note 由来の発表者ノート
 
 @dataclass
@@ -252,9 +258,9 @@ class TitleSlide:            # front matter 由来（あれば 1 枚目）
 
 @dataclass
 class Deck:
-    meta: dict = field(default_factory=dict)   # front matter
+    meta: dict[str, object] = field(default_factory=dict)  # front matter（YAML 生）
     title_slide: TitleSlide | None = None
-    slides: list = field(default_factory=list) # Slide の列
+    slides: list[Slide] = field(default_factory=list)
 ```
 
 ## 5. Markdown 記法仕様
