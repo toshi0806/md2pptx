@@ -25,6 +25,7 @@ input.md ──[parser]──▶ IR(Deck) ───────┘
 | `md2pptx/ir.py` | IR データクラス（`Deck`/`Slide`/`Line`/`Table`/`Flow`/`TitleSlide` 等）。外部依存なし |
 | `md2pptx/render.py` | IR → pptx 描画（`Renderer` クラス）。描画ヘルパーは手書きの参照スクリプトから移植 |
 | `md2pptx/flow.py` | フロー図 DSL のパーサ＋座標レイアウタ。python-pptx 非依存（EMU 計算のみ） |
+| `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`）。変換器の探索と外部プロセス起動。python-pptx 非依存 |
 
 パッケージ内モジュールは相対 import（`from .ir import …`）で結線する。`md2pptx/` は
 ルート直下の flat レイアウト（`pip install .` / `pipx install .` で `md2pptx` コマンドを生成）。
@@ -78,9 +79,15 @@ pdftoppm -png -r 110 -f 3 -l 3 out.pdf /tmp/p # 特定ページを画像化 → 
 magick montage ref.png md.png -tile 2x1 -geometry +4+4 -background '#888' /tmp/cmp.png
 ```
 
-- `ppt2pdf` は **`/Users/toshi/` 配下のファイルしか変換できない**（Windows パスへ写像するため）。
-  `/tmp` は不可。リポジトリ内に出力すること（`.gitignore` の `*.pdf`/`*-slide.pptx` を活用）。
+- 見た目の最終確認は **`ppt2pdf`（実 PowerPoint）**で行う。`--pdf`（後述）の LibreOffice 経路は
+  フォント解決差で崩れるため、当たり確認には使えても最終確認の代替にはならない。
+- `ppt2pdf` は `-o` で出力先を指定でき、入力の場所にも制約はない（parallels-scripts で改良済み。
+  以前あった「`/Users/toshi/` 配下のみ・`/tmp` 不可」の制約は解消）。進捗は stderr、stdout は空。
 - 構造の確認（枚数・プレースホルダ・フォントサイズ等）は python-pptx で読む。
+
+`md2pptx` 自身にも `--pdf` がある（Issue #39）。生成後に PDF を作る土台機能で、既定 `auto` は
+native PowerPoint → LibreOffice の順に試す。`--pdf-converter 'ppt2pdf -o {output} {input}'` で
+上記 `ppt2pdf` を変換器として使うこともできる。忠実度は保証しない（README 参照）。
 
 ## 規約・設計上の約束
 

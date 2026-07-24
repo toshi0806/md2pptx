@@ -60,6 +60,7 @@
 | `md2pptx/ir.py` | 中間表現のデータクラス定義 |
 | `md2pptx/render.py` | IR → pptx。`参照スクリプト` のヘルパーをライブラリ化して再利用 |
 | `md2pptx/flow.py` | ` ```flow ` DSL のパーサ＋レイアウタ（box/arrow 配置計算） |
+| `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`）。変換器の探索とプロセス起動（python-pptx 非依存） |
 
 パッケージはルート直下の flat レイアウト（`md2pptx/`）で、`pyproject.toml` の
 `[project.scripts]` が `md2pptx = "md2pptx.cli:main"` としてコンソールスクリプトを生成する。
@@ -652,8 +653,14 @@ md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
 - `--theme`：テーマファイル。**`.thmx` / `.pptx` 両対応**（拡張子で自動分岐。§3.5）。フロントマター `theme:` を上書き。
 - `-o/--output`：出力 pptx。フロントマター `output:` を上書き。
 - `--keep-base PATH`：ステージ 0 で作った base pptx を破棄せず保存（デバッグ用）。
+- `--pdf [PATH]`：pptx 生成後に PDF も作る（プレビュー用）。PATH 省略時は出力 pptx と同じ
+  場所・basename の `.pdf`。変換は `pdf.py` が担う。**PDF 変換だけ失敗しても終了コードは 0**
+  （警告のみ）——編集しながらのプレビューを止めないため。忠実度は保証しない（README 参照）。
+- `--pdf-converter NAME|COMMAND`：PDF 変換器。`auto`（既定・PowerPoint→LibreOffice）/
+  `powerpoint` / `libreoffice` / 任意コマンド（`{input}`/`{output}`/`{outdir}` 置換）。
+  環境変数 `MD2PPTX_PDF_CONVERTER` を上書き。
 - `--version`：バージョンを表示して終了（`md2pptx.__version__` が単一の情報源）。
-- 終了時に `saved: <out> slides: <n>` を出力。
+- 終了時に `saved: <out> slides: <n>`（`--pdf` 時はさらに `saved: <pdf>`）を出力。
 - thmx 変換・パースのエラーは「原因＋（パース時は行番号）」を表示して失敗させる。
 
 ## 8. 実装フェーズ

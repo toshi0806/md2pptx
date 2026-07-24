@@ -53,3 +53,24 @@ jobs:
           PY
       - name: Self-check the parser debug harness
         run: python -m md2pptx.parser
+
+  # Only the LibreOffice backend is testable here — PowerPoint is not on the
+  # runner. LibreOffice is a heavy apt install, so this is its own job rather
+  # than part of the generate matrix, and runs on one interpreter.
+  pdf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: sudo apt-get update && sudo apt-get install -y libreoffice-impress
+      - run: pip install -e .
+      - run: md2pptx example.md --theme OfficeTheme.pptx -o out.pptx --pdf out.pdf --pdf-converter libreoffice
+      - name: Check the PDF was produced with the expected page count
+        run: |
+          sudo apt-get install -y poppler-utils
+          test -f out.pdf
+          pages=$(pdfinfo out.pdf | awk '/^Pages/{print $2}')
+          echo "pages=$pages"
+          test "$pages" = "14"
