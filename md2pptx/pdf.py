@@ -43,7 +43,7 @@ def _which_libreoffice() -> str | None:
         found = shutil.which(name)
         if found:
             return found
-    candidates = []
+    candidates: list[str] = []
     if sys.platform == "darwin":
         candidates.append("/Applications/LibreOffice.app/Contents/MacOS/soffice")
     elif sys.platform.startswith("win"):
@@ -188,7 +188,7 @@ def convert(src: str, dst: str, converter: str | None) -> None:
 
     if name == "auto":
         # 使える系統を順に試す．PowerPoint が無ければ LibreOffice へ．
-        errors = []
+        errors: list[str] = []
         if sys.platform in ("darwin",) or sys.platform.startswith("win"):
             try:
                 _convert_powerpoint(src, dst)
