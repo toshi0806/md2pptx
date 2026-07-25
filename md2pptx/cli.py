@@ -122,6 +122,9 @@ def _image_sources(deck, base_dir: str) -> list[str]:
     """
     found: list[str] = []
     for slide in deck.slides:
+        # **コピーは必須**．多カラムのスライドでは parser が `columns = [blocks, []]`
+        # と組むので `columns[0] is blocks`——そのまま extend すると自分自身を継ぎ足して
+        # IR を壊す（実測：ブロック 1 個のスライドが 3 個になる）．
         blocks = list(slide.blocks)
         for column in slide.columns:
             blocks.extend(column)

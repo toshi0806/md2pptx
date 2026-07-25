@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from md2pptx import watch
@@ -225,8 +227,21 @@ class TestSignature:
     def test_same_content_same_signature(self, deck):
         assert watch._signature(str(deck)) == watch._signature(str(deck))
 
-    def test_a_rewrite_of_the_same_length_is_noticed(self, deck):
-        """mtime だけに頼らない——解像度 1 秒の FS で同じ長さに書き直しても気づく．"""
-        before = watch._signature(str(deck))
-        deck.write_text("ONE")          # 長さは同じ（"one" と 3 文字）
-        assert watch._signature(str(deck)) != before
+    def test_a_rewrite_the_clock_did_not_notice_is_still_caught(self, deck):
+        """**mtime と長さが揃っていても**書き換えに気づく．
+
+        解像度が 1 秒の FS では，同じ秒に同じ長さで書き直すと mtime も size も
+        変わらない．ここではその状況を ``os.utime`` で作る——ただ書き直すだけでは，
+        高解像度の FS だと mtime_ns が動いてしまい，指紋が mtime しか見ていなくても
+        通ってしまう（＝何も確かめていないテストになる）．
+        """
+        before = os.stat(deck)
+        deck.write_text("ONE")                      # 長さは同じ（3 文字）
+        os.utime(deck, ns=(before.st_atime_ns, before.st_mtime_ns))
+        after = os.stat(deck)
+        # 前提：この状況では mtime・size・inode のどれも変わっていない．
+        assert (after.st_mtime_ns, after.st_size, after.st_ino) == (
+            before.st_mtime_ns, before.st_size, before.st_ino)
+
+        assert watch._signature(str(deck)) != (
+            before.st_mtime_ns, before.st_ctime_ns, before.st_size, before.st_ino)

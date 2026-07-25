@@ -59,7 +59,12 @@ def _snapshot(paths: Iterable[str]) -> dict[str, Signature]:
 
 def _first_change(before: dict[str, Signature],
                   after: dict[str, Signature]) -> str | None:
-    """変わった最初のパス．どれも変わっていなければ None．"""
+    """変わった最初のパス．どれも変わっていなければ None．
+
+    比べるのは ``before`` の鍵だけ．``after`` は同じ集合を ``_snapshot`` し直したもの
+    という前提で，監視対象の増減はここではなく ``run`` がビルドの戻り値で行う．
+    値の ``None``（不在）も指紋の一種なので，消えた・置かれたも差として出る．
+    """
     for path, sig in before.items():
         if after.get(path) != sig:
             return path
@@ -154,7 +159,9 @@ def run(build: Callable[[], Iterable[str]], label: str, *,
             数秒かかる（実測 6 秒）ので，起動してすぐ書き始めると普通に踏む．
         interval: ポーリング間隔（秒）．
         sleep: 待ち方（テストが差し替える）．
-        log: 進捗の出力先（テストが差し替える）．
+        log: 進捗の出力先（テストが差し替える）．**渡される文字列は完成した 1 行**で，
+            ``md2pptx: `` の接頭辞も含む．log 側で飾り付けはしない（両方で付けると
+            二重になる）．
 
     Returns:
         終了コード．``Ctrl-C`` / SIGTERM での停止は**意図した停止**なので 0．
