@@ -1497,7 +1497,9 @@ class Renderer:
         except OSError as e:
             # 素の errno を通すと「一時ディレクトリ名が読めない形で出る」だけになるので，
             # 何をしようとして失敗したかを添える（cli が整形して表示する）．
-            raise OSError(f"cannot create a working directory in {directory} ({e})")
+            # ``from e`` で元の例外を __cause__ に残す——errno を見たいときの手掛かり．
+            raise OSError(
+                f"cannot create a working directory in {directory} ({e})") from e
         try:
             staged = os.path.join(work, os.path.basename(path))
             self.prs.save(staged)

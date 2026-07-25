@@ -35,9 +35,13 @@ def renderer(tmp_path):
 
     ``prs`` は「保存を頼まれたら書く」だけの替え玉．保存の**最中**に出力先がどう
     見えていたかを ``seen`` に残す．
+
+    出力先は ``dst`` として持たせる．テスト側で別名を組み立てると，替え玉が見張る
+    ファイルとずれても**気づけないまま通ってしまう**ので，1 か所を正にする．
     """
     r = render.Renderer.__new__(render.Renderer)      # __init__ は base pptx を開く
-    state = SimpleNamespace(seen=None, staged=None, action=None)
+    state = SimpleNamespace(dst=tmp_path / "out.pptx", seen=None, staged=None,
+                            action=None)
 
     def fake_save(where):
         # 本物（``zipfile.ZipFile(where, "w")``）と同じ **2 段階**で動く：開いた瞬間に
@@ -45,8 +49,7 @@ def renderer(tmp_path):
         # なので，替え玉が一気に書いてしまうと，出力先へ直接保存する実装でもテストが
         # 通ってしまう（実際それで素通りしていた）．
         Path(where).write_bytes(b"")
-        final = tmp_path / "out.pptx"
-        state.seen = final.read_bytes() if final.exists() else None
+        state.seen = state.dst.read_bytes() if state.dst.exists() else None
         state.staged = Path(where)
         if state.action is not None:
             state.action(where)
@@ -55,44 +58,45 @@ def renderer(tmp_path):
 
     r.prs = SimpleNamespace(save=fake_save)
     state.renderer = r
+    state.save = lambda: r.save(str(state.dst))
     return state
 
 
-def test_the_existing_pptx_stays_readable_while_saving(renderer, tmp_path):
+def test_the_existing_pptx_stays_readable_while_saving(renderer):
     """保存中も前回の pptx がそのまま読める．
 
     直接書くと ``ZipFile(path, "w")`` が開いた瞬間に切り詰めるので，ここが崩れると
     「作り直している間だけ壊れた pptx が見える」状態に戻る．
     """
-    dst = tmp_path / "out.pptx"
+    dst = renderer.dst
     dst.write_bytes(OLD)
 
-    renderer.renderer.save(str(dst))
+    renderer.save()
 
     assert renderer.seen == OLD, "保存中に出力が消えても切り詰められてもいけない"
     assert dst.read_bytes() == NEW, "保存後は新しい内容になること"
 
 
-def test_the_save_goes_somewhere_else(renderer, tmp_path):
+def test_the_save_goes_somewhere_else(renderer):
     """python-pptx に渡すのは最終パスではない（名前は保つ）．"""
-    dst = tmp_path / "out.pptx"
+    dst = renderer.dst
     dst.write_bytes(OLD)
 
-    renderer.renderer.save(str(dst))
+    renderer.save()
 
     assert renderer.staged != dst
     assert renderer.staged.name == dst.name
     assert not renderer.staged.exists(), "作業場所は残さない"
 
 
-def test_a_failed_save_keeps_the_previous_pptx(renderer, tmp_path):
+def test_a_failed_save_keeps_the_previous_pptx(renderer):
     """**失敗したら前回の pptx を残す**——PDF とは逆の契約．
 
     pptx の保存失敗は cli が ``BuildError`` にして終了コード 1 で終えるので，古い
     ファイルが「新しい出力」と取り違えられることはない．それなら PowerPoint で開いて
     いるかもしれない主成果物を消さない方がよい．
     """
-    dst = tmp_path / "out.pptx"
+    dst = renderer.dst
     dst.write_bytes(OLD)
 
     def explode(where):
@@ -101,14 +105,14 @@ def test_a_failed_save_keeps_the_previous_pptx(renderer, tmp_path):
     renderer.action = explode
 
     with pytest.raises(ValueError):
-        renderer.renderer.save(str(dst))
+        renderer.save()
 
     assert dst.read_bytes() == OLD, "失敗したのに前回の pptx を失ってはいけない"
 
 
-def test_a_half_written_pptx_never_reaches_the_output(renderer, tmp_path):
+def test_a_half_written_pptx_never_reaches_the_output(renderer):
     """途中まで書いて落ちた pptx は，作業場所ごと捨てる．"""
-    dst = tmp_path / "out.pptx"
+    dst = renderer.dst
     dst.write_bytes(OLD)
 
     def half_then_fail(where):
@@ -118,7 +122,7 @@ def test_a_half_written_pptx_never_reaches_the_output(renderer, tmp_path):
     renderer.action = half_then_fail
 
     with pytest.raises(OSError):
-        renderer.renderer.save(str(dst))
+        renderer.save()
 
     assert dst.read_bytes() == OLD
 
@@ -126,7 +130,7 @@ def test_a_half_written_pptx_never_reaches_the_output(renderer, tmp_path):
 @pytest.mark.parametrize("succeeds", [True, False])
 def test_no_working_directory_is_left_behind(renderer, tmp_path, succeeds):
     """成功・失敗のどちらでも作業ディレクトリを残さない．"""
-    dst = tmp_path / "out.pptx"
+    dst = renderer.dst
 
     def action(where):
         if not succeeds:
@@ -136,7 +140,7 @@ def test_no_working_directory_is_left_behind(renderer, tmp_path, succeeds):
     renderer.action = action
 
     try:
-        renderer.renderer.save(str(dst))
+        renderer.save()
     except ValueError:
         pass
 
@@ -144,26 +148,29 @@ def test_no_working_directory_is_left_behind(renderer, tmp_path, succeeds):
     assert leftovers == []
 
 
-def test_an_unusable_output_directory_says_what_failed(renderer, tmp_path,
-                                                       monkeypatch):
+def test_an_unusable_output_directory_says_what_failed(renderer, monkeypatch):
     """作業場所を作れないときは，何をしようとして失敗したかを添える．
 
     素の errno だけだと，利用者には見覚えのない一時ディレクトリ名しか残らない．
+    元の例外は ``__cause__`` に残す——errno を見たいときの手掛かりを捨てない．
     """
     def refuse(*args, **kwargs):
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr(render.tempfile, "mkdtemp", refuse)
 
-    with pytest.raises(OSError, match="cannot create a working directory"):
-        renderer.renderer.save(str(tmp_path / "out.pptx"))
+    with pytest.raises(OSError, match="cannot create a working directory") as found:
+        renderer.save()
+
+    assert isinstance(found.value.__cause__, PermissionError)
+    assert found.value.__cause__.errno == 13
 
 
-def test_a_first_save_needs_no_existing_file(renderer, tmp_path):
+def test_a_first_save_needs_no_existing_file(renderer):
     """初回（出力先がまだ無い）でも普通に書ける．"""
-    dst = tmp_path / "out.pptx"
+    dst = renderer.dst
 
-    renderer.renderer.save(str(dst))
+    renderer.save()
 
     assert dst.read_bytes() == NEW
     assert renderer.seen is None
