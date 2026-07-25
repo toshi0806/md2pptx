@@ -136,8 +136,11 @@ PDF を見張ることになります。
 - **メニューバー**: 「ターミナル」→「タスクの実行...」（Terminal → Run Task...）
 - **コマンドパレット**: `Cmd+Shift+P` → `タスク: タスクの実行`（英語 UI なら `Tasks: Run Task`）
 
-一覧が出るので **`md2pptx: watch`** を選びます。`problemMatcher` を書いてあるので、「タスクの
-出力をスキャンせずに続行しますか」は聞かれません。
+一覧が出るので **`md2pptx: watch`** を選びます。
+
+ここで「タスクの出力をスキャンせずに続行しますか」と聞かれたら、**`problemMatcher` が読まれて
+いません**。貼り付けた `tasks.json` のそのタスクに書けているか確認してください（この状態でも
+ビルドは動きますが、エラーが「問題」パネルに出ません）。
 
 **3. 動いているか確認する**
 
@@ -179,8 +182,10 @@ example.md
   ⊗ image not found: example-fig-typo.png    md2pptx
 ```
 
-左が Markdown のファイル名、右端の `md2pptx` が `problemMatcher` の `source` です。パスを戻して
-保存すれば消えます。
+左が Markdown のファイル名、右端の `md2pptx` が `problemMatcher` の `source` です。
+
+**確認できたらパスを元に戻して保存してください**（「問題」から消えます）。戻さないと、以降の
+ビルドは失敗し続けて PDF が更新されません。
 
 **行へは飛べません。** `problemMatcher` は行番号を取っていないので、クリックするとファイルの
 先頭が開きます。行番号を持つエラー（フロントマターの書き間違いなど）では
@@ -215,21 +220,21 @@ example.md
 `runOptions.runOn` を使うと、**フォルダを開いた時点で watch が始まります**。手順 1〜3 が丸ごと
 不要になるので、原稿が 1 つに決まっているならこちらが快適です。
 
-```jsonc
-{
-  "label": "md2pptx: watch",
-  "args": ["${workspaceFolder}/slide.md", "--watch", "--pdf"],
-  "options": { "cwd": "${workspaceFolder}" },
-  "runOptions": { "runOn": "folderOpen" },
-  // presentation / problemMatcher は上の watch と同じ
-}
-```
+これは**貼り付ける断片ではなく、書き換えの指示**です。上の `md2pptx: watch` タスクのうち次の
+3 つだけを変え、**残り（`label` / `type` / `command` / `isBackground` / `presentation` /
+`problemMatcher`）はそのまま**にしてください。
+
+| キー | 変更後 | |
+|---|---|---|
+| `args` | `["${workspaceFolder}/slide.md", "--watch", "--pdf"]` | 書き換え |
+| `options` | `{ "cwd": "${workspaceFolder}" }` | 書き換え |
+| `runOptions` | `{ "runOn": "folderOpen" }` | 新しく足す |
 
 **`${file}` 由来の変数を 1 つも残さないのが要点**です。フォルダを開いた時点ではまだどのエディタも
-開かれていないので、`${file}` も `${fileDirname}` も解決できません。上の watch から書き換えるとき
-**`args` だけ直して `"options": { "cwd": "${fileDirname}" }` を残すと動きません**——`cwd` も
-`${workspaceFolder}` にしてください（`cwd` はフロントマターの `output:` を相対パスで書いたときの
-基準になるので、外すのではなく置き換えます）。
+開かれていないので、`${file}` も `${fileDirname}` も解決できません。**`args` だけ直して
+`"options": { "cwd": "${fileDirname}" }` を残すと動きません**——`cwd` も `${workspaceFolder}` に
+してください（`cwd` はフロントマターの `output:` を相対パスで書いたときの基準になるので、外すの
+ではなく置き換えます）。
 
 代償が 2 つあります。**既定にしていないのはこのため**です。
 
