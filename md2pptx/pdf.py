@@ -369,7 +369,13 @@ def _convert_libreoffice(src: str, dst: str, timeout: float | None = None) -> No
     # 片付けは workdir.discard に任せる——TemporaryDirectory は**片付けに失敗すると
     # 例外を投げる**ので，変換が成功していても実行全体が終了コード 1 で終わってしまう
     # （Issue #58）．
-    profile = workdir.create(prefix="md2pptx-lo-")
+    try:
+        profile = workdir.create(prefix="md2pptx-lo-")
+    except OSError as e:
+        # 素の OSError を通すと cli の `except PdfError` をすり抜けて SystemExit に
+        # なり，pptx は保存できているのに終了コードが 1 になる（Issue #58．#53 で
+        # convert の作業場所について直したのと同じ理由）．
+        raise PdfError(f"cannot create a LibreOffice profile directory ({e})") from e
     try:
         # as_uri() は Windows のドライブレターも file:///C:/... と正しく組む
         # （手組みの "file://"+path だと file://C:/... になり不正）．
@@ -422,7 +428,12 @@ def _convert_powerpoint(src: str, dst: str, timeout: float | None = None,
             # 出さずに済み，入出力がどこにあっても（/tmp でも外部ボリュームでも）動く．
             # 片付けを workdir.discard に任せる理由は _convert_libreoffice と同じ
             # （TemporaryDirectory は片付けの失敗で例外を投げる．Issue #58）．
-            work = workdir.create(stage, prefix="md2pptx-")
+            try:
+                work = workdir.create(stage, prefix="md2pptx-")
+            except OSError as e:
+                # 上（_convert_libreoffice）と同じ理由で PdfError にする．
+                raise PdfError(
+                    f"cannot create a working directory in {stage} ({e})") from e
             try:
                 staged_src = os.path.join(work, os.path.basename(src_abs))
                 staged_dst = os.path.join(work, "out.pdf")

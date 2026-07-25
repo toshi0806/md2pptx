@@ -214,6 +214,28 @@ def test_an_unusable_output_directory_is_a_pdf_failure(deck, tmp_path, monkeypat
         pdf.convert(str(deck), str(tmp_path / "out.pdf"), "powerpoint", timeout=1)
 
 
+def test_a_backend_that_cannot_make_its_scratch_dir_is_a_pdf_failure(
+        deck, tmp_path, monkeypatch):
+    """変換器**の中**で作業場所を作れないときも同じ（Issue #58）．
+
+    ``convert`` の作業場所は #53 で ``PdfError`` にしたが、LibreOffice の使い捨て
+    プロファイルと PowerPoint コンテナ内の staging は素の ``OSError`` のままだった．
+    実測: pptx は保存されたうえで **exit 1**（``md2pptx: [Errno 13] Permission denied``）．
+    """
+    real = pdf.workdir.create
+
+    def refuse(where=None, prefix=".md2pptx-"):
+        if prefix == "md2pptx-lo-":          # LibreOffice のプロファイルだけ失敗させる
+            raise PermissionError(13, "Permission denied")
+        return real(where, prefix)
+
+    monkeypatch.setattr(pdf.workdir, "create", refuse)
+    monkeypatch.setattr(pdf, "_which_libreoffice", lambda: "/usr/bin/soffice")
+
+    with pytest.raises(pdf.PdfError, match="LibreOffice profile directory"):
+        pdf.convert(str(deck), str(tmp_path / "out.pdf"), "libreoffice", timeout=1)
+
+
 @pytest.mark.parametrize("converter", ["auto", "powerpoint"])
 def test_unattended_reaches_the_backend(deck, tmp_path, monkeypatch, converter):
     """``unattended`` は「止まっても PowerPoint を前面化しない」まで届く．
