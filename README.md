@@ -79,12 +79,12 @@ python3 -m md2pptx input.md
 
 ### PDF プレビュー（`--pdf`）
 
-`--pdf` を付けると pptx に続けて PDF も書き出します。Markdown を編集しながら PDF ビューアで
-結果を確認する、という使い方の土台です。
+`--pdf` を付けると pptx に続けて PDF も書き出します（出力 pptx と同じ場所・同じ名前）。
+Markdown を編集しながら PDF ビューアで結果を確認する、という使い方の土台です。
 
 ```bash
-# slide.pptx と slide.pdf ができる
-md2pptx slide.md -o slide.pptx --pdf
+# 出力 pptx に並べて PDF も作る
+md2pptx slide.md --pdf
 
 # PDF の名前や場所を変えるなら --pdf-output（--pdf は不要）→ slide.pptx と preview.pdf
 md2pptx slide.md -o slide.pptx --pdf-output preview.pdf
