@@ -43,6 +43,14 @@ Windows の PowerPoint は COM（``SaveAs`` format 32）で対応．
 区別できないので **stderr が tty か**で分ける——tty なら打ち切らず（案内が効くので待つ意味が
 ある．``Ctrl-C`` で止められる），非 tty なら ``_TIMEOUT_UNATTENDED`` 秒で打ち切る．
 ``--pdf-timeout`` / ``MD2PPTX_PDF_TIMEOUT`` で上書きでき，``0`` は無制限．
+``convert(..., unattended=True)`` は「端末は tty だが人は見ていない」を明示する入口で，
+``--watch`` が使う（上限の決め方と，止まったときの前面化の両方に効く）．
+
+**出力はアトミックに差し替える**．変換は出力先と同じディレクトリに作った使い捨ての作業
+ディレクトリの中で行い，成功したときだけ ``os.replace`` で目的のパスへ移す．編集しながら
+見る運用が前提なので，**変換中に出力 PDF が一瞬でも消えてはいけない**——PDF ビューアは
+フォルダを監視していて，削除を確定するとそのファイルを監視から外してしまう（``convert``
+の実装コメント参照）．
 
 このモジュールは cli 以外に依存しない（python-pptx 非依存）．外部プロセスの
 起動と，どのバイナリを使うかの解決だけを担う．
@@ -113,7 +121,8 @@ _APPLESCRIPT_PPTX_TO_PDF = '''on run argv
 end run'''
 
 
-def _resolve_timeout(explicit: float | None) -> float | None:
+def _resolve_timeout(explicit: float | None,
+                     unattended: bool = False) -> float | None:
     """変換の待ち上限（秒）を決める．``None`` は無制限．
 
     明示指定（``--pdf-timeout`` → ``MD2PPTX_PDF_TIMEOUT``）が最優先で，``0`` は
@@ -124,6 +133,11 @@ def _resolve_timeout(explicit: float | None) -> float | None:
       上から打ち切ると自分で用意した解決手段を潰すことになる．``Ctrl-C`` で止められる．
     - **非 tty**（cron / CI / エディタ拡張）→ ``_TIMEOUT_UNATTENDED``．誰も応答しないので
       待っても状況は変わらない．
+
+    ``unattended`` はこの tty からの推測を呼び出し側が**明示的に**打ち消す入口．
+    ``--watch`` がこれを使う：端末は tty でも，人が見ているのはエディタと PDF であって
+    タスクの端末ではない．無制限に待つと以後のプレビューが全部止まってしまうので，
+    ``_TIMEOUT_UNATTENDED`` で打ち切って次の保存で作り直す方に賭ける．
     """
     if explicit is not None:
         return _checked(explicit, "--pdf-timeout")
@@ -134,6 +148,8 @@ def _resolve_timeout(explicit: float | None) -> float | None:
         except ValueError:
             raise PdfError(f"invalid {ENV_TIMEOUT}: {raw!r} (seconds, 0 = no limit)")
         return _checked(value, ENV_TIMEOUT)
+    if unattended:
+        return _TIMEOUT_UNATTENDED
     return None if sys.stderr.isatty() else _TIMEOUT_UNATTENDED
 
 
@@ -255,7 +271,8 @@ def _macos_container_tmp() -> str | None:
     return base
 
 
-def _macos_run_applescript(src: str, dst: str, timeout: float | None) -> None:
+def _macos_run_applescript(src: str, dst: str, timeout: float | None,
+                           attended: bool = True) -> None:
     """AppleScript で src → dst を変換する．長引いたら理由を stderr に出す．
 
     PowerPoint を隠して動かしているので，何かのダイアログ（オートメーションの承認
@@ -263,10 +280,11 @@ def _macos_run_applescript(src: str, dst: str, timeout: float | None) -> None:
     ない．そこで ``_MACOS_HINT_AFTER`` 秒たっても終わらなければ，何が起きている
     可能性があるかを stderr に出す．
 
-    **PowerPoint を前面に出すのは stderr が tty のときだけ**（Issue #48）．非対話の
-    呼び出し元（cron / エディタ拡張）では，そこで出ているのは*呼び出し元アプリ*に対する
-    承認ダイアログなので PowerPoint を前面化しても押せず，作業中の画面からフォーカスを
-    奪うだけになる．
+    **PowerPoint を前面に出すのは stderr が tty で，かつ ``attended`` のときだけ**
+    （Issue #48）．非対話の呼び出し元（cron / エディタ拡張）では，そこで出ているのは
+    *呼び出し元アプリ*に対する承認ダイアログなので PowerPoint を前面化しても押せず，
+    作業中の画面からフォーカスを奪うだけになる．``--watch`` は端末が tty でも
+    ``attended=False`` で呼ぶ——編集中に前面化されるのは邪魔にしかならない．
 
     その後の待ちは ``timeout``（``None`` で無制限）に従う．
     """
@@ -289,7 +307,7 @@ def _macos_run_applescript(src: str, dst: str, timeout: float | None) -> None:
             "md2pptx: PowerPoint is taking longer than "
             f"{_MACOS_HINT_AFTER:.0f}s — it may be waiting for a dialog "
             "(e.g. the automation approval).\n")
-        if sys.stderr.isatty():
+        if attended and sys.stderr.isatty():
             sys.stderr.write(
                 "md2pptx: bringing it to the front; answer the dialog to continue.\n")
             try:
@@ -364,8 +382,13 @@ def _convert_libreoffice(src: str, dst: str, timeout: float | None = None) -> No
     _finish(produced, dst, "libreoffice")
 
 
-def _convert_powerpoint(src: str, dst: str, timeout: float | None = None) -> None:
+def _convert_powerpoint(src: str, dst: str, timeout: float | None = None,
+                        attended: bool = True) -> None:
     """native PowerPoint（macOS: AppleScript / Windows: COM）で変換する．
+
+    Args:
+        attended: 人がこの端末を見ているか．False なら止まったときに PowerPoint を
+            前面化しない（``_macos_run_applescript``）．
 
     Raises:
         _Unavailable: この環境に PowerPoint が無いとき（``auto`` はこれだけを握る）．
@@ -386,7 +409,7 @@ def _convert_powerpoint(src: str, dst: str, timeout: float | None = None) -> Non
         if stage is None:
             # コンテナが見つからない（サンドボックス外のビルド等）．その場で変換する．
             # この経路では未承認の場所を渡すとファイルアクセスの承認ダイアログが出る．
-            _macos_run_applescript(src_abs, dst_abs, timeout)
+            _macos_run_applescript(src_abs, dst_abs, timeout, attended)
         else:
             # PowerPoint には**自分のコンテナの中だけ**を触らせる．承認ダイアログを
             # 出さずに済み，入出力がどこにあっても（/tmp でも外部ボリュームでも）動く．
@@ -394,7 +417,7 @@ def _convert_powerpoint(src: str, dst: str, timeout: float | None = None) -> Non
                 staged_src = os.path.join(work, os.path.basename(src_abs))
                 staged_dst = os.path.join(work, "out.pdf")
                 shutil.copy2(src_abs, staged_src)
-                _macos_run_applescript(staged_src, staged_dst, timeout)
+                _macos_run_applescript(staged_src, staged_dst, timeout, attended)
                 _finish(staged_dst, dst_abs, "powerpoint")
     elif sys.platform.startswith("win"):
         # PowerShell + COM．32 = ppSaveAsPDF．パスは単一引用符文字列に埋めるので，
@@ -493,7 +516,7 @@ def default_pdf_path(output_pptx: str) -> str:
 
 
 def convert(src: str, dst: str, converter: str | None,
-            timeout: float | None = None) -> None:
+            timeout: float | None = None, *, unattended: bool = False) -> None:
     """src(pptx) を dst(pdf) へ変換する．
 
     Args:
@@ -505,6 +528,8 @@ def convert(src: str, dst: str, converter: str | None,
         timeout: 待ちの上限（秒）．``0`` で無制限，``None`` で「指定なし」．
             指定なしのときは ``MD2PPTX_PDF_TIMEOUT``，それも無ければ tty かどうかで
             決まる（``_resolve_timeout``）．
+        unattended: 端末が tty でも「人は見ていない」として扱う（``--watch`` 用）．
+            待ちの上限と，止まったときの PowerPoint 前面化の両方に効く．
 
     Raises:
         PdfError: 変換に失敗したとき（cli が警告に整形する）．``auto`` でも，
@@ -519,31 +544,68 @@ def convert(src: str, dst: str, converter: str | None,
     if not os.path.isdir(dst_dir):
         raise PdfError(f"output directory does not exist: {dst_dir}")
 
-    # 既存の出力は変換前に消す．残したままだと，変換が実際には失敗しても前回の PDF が
-    # 「存在かつ非空」の成功条件を満たしてしまい，古い内容を見続けることになる
-    # （macOS の save as PDF は無音失敗しうる）．
-    try:
-        os.remove(dst)
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        raise PdfError(f"cannot replace existing PDF: {dst} ({e})")
-
     name = (converter or "auto").strip()
-    limit = _resolve_timeout(timeout)
+    limit = _resolve_timeout(timeout, unattended)
+    # 出力はその場では作らない．同じディレクトリに使い捨ての作業場所を作り，そこで
+    # 変換してから os.replace で置き換える．作業場所は dst_dir の**中に新しく作る**
+    # ディレクトリなので dst と必ず同一ファイルシステム上にあり，置き換えは常に
+    # アトミック——EXDEV は起こりえないので shutil.move（コピー＋削除）への
+    # フォールバックは要らない．むしろ非アトミックな経路を足すと，下記 1) の
+    # 「消えている時間を作らない」が崩れる．
+    #
+    # 1) **変換中に dst が「消えている」時間を作らない**．PDF ビューアはフォルダを監視
+    #    していて，削除を確定するとそのファイルを監視集合から外す（LaTeX Workshop は
+    #    250ms で確定し，集合が空になるとウォッチャごと破棄する）．変換は 1 秒から数秒
+    #    かかるので必ず確定してしまい，以後どれだけ作り直しても再読込されない
+    #    ——編集しながらのプレビューが最初のリビルドで死ぬ．
+    # 2) 「無音失敗した変換器が残した前回の PDF を成功と誤判定する」問題（macOS の
+    #    save as PDF は無音失敗しうる）は，**毎回まっさらな別名へ書かせる**ことで
+    #    構造的に消える．以前は dst を先に消して防いでいたが，それは 1) と両立しない．
+    # 3) ファイルではなくディレクトリなのは，出力パスを取らない変換器のため．
+    #    LibreOffice は --outdir に <入力 basename>.pdf を書くので，slide.pptx →
+    #    slide.pdf の既定運用では **dst を直接・逐次的に書いていた**．作業場所を
+    #    挟むと outdir がそちらへ移り，この衝突も消える．
     try:
-        _dispatch(name, src, dst, limit)
-    except PdfError:
-        # 打ち切りや失敗の途中で書きかけの PDF が残ると，次に開いた人が新しい出力と
-        # 取り違える（変換前に既存 PDF を消しているのと同じ理由）．
+        work = tempfile.mkdtemp(dir=dst_dir, prefix=".md2pptx-")
+    except OSError as e:
+        # 作業場所すら作れない（多くは出力先の書き込み権限）．**PDF 変換の失敗として
+        # 扱う**——素の OSError を通すと cli の `except PdfError` をすり抜けて
+        # SystemExit になり，pptx は保存できているのに終了コードが 1 になる．
+        # 「PDF が作れなくても pptx は成功」（#39）が崩れ，編集しながらの運用が
+        # 出力先の権限ひとつで止まる．
+        raise PdfError(f"cannot create a working directory in {dst_dir} ({e})")
+    # 後片付けは TemporaryDirectory ではなく自前で行う．with で包むと，変換の本体が
+    # 投げた**想定外の**例外まで巻き込んで扱いを変えてしまう．ここで OSError を
+    # PdfError に読み替えてよいのは「作業場所を用意できなかった」ときだけで，
+    # 想定外の例外はトレースバックのまま伝播させる（バグを隠さない）．
+    try:
+        staged = os.path.join(work, os.path.basename(dst))
         try:
-            os.remove(dst)
-        except OSError:
-            pass
-        raise
+            _dispatch(name, src, staged, limit, not unattended)
+            try:
+                os.replace(staged, dst)
+            except OSError as e:
+                raise PdfError(f"cannot replace existing PDF: {dst} ({e})")
+        except PdfError:
+            # 失敗したら古い PDF は残さない．PDF 変換の失敗は終了コードを変えない
+            # ので，警告を見落とした人が前回の内容を新しい出力と取り違えてしまう．
+            # **置き換えに失敗したときも同じ**——変換自体は成功していても，そこに
+            # 残っているのは前回の内容だから．書きかけは work ごと消える．
+            # なお「消せるものだけ消える」のは意図どおり．rename も unlink も権限は
+            # 親ディレクトリで決まるので，権限で置き換えられなかった dst は削除でき
+            # ない（実測でどちらも EACCES）．無事な出力を巻き添えにはしない．
+            try:
+                os.remove(dst)
+            except OSError:
+                pass
+            raise
+    finally:
+        # 片付けの失敗で成否を変えない（残るのは隠しディレクトリ 1 つ）．
+        shutil.rmtree(work, ignore_errors=True)
 
 
-def _dispatch(name: str, src: str, dst: str, limit: float | None) -> None:
+def _dispatch(name: str, src: str, dst: str, limit: float | None,
+              attended: bool = True) -> None:
     """変換器を選んで実行する（``convert`` の下請け）．"""
     if name == "auto":
         # auto は「**使えるものを探す**」だけ．実 PowerPoint（テーマ忠実度が高い）を
@@ -553,7 +615,7 @@ def _dispatch(name: str, src: str, dst: str, limit: float | None) -> None:
         # ライセンス未認証など）は利用者が直せるものだから．
         missing: list[str] = []
         try:
-            _convert_powerpoint(src, dst, limit)
+            _convert_powerpoint(src, dst, limit, attended)
             return
         except _Unavailable as e:
             # _Unavailable は PdfError のサブクラスなので，この except は必ず
@@ -566,6 +628,9 @@ def _dispatch(name: str, src: str, dst: str, limit: float | None) -> None:
                    if _which_libreoffice() else "")
             raise PdfError(f"{e}{alt}")
         try:
+            # attended は渡さない——LibreOffice は --headless で走り，前面に出せる
+            # ウィンドウも人が答えるダイアログも無い（この引数が効くのは macOS の
+            # PowerPoint 経路だけ）．増やすなら _convert_libreoffice の側で受ける．
             _convert_libreoffice(src, dst, limit)
             return
         except _Unavailable as e:
@@ -578,6 +643,6 @@ def _dispatch(name: str, src: str, dst: str, limit: float | None) -> None:
     if name == "libreoffice":
         _convert_libreoffice(src, dst, limit)
     elif name == "powerpoint":
-        _convert_powerpoint(src, dst, limit)
+        _convert_powerpoint(src, dst, limit, attended)
     else:
         _convert_custom(name, src, dst, limit)
