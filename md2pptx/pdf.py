@@ -49,6 +49,7 @@ Windows の PowerPoint は COM（``SaveAs`` format 32）で対応．
 """
 from __future__ import annotations
 
+import math
 import os
 import pathlib
 import shlex
@@ -124,15 +125,27 @@ def _resolve_timeout(explicit: float | None) -> float | None:
       待っても状況は変わらない．
     """
     if explicit is not None:
-        return None if explicit <= 0 else explicit
+        return _checked(explicit, "--pdf-timeout")
     raw = (os.environ.get(ENV_TIMEOUT) or "").strip()
     if raw:
         try:
             value = float(raw)
         except ValueError:
             raise PdfError(f"invalid {ENV_TIMEOUT}: {raw!r} (seconds, 0 = no limit)")
-        return None if value <= 0 else value
+        return _checked(value, ENV_TIMEOUT)
     return None if sys.stderr.isatty() else _TIMEOUT_UNATTENDED
+
+
+def _checked(value: float, source: str) -> float | None:
+    """秒数を検証する．``0`` 以下は無制限，``nan``/``inf`` は誤りとして弾く．
+
+    ``float("nan")`` は ``<= 0`` が偽なのでそのまま subprocess へ渡ってしまい，
+    「上限があるようで無い」不可解な状態になる．黙って無制限に読み替えるよりも，
+    書き間違いとして知らせる．
+    """
+    if math.isnan(value) or math.isinf(value):
+        raise PdfError(f"invalid {source}: {value} (seconds, 0 = no limit)")
+    return None if value <= 0 else value
 
 
 def _kill(proc: subprocess.Popen[str]) -> None:
@@ -281,12 +294,15 @@ def _macos_run_applescript(src: str, dst: str, timeout: float | None) -> None:
                                capture_output=True, timeout=_HELPER_TIMEOUT)
             except (OSError, subprocess.TimeoutExpired):
                 pass
-        rest = None if timeout is None else timeout - _MACOS_HINT_AFTER
-        try:
-            _, err = proc.communicate(timeout=rest)
-        except subprocess.TimeoutExpired:
-            _kill(proc)
-            raise _timed_out("powerpoint", timeout or 0.0)
+        if timeout is None:
+            _, err = proc.communicate()     # 無制限：応答があるまで待つ
+        else:
+            # ここに来た時点で timeout > _MACOS_HINT_AFTER（短い上限は上で打ち切り済み）．
+            try:
+                _, err = proc.communicate(timeout=timeout - _MACOS_HINT_AFTER)
+            except subprocess.TimeoutExpired:
+                _kill(proc)
+                raise _timed_out("powerpoint", timeout)
     if proc.returncode != 0:
         detail = (err or "").strip().splitlines()
         tail = detail[-1] if detail else f"exit {proc.returncode}"
@@ -300,15 +316,17 @@ def _run(cmd: list[str], what: str, input: str | None = None,
     成功時の出力は捨てる．失敗時のみ stderr（無ければ stdout）の末尾 1 行を
     原因として拾う（cli が警告に整形する）．input を渡すと stdin に流す
     （osascript にスクリプト本体を与えるのに使う）．``timeout`` を超えたら
-    ``subprocess.run`` が子を殺して回収するので，こちらは PdfError に変えるだけ．
+    ``subprocess.run`` が子を kill して待ち直す（Python の仕様）ので，こちらは
+    PdfError に変えるだけ．
     """
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, input=input,
                               timeout=timeout)
     except FileNotFoundError:
         raise PdfError(f"{what}: command not found: {cmd[0]}")
-    except subprocess.TimeoutExpired:
-        raise _timed_out(what, timeout or 0.0)
+    except subprocess.TimeoutExpired as e:
+        # 例外が持つ値を使う（timeout=None なら送出されないので None にならない）．
+        raise _timed_out(what, e.timeout)
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip().splitlines()
         tail = detail[-1] if detail else f"exit {proc.returncode}"
