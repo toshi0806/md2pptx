@@ -18,10 +18,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# 型チェック用（実行には不要）．CI と手元で同じものを入れる．
+# 型チェックと単体テスト用（実行には不要）．CI と手元で同じものを入れる．
 dev = [
     "mypy>=1.11",
     "types-PyYAML>=6",
+    "pytest>=8",
 ]
 
 [project.urls]
@@ -36,6 +37,9 @@ packages = ["md2pptx"]
 # バージョンは md2pptx/__init__.py の __version__ を単一の情報源にする（二重管理を避ける）．
 [tool.setuptools.dynamic]
 version = { attr = "md2pptx.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.mypy]
 files = ["md2pptx"]
