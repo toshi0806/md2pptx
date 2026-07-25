@@ -1,7 +1,7 @@
 // md2pptx を VS Code から使うためのタスク定義。
 //
-// 中身は README の「VS Code で編集しながらプレビューする」節と同じもので、
-// ここに置いてあるのは example.md で実際に動かして確かめるため（ドッグフーディング）。
+// 中身は VSCODE.md に載せているものと同じで、ここに置いてあるのは example.md で
+// 実際に動かして確かめるため（ドッグフーディング）。
 // **片方だけ直さないこと**——直したらもう片方も揃える。
 //
 // problemMatcher が読む 2 行（`rebuilding` / `watching for changes`）は md2pptx 側との
@@ -10,7 +10,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      // 編集中の Markdown を見張り続ける。Cmd-Shift-P →「タスクの実行」→ これ。
+      // 編集中の Markdown を見張り続ける。
       "label": "md2pptx: watch",
       "type": "shell",
       "command": "md2pptx",
@@ -25,8 +25,6 @@
         "clear": true,
         "close": false
       },
-      // 同じ md を二重に見張らない。
-      "runOptions": { "instanceLimit": 1 },
       "problemMatcher": {
         "owner": "md2pptx",
         "source": "md2pptx",
