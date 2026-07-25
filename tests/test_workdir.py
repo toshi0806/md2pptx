@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -31,8 +33,16 @@ def test_it_removes_the_directory_and_its_contents(tmp_path):
     assert not os.path.exists(work)
 
 
-@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
-                    reason="root は書き込み不可のディレクトリにも書けるので再現できない")
+# 「消せないディレクトリ」を作る手段が POSIX の権限ビットしかないので、そこに限定する．
+# Windows の os.chmod は読み取り専用フラグしか動かさず，ディレクトリ内の削除を止められない
+# ——前提が成り立たないまま走らせても、確かめたいこと（投げない／黙らない）ではなく
+# 前提の assert が落ちるだけになる．root も同じ理由で除く．
+_CANNOT_BLOCK_REMOVAL = (
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0))
+
+
+@pytest.mark.skipif(_CANNOT_BLOCK_REMOVAL,
+                    reason="ディレクトリの権限で削除を止められない環境")
 def test_a_directory_that_cannot_be_removed_is_reported_not_raised(tmp_path, capsys):
     """**本当に消せない**状況で、黙らず・投げないことを同時に確かめる．
 
@@ -42,7 +52,7 @@ def test_a_directory_that_cannot_be_removed_is_reported_not_raised(tmp_path, cap
     確かめてしまう（実際それで一度落ちた）．
     """
     work = workdir.create(str(tmp_path))
-    open(os.path.join(work, "half-written.pptx"), "wb").close()
+    Path(work, "half-written.pptx").touch()
     os.chmod(tmp_path, 0o500)                # 中身を消せなくする
     try:
         workdir.discard(work)                # 投げないこと（例外が出ればテストが落ちる）
