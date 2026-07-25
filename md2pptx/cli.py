@@ -95,11 +95,18 @@ def _parse_args(argv):
         "--keep-base", metavar="PATH",
         help="keep the intermediate base pptx (from .thmx) at PATH",
     )
+    # --pdf は値を取らない．値を省略できるオプション（nargs="?"）にすると
+    # `md2pptx --pdf deck.md` で入力ファイルが --pdf の値として食われ，「input が無い」
+    # という原因の分からないエラーになる（Issue #42）．出力先は --pdf-output で取る．
     ap.add_argument(
-        "--pdf", nargs="?", const=True, default=None, metavar="PATH",
-        help="also render a PDF after the pptx (fidelity depends on the "
-             "converter: LibreOffice is a preview, PowerPoint is the real "
-             "render); PATH defaults to the output with a .pdf suffix",
+        "--pdf", action="store_true",
+        help="also render a PDF after the pptx, next to the output pptx "
+             "(fidelity depends on the converter: LibreOffice is a preview, "
+             "PowerPoint is the real render)",
+    )
+    ap.add_argument(
+        "--pdf-output", metavar="PATH",
+        help="render the PDF to PATH; implies --pdf",
     )
     ap.add_argument(
         "--pdf-converter", metavar="NAME|COMMAND",
@@ -129,6 +136,11 @@ def main(argv=None):
 def _run(args):
     if not os.path.isfile(args.input):
         raise SystemExit(f"md2pptx: input not found: {args.input}")
+    # 空の --pdf-output は「指定なし」と区別が付かないまま黙って PDF 生成を落とす
+    # （`--pdf-output "$PDF_OUT"` で変数が未設定のときに起こる）．黙って何もしないより，
+    # ここで落とす．pptx を書く前に検査するので、失敗しても成果物が中途半端に残らない．
+    if args.pdf_output is not None and not args.pdf_output.strip():
+        raise SystemExit("md2pptx: --pdf-output requires a path")
 
     # 1) Markdown -> IR（Deck）
     try:
@@ -173,9 +185,12 @@ def _run(args):
 
     # 4) 任意: PDF も生成（プレビュー用）．失敗しても pptx は成功なので終了コードは
     # 変えない——編集しながらのプレビュー運用を変換失敗で止めないため（Issue #39）．
-    if args.pdf is not None:
-        pdf_out = args.pdf if isinstance(args.pdf, str) \
-            else pdf_backend.default_pdf_path(output)
+    # --pdf-output は単体で生成を有効にする（出力先を書いた人が「作るな」を意図する
+    # ことはない）．--pdf-converter は「どう作るか」の指定なので有効化しない——
+    # 環境変数 MD2PPTX_PDF_CONVERTER を export しただけで全実行が PDF を作り始めて
+    # しまうため（Issue #42）．
+    if args.pdf or args.pdf_output:
+        pdf_out = args.pdf_output or pdf_backend.default_pdf_path(output)
         converter = args.pdf_converter or os.environ.get(ENV_CONVERTER)
         # 変換は数秒かかる（LibreOffice は例で ~4 秒）．無音で止まって見えないよう
         # 開始を stderr に出す（stdout の saved: 行は汚さない）．

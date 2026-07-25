@@ -69,7 +69,8 @@ python3 -m md2pptx input.md
 | `--theme PATH` | テーマファイル（`.thmx` / `.pptx` 両対応）。フロントマター `theme:` を上書き |
 | `-o, --output PATH` | 出力 pptx。フロントマター `output:` を上書き |
 | `--keep-base PATH` | `.thmx` から作る中間 base pptx を破棄せず保存（デバッグ用） |
-| `--pdf [PATH]` | pptx 生成後に PDF も作る。PATH 省略時は出力 pptx と同じ場所・同じ basename の `.pdf` |
+| `--pdf` | pptx 生成後に PDF も作る。出力先は出力 pptx と同じ場所・同じ basename の `.pdf` |
+| `--pdf-output PATH` | PDF の出力先を指定する。単独で指定しても PDF を作る（`--pdf` は不要） |
 | `--pdf-converter NAME\|COMMAND` | PDF 変換器。`auto`（既定）/ `powerpoint` / `libreoffice` / 任意のコマンド行。環境変数 `MD2PPTX_PDF_CONVERTER` を上書き |
 | `--version` | バージョンを表示して終了（入力ファイルは不要） |
 
@@ -82,9 +83,15 @@ python3 -m md2pptx input.md
 結果を確認する、という使い方の土台です。
 
 ```bash
-md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf          # slide.pdf も作る
-md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf out.pdf  # 出力先を指定
+md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf              # slide.pdf も作る
+md2pptx slide.md --theme theme.pptx --pdf-output out.pdf             # 出力先を指定（--pdf は不要）
 ```
+
+- **`--pdf-output` を指定すれば `--pdf` は要りません**（出力先を書いた時点で「作る」意思は明らか
+  なので、`--keep-base PATH` と同じく指定すること自体が有効化になります）。両方指定した場合は
+  `--pdf-output` のパスに作ります。逆に **`--pdf-converter` は PDF 生成を有効にしません**——
+  あれは「どう作るか」の指定で、`MD2PPTX_PDF_CONVERTER` を export しているだけで毎回 PDF が
+  作られては困るからです。
 
 - 変換器は `--pdf-converter` か環境変数 `MD2PPTX_PDF_CONVERTER` で選べます（CLI 引数が優先）。
   既定の `auto` は **native PowerPoint → LibreOffice** の順に、使えるものを試します。
