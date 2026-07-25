@@ -1505,7 +1505,9 @@ class Renderer:
             self.prs.save(staged)
             os.replace(staged, path)
         finally:
-            # 片付けの失敗で成否を変えない（残るのは隠しディレクトリ 1 つ）．
+            # 成功後は staged が移動済みで work は空，失敗時は書きかけが中に残る
+            # ——``rmtree`` はどちらも同じ 1 行で片付く（``ignore_errors`` は，
+            # 片付けの失敗で保存の成否を変えないため．残るのは隠しディレクトリ 1 つ）．
             shutil.rmtree(work, ignore_errors=True)
         return path
 
