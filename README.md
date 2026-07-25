@@ -94,8 +94,9 @@ md2pptx slide.md --pdf-output preview.pdf  # PDF の名前や場所を変える�
 - `--pdf-output` の置き先ディレクトリは**あらかじめ用意しておいてください**。タイポで勝手に
   ディレクトリを作らない方針なので、無い場所を指すと PDF の生成だけが失敗します。
 - 変換器には**任意のコマンド**も指定できます。`{input}` / `{output}` / `{outdir}` が実際のパスに
-  置き換わります。**出力先を指定できないツールでも構いません**——プレースホルダが 1 つも無ければ
-  末尾に `{input}` を補い、ツールが入力の隣に書いた `.pdf` を md2pptx が出力先へ移します。
+  置き換わります。出力先を指定できないツールなら、プレースホルダは書かなくて構いません。pptx の
+  パスが末尾に付いて実行され、ツールが**その pptx と同じディレクトリに同じ名前で**書いた `.pdf`
+  （`slide.pptx` なら `slide.pdf`）を、md2pptx が PDF の出力先へ移動します。
 
   ```bash
   export MD2PPTX_PDF_CONVERTER='soffice --headless --convert-to pdf --outdir {outdir} {input}'
