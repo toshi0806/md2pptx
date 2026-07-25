@@ -1506,9 +1506,14 @@ class Renderer:
             os.replace(staged, path)
         finally:
             # 成功後は staged が移動済みで work は空，失敗時は書きかけが中に残る
-            # ——``rmtree`` はどちらも同じ 1 行で片付く（``ignore_errors`` は，
-            # 片付けの失敗で保存の成否を変えないため．残るのは隠しディレクトリ 1 つ）．
+            # ——``rmtree`` はどちらも同じ 1 行で片付く．``ignore_errors`` なのは
+            # **片付けの失敗で保存の成否を変えない**ため（保存はもう終わっている）．
             shutil.rmtree(work, ignore_errors=True)
+            if os.path.isdir(work):
+                # ただし黙って残すと ``--watch`` では保存のたびに積もる．消せなかった
+                # ことだけは伝える（原因は環境側——Windows で走査ソフトがファイルを
+                # 掴んでいる等——なので、ここで再試行はしない）．
+                sys.stderr.write(f"md2pptx: warning: could not remove {work}\n")
         return path
 
 

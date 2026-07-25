@@ -166,6 +166,22 @@ def test_an_unusable_output_directory_says_what_failed(renderer, monkeypatch):
     assert found.value.__cause__.errno == 13
 
 
+def test_a_cleanup_that_could_not_remove_the_directory_says_so(renderer, capsys,
+                                                               monkeypatch):
+    """片付けに失敗したら黙らない．
+
+    ``ignore_errors=True`` は「片付けの失敗で保存の成否を変えない」ためだが、その
+    まま黙ると ``--watch`` では保存のたびに ``.md2pptx-*`` が積もり、しかも誰も
+    気づけない．保存自体は成功させたうえで、消せなかったことだけ伝える．
+    """
+    monkeypatch.setattr(render.shutil, "rmtree", lambda *a, **kw: None)
+
+    renderer.save()
+
+    assert renderer.dst.read_bytes() == NEW, "片付けの失敗で保存を壊さないこと"
+    assert "could not remove" in capsys.readouterr().err
+
+
 def test_a_first_save_needs_no_existing_file(renderer):
     """初回（出力先がまだ無い）でも普通に書ける．"""
     dst = renderer.dst
