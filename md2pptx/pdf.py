@@ -18,26 +18,24 @@ PowerPoint 経路は実 PowerPoint 自身の出力なので見た目の確認に
 
 **macOS の native PowerPoint 対応**：AppleScript 辞書に ``export`` コマンドは無いが，
 ``save … in (POSIX file p) as save as PDF`` は POSIX file への coerce により安定して動作
-する（PowerPoint 16.111.1 で 14 ページの変換を実測）。以前「無反応／保存ダイアログでハング」
-と観測したのは，オートメーション／powerbox の TCC 承認が未取得でダイアログの応答待ちに
-なっていたためで，承認済みなら問題なく変換できる（TCC 承認は実行元バイナリごとに別管理な
-ので，iTerm・VS Code・launchd から呼ぶならそれぞれで承認が要る）。``auto`` は macOS で
-PowerPoint.app があれば実 PowerPoint を優先し，無い／失敗した場合は LibreOffice へフォール
-バックする．Windows の PowerPoint は COM（``SaveAs`` format 32）で対応．
+する（PowerPoint 16.111.1 で 14 ページの変換を実測）。「無反応でハング」して見えるときは
+スクリプトの誤りではなくダイアログの応答待ちを疑うこと．``auto`` は macOS で PowerPoint.app
+があれば実 PowerPoint を優先し，無い／失敗した場合は LibreOffice へフォールバックする．
+Windows の PowerPoint は COM（``SaveAs`` format 32）で対応．
 
-**画面を乱さないための工夫（macOS）**：AppleScript に ``activate`` を入れず，文書を開く前に
-``open -g -j -a`` で PowerPoint を非表示・非アクティブ起動しておく（``_macos_prelaunch_powerpoint_hidden``）。
-これで未起動からの変換は全工程を通してウィンドウが出ない．利用者が既に PowerPoint を表示して
-使っている場合だけはウィンドウが出る（``-j`` は起動の瞬間にしか効かない）．なお
-``save … as PDF`` は隠したアプリを自ら再表示するため，起動後に隠し直す方法では抑えられない．
+**PowerPoint を目立たせずに使う（macOS）**．2 つ組み合わせる（Issue #44）：
 
-**承認ダイアログを出さない工夫（macOS）**：pptx を PowerPoint のサンドボックスコンテナ
-（``~/Library/Containers/com.microsoft.Powerpoint/Data/tmp``）へコピーし，そこで変換して
-PDF を目的地へ移す．コンテナはアプリ自身の領域なのでファイルアクセスの承認が要らず，
-入出力がどこにあっても動く（未承認の場所を直接開かせると powerbox のダイアログ待ちで
-止まる——隠して動かしている以上，これは利用者から見えない）．それでも残るオートメーション
-承認などで固まった場合に備え，``_MACOS_HINT_AFTER`` 秒で案内を stderr に出し PowerPoint を
-前面に出す（変換自体は中断しない）．
+- ``activate`` を入れず ``open -g -j -a`` で非表示・非アクティブ起動する
+  （``_macos_prelaunch_powerpoint_hidden``）．未起動からの変換なら全工程でウィンドウが
+  出ない．既に表示して使っているインスタンスには効かない（``-j`` は起動の瞬間だけ）．
+  ``save … as PDF`` は隠したアプリを自ら再表示するので，起動後に隠し直す方法は使えない．
+- pptx をコンテナへコピーして**その中だけを触らせる**（``_macos_container_tmp``）．
+  未承認の場所を直接開かせるとファイルアクセスの許可ダイアログ待ちで止まるが，隠して
+  動かしている以上それは利用者から見えないので，そもそも出させない．入出力がどこに
+  あっても動くという副次効果もある．
+
+隠したことで気づけない停止（オートメーション承認など）に備え，``_MACOS_HINT_AFTER`` 秒で
+案内を stderr に出し PowerPoint を前面に出す（変換自体は中断しない）．
 
 このモジュールは cli 以外に依存しない（python-pptx 非依存）．外部プロセスの
 起動と，どのバイナリを使うかの解決だけを担う．

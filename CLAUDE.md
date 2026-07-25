@@ -90,21 +90,24 @@ magick montage ref.png md.png -tile 2x1 -geometry +4+4 -background '#888' /tmp/c
 `md2pptx` 自身にも `--pdf` がある（Issue #39）。生成後に PDF を作る土台機能で、既定 `auto` は
 native PowerPoint → LibreOffice の順に試す。**macOS では PowerPoint.app があれば `auto` が
 osascript 経由で実 PowerPoint を使う**ので、`md2pptx … --pdf --pdf-converter powerpoint` の
-出力はそのまま最終確認に使える（LibreOffice 経路は当たり確認どまり）。初回は TCC 承認が要り、
-承認は呼び出し元アプリごとに別管理（README 参照）。`--pdf-converter` に外部の実 PowerPoint
-変換ツールを指定することもできる。忠実度は保証しない（README 参照）。
+出力はそのまま最終確認に使える（LibreOffice 経路は当たり確認どまり）。初回はオートメーションの
+TCC 承認が要る（呼び出し元アプリごとに別管理・README 参照）。`--pdf-converter` に外部の実
+PowerPoint 変換ツールを指定することもできる。忠実度は保証しない（README 参照）。
 
-macOS 経路は **PowerPoint のウィンドウを出さない**（Issue #44）。AppleScript に `activate` を
-入れず、`open -g -j -a` で非表示・非アクティブ起動してから文書を開くため。検証中に何度変換
-しても画面が乱れない。表示されるのは**利用者が既に PowerPoint を表示して使っている場合だけ**で、
-これは仕様（`-j` は起動の瞬間にしか効かない）。`save … as PDF` は隠したアプリを自ら再表示する
-ので、起動後に隠し直す方法では抑えられない（測定済み）。
+macOS 経路は **PowerPoint を目立たせずに使う**（Issue #44）。何度変換しても画面が乱れないので、
+検証で繰り返し叩いてよい。仕組みは 2 つで、どちらも消すと運用が壊れる:
 
-**変換は PowerPoint のサンドボックスコンテナ内で行う**（`~/Library/Containers/com.microsoft.Powerpoint/Data/tmp`）。
-pptx をそこへコピーして変換し、PDF を目的地へ移す。未承認の場所を直接開かせると powerbox の
-許可ダイアログ待ちで止まるが、隠して動かしているとそれが見えないため（実測: 未承認フォルダ
-25 秒でタイムアウト／コンテナ内 1.1 秒で成功）。オートメーション承認などで固まる余地は残るので、
-30 秒で stderr に案内を出し PowerPoint を前面に出す（中断はしない）。
+- `activate` を入れず `open -g -j -a` で非表示・非アクティブ起動してから文書を開く。ウィンドウが
+  出るのは**利用者が既に PowerPoint を表示して使っている場合だけ**で、これは仕様（`-j` は起動の
+  瞬間にしか効かない）。`save … as PDF` は隠したアプリを自ら再表示するので、起動後に隠し直す
+  方法では抑えられない（測定済み）。
+- 変換は **PowerPoint のサンドボックスコンテナ内**で行う（`~/Library/Containers/com.microsoft.Powerpoint/Data/tmp`）。
+  pptx をそこへコピーして変換し、PDF を目的地へ移す。未承認の場所を直接開かせるとファイル
+  アクセスの許可ダイアログ待ちで止まるが、隠していると利用者にはそれが見えないため（実測:
+  未承認フォルダ 25 秒でタイムアウト／コンテナ内 1.1 秒で成功）。
+
+隠したことで気づけない停止（オートメーション承認など）に備え、30 秒で stderr に案内を出し
+PowerPoint を前面に出す（中断はしない）。
 
 ## 規約・設計上の約束
 
