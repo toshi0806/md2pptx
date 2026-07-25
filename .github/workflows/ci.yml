@@ -65,6 +65,20 @@ jobs:
           assert len(p.slides) == 14, f"expected 14 slides, got {len(p.slides)}"
           assert notes == 2, f"expected 2 slides with notes, got {notes}"
           PY
+      # The watch loop's signal handling cannot be reached from unit tests: the
+      # SIGTERM handler only exists in a real process, and getting it wrong means
+      # "Terminate task" in an editor kills the run mid-conversion, leaving the
+      # staging directory behind. Build once, stop the way an editor would.
+      - name: Smoke-test --watch (build once, then stop on SIGTERM)
+        run: |
+          md2pptx example.md --theme OfficeTheme.pptx -o watch.pptx --watch &
+          pid=$!
+          for _ in $(seq 30); do [ -f watch.pptx ] && break; sleep 1; done
+          kill -TERM $pid
+          # `timeout` is not usable here: it reports 124 for a run it stopped
+          # itself, which would hide whether our own handler exited cleanly.
+          wait $pid
+          test -f watch.pptx
       - name: Self-check the parser debug harness
         run: python -m md2pptx.parser
 

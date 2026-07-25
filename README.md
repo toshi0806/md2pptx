@@ -72,6 +72,7 @@ python3 -m md2pptx input.md
 | `--pdf-output PATH` | PDF の出力先を指定する。単独で指定しても PDF を作る（`--pdf` は不要） |
 | `--pdf-converter NAME\|COMMAND` | PDF 変換器。`auto`（既定）/ `powerpoint` / `libreoffice` / 任意のコマンド行。環境変数 `MD2PPTX_PDF_CONVERTER` を上書き |
 | `--pdf-timeout SEC` | 変換を諦めるまでの秒数（`0` で無制限）。環境変数 `MD2PPTX_PDF_TIMEOUT` を上書き |
+| `--watch` | 入力（と、そのテーマ・画像）が変わるたびに作り直し続ける。`Ctrl-C` で停止 |
 | `--version` | バージョンを表示して終了（入力ファイルは不要） |
 
 ### PDF プレビュー（`--pdf`）
@@ -123,6 +124,42 @@ macOS で PowerPoint に変換させるときの注意です。
   いるときは PowerPoint も前面に出します）。
 - **すでに PowerPoint を開いているときは、変換中にウィンドウが出ます。** 作業中の PowerPoint を
   勝手に隠さないための割り切りです（フォーカスは奪いません）。
+
+### 編集しながら作り直す（`--watch`）
+
+`--watch` を付けると起動したままになり、保存するたびに作り直します。`--pdf` と組み合わせると、
+PDF ビューアを開いたまま原稿を書き進められます。
+
+```bash
+md2pptx slide.md --watch --pdf
+```
+
+```
+md2pptx: watching slide.md — Ctrl-C to stop
+md2pptx: 14:03:21 rebuilding slide.md
+saved: slide.pptx slides: 14
+saved: slide.pdf
+md2pptx: 14:03:23 watching for changes
+md2pptx: 14:04:07 rebuilding slide.md (fig.png changed)
+```
+
+- **見張るのは、そのビルドが実際に読んだファイル**です。Markdown だけでなく**テーマと画像**も
+  含みます（テーマを差し替えれば作り直します）。原稿から画像を消せば、その画像はもう見ません。
+- **まだ無いファイルも見張ります。** 「画像が見つからない」で失敗したあと、その画像を置けば
+  作り直します。
+- **`--watch` は `--pdf` を含みません。** pptx だけを最新に保つ使い方も正当なので、PDF が要る
+  ときは `--pdf` を併記してください。
+- **エラーで止まりません。** 文法エラーは表示するだけで、次の保存を待ちます（編集中は失敗して
+  いるのが普通の状態なので、ここで終了すると直しても誰も作り直してくれません）。ただし
+  **起動時の引数の誤り**（入力ファイルが無いなど）はその場で終了します。
+- **`Ctrl-C` で止まります**（終了コードは 0）。エディタの「タスクの終了」などが送る `SIGTERM`
+  でも同じように後片付けをしてから終わります。
+- **速くなるわけではありません。** 1 回のビルドはこれまでと同じで、手で起動しなくてよくなる
+  だけです（時間の大半は PDF 変換で、常駐しても縮みません）。
+- **PDF 変換が終わらないときは 180 秒で諦めます**（端末から実行していても）。見ているのは
+  エディタと PDF であってこの端末ではないので、待ち続けると以後のプレビューが全部止まって
+  しまうためです。止まった PowerPoint を前面に出すこともしません（編集画面を奪わないため）。
+  `--pdf-timeout` で変えられます。
 
 ### 試す
 
@@ -434,6 +471,7 @@ caption: 実験結果の比較
 | `md2pptx/render.py` | IR → pptx 描画 |
 | `md2pptx/flow.py` | フロー図 DSL のパーサ＋レイアウタ |
 | `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`） |
+| `md2pptx/watch.py` | 入力の変更監視（`--watch`） |
 | `example.md` | 機能ひととおりのデモ |
 | `DESIGN.md` | 詳細設計 |
 

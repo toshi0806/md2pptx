@@ -15,21 +15,62 @@ Markdown を入力に取り，フロントマター／CLI 引数で解決した�
 
     md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
     md2pptx input.md              # フロントマターの theme/output を使う
+    md2pptx input.md --watch --pdf  # 保存のたびに作り直す（編集しながらのプレビュー）
     md2pptx --version             # バージョンを表示して終了する
     python3 -m md2pptx input.md   # インストールせず開発中に実行する場合
+
+1 回ぶんのビルドは ``build_once`` に切り出してあり，一発実行と ``--watch`` が共有する
+（``watch.py`` は「いつ作り直すか」だけを担い，何を作るかは知らない）．
 """
 from __future__ import annotations
 
 import argparse
 import os
 import sys
+from dataclasses import dataclass
+from typing import Iterable
 
 from . import __version__
 from . import parser as md_parser  # 標準ライブラリ parser とは別物
 from . import pdf as pdf_backend
 from . import render
+from . import watch
+from .ir import Image
 from .pdf import ENV_CONVERTER, ENV_TIMEOUT
 from .thmx2pptx import ThmxError, thmx_to_pptx
+
+
+class BuildError(Exception):
+    """1 回のビルドの想定内の失敗（原因つき）．
+
+    一発実行では ``main`` が ``md2pptx: <理由>`` の SystemExit に整形し，``--watch``
+    ではその場に表示して次の保存を待つ．**``build_once`` は SystemExit を投げない**
+    ——投げると watch のループごと死に，直して保存しても誰も作り直さなくなる．
+
+    Attributes:
+        sources: この試行で判明した入力ファイル（watch の監視対象）．失敗しても
+            そこまでに分かったものは返す——「画像が無い」で失敗したなら，その画像が
+            置かれたときに作り直したいから．
+    """
+
+    def __init__(self, message: str, sources: Iterable[str] = ()) -> None:
+        super().__init__(message)
+        self.sources: frozenset[str] = frozenset(sources)
+
+
+@dataclass(frozen=True)
+class BuildResult:
+    """1 回のビルドの成果．
+
+    Attributes:
+        output: 書いた pptx．
+        pdf: 書いた PDF（作らなかった／変換に失敗したときは None）．
+        sources: このビルドが読んだファイル（Markdown・テーマ・画像）．
+    """
+
+    output: str
+    pdf: str | None
+    sources: frozenset[str]
 
 
 def load_base(theme_path, keep_base=None):
@@ -51,7 +92,7 @@ def load_base(theme_path, keep_base=None):
     if ext == ".pptx":
         # 既に base 形式なのでそのまま土台に使う（変換も一時ファイルも不要）．
         return theme_path, False
-    raise SystemExit(
+    raise BuildError(
         f"unsupported theme format: {ext or '(none)'} "
         "(expected .thmx or .pptx)"
     )
@@ -66,10 +107,29 @@ def _as_path(value: object, key: str) -> str | None:
     """
     if value is None or isinstance(value, str):
         return value
-    raise SystemExit(
-        f"md2pptx: front matter '{key}' must be a string, got "
+    raise BuildError(
+        f"front matter '{key}' must be a string, got "
         f"{type(value).__name__} ({value!r})"
     )
+
+
+def _image_sources(deck, base_dir: str) -> list[str]:
+    """Deck が参照する画像ファイルを列挙する（``--watch`` の監視対象）．
+
+    単一カラム（``blocks``）と多カラム（``columns``）の両方を見る．解決規則は
+    描画側と同じ ``render.resolve_image_path``——ここで独自に組み立てると，
+    どちらかを直したときにもう片方が置き去りになる．
+    """
+    found: list[str] = []
+    for slide in deck.slides:
+        blocks = list(slide.blocks)
+        for column in slide.columns:
+            blocks.extend(column)
+        for block in blocks:
+            if isinstance(block, Image):
+                found.append(
+                    os.path.abspath(render.resolve_image_path(block.src, base_dir)))
+    return found
 
 
 def _parse_args(argv):
@@ -120,6 +180,14 @@ def _parse_args(argv):
              f"overrides ${ENV_TIMEOUT}. Without it, md2pptx waits forever when "
              "stderr is a terminal and gives up after 180s when it is not",
     )
+    # --watch は --pdf を含意しない（#42 と同じ理由）．pptx だけを最新に保つ運用も
+    # 正当で，「見張れ」と「PDF も作れ」は別の指示．編集しながらのプレビューには
+    # --watch --pdf を組み合わせる（README 参照）．
+    ap.add_argument(
+        "--watch", action="store_true",
+        help="keep running and rebuild whenever the Markdown (or its theme or "
+             "images) changes; Ctrl-C to stop",
+    )
     return ap.parse_args(argv)
 
 
@@ -140,6 +208,22 @@ def main(argv=None):
 
 
 def _run(args):
+    _check_invocation(args)
+    if args.watch:
+        return _run_watch(args)
+    try:
+        build_once(args)
+    except BuildError as e:
+        raise SystemExit(f"md2pptx: {e}")
+    return 0
+
+
+def _check_invocation(args) -> None:
+    """起動時に一度だけ行う引数の検査．
+
+    **watch でもここは即座に失敗させる**（打ち間違いを見張り続けても仕方がない）．
+    これ以降の失敗は原稿の側の問題なので，watch では表示するだけで待ち続ける．
+    """
     if not os.path.isfile(args.input):
         raise SystemExit(f"md2pptx: input not found: {args.input}")
     # 空の --pdf-output は「指定なし」と区別が付かないまま黙って PDF 生成を落とす
@@ -148,46 +232,108 @@ def _run(args):
     if args.pdf_output is not None and not args.pdf_output.strip():
         raise SystemExit("md2pptx: --pdf-output requires a path")
 
+
+def _run_watch(args) -> int:
+    """`--watch`：入力とその依存を見張り，変わるたびに作り直す（止まらない）．"""
+    previous: frozenset[str] = frozenset()
+
+    def build() -> frozenset[str]:
+        nonlocal previous
+        try:
+            # 端末は tty でも，人が見ているのはエディタと PDF であってこの端末では
+            # ない．無制限に待つと以後のプレビューが全部止まるので，打ち切って次の
+            # 保存で作り直す方に賭ける（前面化もしない．pdf.convert 参照）．
+            result = build_once(args, unattended=True)
+        except BuildError as e:
+            sys.stderr.write(f"md2pptx: {e}\n")
+            # 失敗しても監視は続ける．前回の依存も残すのは，足りない画像を置いた／
+            # theme を直した，というときに作り直したいから．
+            previous = previous | e.sources
+        else:
+            # **自分の出力は見張らない**．theme に出力 pptx を指されると，作る →
+            # 変わった → また作る，の無限ループになる．
+            made = {os.path.abspath(result.output)}
+            if result.pdf:
+                made.add(os.path.abspath(result.pdf))
+            previous = result.sources - made
+        return previous
+
+    # 入力 Markdown だけはビルド前から分かっている．初回ビルド（実 PowerPoint なら
+    # 数秒）の最中に保存されたぶんを取りこぼさないよう，先に見張り始める．
+    return watch.run(build, label=args.input,
+                     seed=[os.path.abspath(args.input)])
+
+
+def build_once(args, *, unattended: bool = False) -> BuildResult:
+    """引数 1 セットぶんを 1 回ビルドする（parse → 解決 → render → 任意で PDF）．
+
+    一発実行と ``--watch`` の共通部分．``saved:`` 等の表示もここで行う——標準出力と
+    標準エラーに出る順序を，一発実行と watch で同一に保つため．
+
+    Args:
+        unattended: 端末が tty でも「人は見ていない」として PDF 変換に伝える．
+
+    Raises:
+        BuildError: 想定内の失敗．**SystemExit は投げない**（watch が死ぬ）．
+    """
+    # 失敗しても，そこまでに判明した入力は watch へ返す（BuildError に載せる）．
+    sources: set[str] = {os.path.abspath(args.input)}
+    try:
+        return _build(args, sources, unattended)
+    except BuildError as e:
+        raise BuildError(str(e), sources | e.sources)
+    except (ThmxError, FileNotFoundError, PermissionError) as e:
+        # thmx 変換の失敗や，入力ファイルの不在・権限エラーはトレースバックでは
+        # なく整形メッセージで失敗させる（§7）．OSError 全般には広げない
+        # ——想定外の入出力エラー（例：ドライブ切断）はトレースバックを残す．
+        raise BuildError(str(e), sources)
+
+
+def _build(args, sources: set[str], unattended: bool) -> BuildResult:
+    """``build_once`` の本体．``sources`` に読んだファイルを足しながら進む．"""
     # 1) Markdown -> IR（Deck）
     try:
         deck = md_parser.parse_file(args.input)
     except Exception as e:  # パースエラーは原因を表示して失敗させる（§7）．
-        raise SystemExit(f"md2pptx: failed to parse {args.input}: {e}")
+        raise BuildError(f"failed to parse {args.input}: {e}")
 
     meta = deck.meta or {}
 
     # 2) テーマ・出力先を解決（CLI 引数 > フロントマター）．
     theme = _as_path(args.theme or meta.get("theme"), "theme")
     if not theme:
-        raise SystemExit(
-            "md2pptx: no theme specified (use --theme or front matter 'theme')"
+        raise BuildError(
+            "no theme specified (use --theme or front matter 'theme')"
         )
     # フロントマターの相対パスは Markdown ファイルからの相対として解決する．
     if not os.path.isabs(theme) and not os.path.isfile(theme):
         cand = os.path.join(os.path.dirname(os.path.abspath(args.input)), theme)
         if os.path.isfile(cand):
             theme = cand
+    sources.add(os.path.abspath(theme))
 
     output = _as_path(args.output or meta.get("output"), "output")
     if not output:
-        raise SystemExit(
-            "md2pptx: no output specified (use -o or front matter 'output')"
+        raise BuildError(
+            "no output specified (use -o or front matter 'output')"
         )
 
     # 3) base pptx へ収束 → レンダリング → 保存．
     # 画像などの相対パスは Markdown ファイルの置き場を基準に解決する．
     base_dir = os.path.dirname(os.path.abspath(args.input))
+    sources.update(_image_sources(deck, base_dir))
     base_path, is_temp = load_base(theme, keep_base=args.keep_base)
     try:
         render.build(deck, base_path, output, base_dir=base_dir)
     except Exception as e:  # 描画エラーも原因を表示して失敗させる（§7）．
-        raise SystemExit(f"md2pptx: failed to render {args.input}: {e}")
+        raise BuildError(f"failed to render {args.input}: {e}")
     finally:
         if is_temp and os.path.exists(base_path):
             os.remove(base_path)
 
     n = len(deck.slides) + (1 if deck.title_slide is not None else 0)
-    print(f"saved: {output} slides: {n}")
+    # watch では出力をパイプへ流されることがある（ブロックバッファで無音に見える）．
+    print(f"saved: {output} slides: {n}", flush=True)
 
     # 4) 任意: PDF も生成（プレビュー用）．失敗しても pptx は成功なので終了コードは
     # 変えない——編集しながらのプレビュー運用を変換失敗で止めないため（Issue #39）．
@@ -195,6 +341,7 @@ def _run(args):
     # ことはない）．--pdf-converter と --pdf-timeout は「どう作るか」の指定なので
     # 有効化しない——環境変数を export しただけで全実行が PDF を作り始めてしまうため
     # （Issue #42）．
+    pdf_out: str | None = None
     if args.pdf or args.pdf_output:
         pdf_out = args.pdf_output or pdf_backend.default_pdf_path(output)
         converter = args.pdf_converter or os.environ.get(ENV_CONVERTER)
@@ -202,12 +349,14 @@ def _run(args):
         # 開始を stderr に出す（stdout の saved: 行は汚さない）．
         sys.stderr.write(f"md2pptx: converting to PDF: {pdf_out}\n")
         try:
-            pdf_backend.convert(output, pdf_out, converter, args.pdf_timeout)
-            print(f"saved: {pdf_out}")
+            pdf_backend.convert(output, pdf_out, converter, args.pdf_timeout,
+                                unattended=unattended)
+            print(f"saved: {pdf_out}", flush=True)
         except pdf_backend.PdfError as e:
             sys.stderr.write(f"md2pptx: warning: PDF not generated: {e}\n")
+            pdf_out = None      # 出来ていないものを「作った」とは報告しない
 
-    return 0
+    return BuildResult(output=output, pdf=pdf_out, sources=frozenset(sources))
 
 
 if __name__ == "__main__":
