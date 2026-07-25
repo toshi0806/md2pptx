@@ -163,16 +163,24 @@ md2pptx: 14:03:23 watching for changes
 
 数秒で右の PDF が更新されます。タブは開いたまま、スクロール位置も保たれます。
 
-**6.（確認）文法エラーを入れて保存してみる**
+**6.（確認）わざとエラーを出してみる**
 
-`Cmd+Shift+M` で**「問題」パネル**を開くと、こう出ます。
+画像の参照を存在しないファイル名に書き換えて保存すると、`Cmd+Shift+M` で開く**「問題」
+パネル**に出ます。このリポジトリの `example.md` で `example-fig.png` を
+`example-fig-typo.png` にした場合はこうなります。
 
 ```
 example.md
   ⊗ image not found: example-fig-typo.png    md2pptx
 ```
 
-右端の `md2pptx` が `problemMatcher` の `source` です。直して保存すれば消えます。
+左が Markdown のファイル名、右端の `md2pptx` が `problemMatcher` の `source` です。パスを戻して
+保存すれば消えます。
+
+**行へは飛べません。** `problemMatcher` は行番号を取っていないので、クリックするとファイルの
+先頭が開きます。行番号を持つエラー（フロントマターの書き間違いなど）では
+`invalid YAML front matter at line 2: ...` のように**メッセージの中に**出るので、そちらを見て
+ください。
 
 **7. 止める** — 「ターミナル」→「タスクの終了...」
 
