@@ -164,6 +164,151 @@ md2pptx: 14:04:07 rebuilding slide.md (fig.png changed)
   しまうためです。止まった PowerPoint を前面に出すこともしません（編集画面を奪わないため）。
   `--pdf-timeout` で変えられます。
 
+#### VS Code で編集しながらプレビューする
+
+LaTeX Workshop のリアルタイムプレビューと同じ体験になります。**保存すると数秒で PDF の
+タブが更新されます**（タブは開いたまま、スクロール位置も保たれます）。
+
+以下は **macOS を前提**に書いています。Windows / Linux でも同じ仕組みで動きますが、キーは
+`Cmd` を `Ctrl` に読み替えてください（オートメーション承認は macOS だけの話です。Windows の
+PowerPoint 変換は COM 経由なので承認は要りません）。
+
+必要なものは 2 つです。
+
+1. **[LaTeX Workshop](https://marketplace.visualstudio.com/items?itemName=James-Yu.latex-workshop)**
+   （`James-Yu.latex-workshop`）。`.tex` と無関係の PDF も開けて、**ディスク上の更新を検知して
+   自動で読み直す**ビューアを持っているのが理由です。LaTeX を使っていなくても構いません。
+   - `vscode-pdf`（`tomoki1207.pdf`）は自動リロードが壊れたままなので使えません
+     （[Issue #162](https://github.com/tomoki1207/vscode-pdfviewer/issues/162)）。
+   - VS Code 内にこだわらないなら、外部ビューアでも同じことができます（macOS なら
+     [Skim](https://skim-app.sourceforge.io/) が自動リロードに対応。プレビュー.app は非対応）。
+2. **PDF をそのビューアに関連付ける。** `.vscode/settings.json`（またはユーザー設定）に:
+
+```jsonc
+{
+  "workbench.editorAssociations": { "*.pdf": "latex-workshop-pdf-hook" }
+}
+```
+
+あとはタスクを置くだけです。原稿のリポジトリの `.vscode/tasks.json` に貼ってください
+（このリポジトリにも同じものが入っているので、`example.md` で試せます）。
+
+```jsonc
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // 編集中の Markdown を見張り続ける。Cmd-Shift-P →「タスクの実行」→ これ。
+      "label": "md2pptx: watch",
+      "type": "shell",
+      "command": "md2pptx",
+      "args": ["${file}", "--watch", "--pdf"],
+      "options": { "cwd": "${fileDirname}" },
+      "isBackground": true,
+      "presentation": {
+        // 端末は出さない（PDF を見ていればよい）。問題は Problems パネルに出る。
+        // 端末も見たいときは "always" にする。
+        "reveal": "silent",
+        "panel": "dedicated",
+        "clear": true,
+        "close": false
+      },
+      // 同じ md を二重に見張らない。
+      "runOptions": { "instanceLimit": 1 },
+      "problemMatcher": {
+        "owner": "md2pptx",
+        "source": "md2pptx",
+        "fileLocation": ["autoDetect", "${fileDirname}"],
+        "severity": "error",
+        "pattern": {
+          // 拾うのはファイルに紐づく失敗だけ（`converting to PDF: ...` を診断にしない）。
+          "kind": "file",
+          "regexp": "^md2pptx: failed to (?:parse|render) (.+?\\.md): (.+)$",
+          "file": 1,
+          "message": 2
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^md2pptx: \\d\\d:\\d\\d:\\d\\d rebuilding\\b",
+          "endsPattern": "^md2pptx: \\d\\d:\\d\\d:\\d\\d watching for changes\\b"
+        }
+      }
+    },
+    {
+      // 単発ビルド（Cmd-Shift-B の既定）。
+      "label": "md2pptx: build",
+      "type": "shell",
+      "command": "md2pptx",
+      "args": ["${file}", "--pdf"],
+      "options": { "cwd": "${fileDirname}" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "silent", "panel": "dedicated", "clear": true },
+      // pattern は上の watch と同じもの。tasks.json にはカスタム matcher を名前で
+      // 使い回す仕組みが無いので写すしかない——**直すときは 2 か所とも直すこと**。
+      "problemMatcher": {
+        "owner": "md2pptx",
+        "source": "md2pptx",
+        "fileLocation": ["autoDetect", "${fileDirname}"],
+        "severity": "error",
+        "pattern": {
+          "kind": "file",
+          "regexp": "^md2pptx: failed to (?:parse|render) (.+?\\.md): (.+)$",
+          "file": 1,
+          "message": 2
+        }
+      }
+    },
+    {
+      // 出来上がった PDF を開く（上の関連付けで内蔵ビューアへ）。`code` コマンドが
+      // PATH に要る（コマンドパレット → 「Shell Command: Install 'code' command in PATH」）。
+      "label": "md2pptx: open preview",
+      "type": "shell",
+      "command": "code",
+      "args": ["-r", "${fileDirname}/${fileBasenameNoExtension}.pdf"],
+      "presentation": { "reveal": "never" },
+      "problemMatcher": []
+    }
+  ]
+}
+```
+
+キーバインドを付けるなら `keybindings.json` へ（`args` では変数が展開されないので、タスク名で
+呼びます）。
+
+```jsonc
+[
+  { "key": "cmd+alt+w", "command": "workbench.action.tasks.runTask",
+    "args": "md2pptx: watch", "when": "editorLangId == markdown" },
+  { "key": "cmd+alt+v", "command": "workbench.action.tasks.runTask",
+    "args": "md2pptx: open preview", "when": "editorLangId == markdown" },
+  { "key": "cmd+alt+t", "command": "workbench.action.tasks.terminate" }
+]
+```
+
+`workbench.action.tasks.terminate` は **md2pptx 専用ではありません**。実行中のタスクが複数あると
+どれを止めるか尋ねられるので、そこで `md2pptx: watch` を選んでください。
+
+使い方と注意です。
+
+- **`md2pptx: watch` を 1 回実行して、あとは書くだけ**です。PDF のタブを開いておくと、保存の
+  たびに更新されます。止めるときは「タスクの終了」（`Cmd-Alt-T`）。
+- **`${file}` はタスクを実行した時点の Markdown に固定されます。** 別の原稿に切り替えたら、
+  タスクを終了して実行し直してください。原稿が 1 つに決まっているなら、`${file}` の代わりに
+  `"${workspaceFolder}/slide.md"` と書いておく方が事故がありません。
+- **文法エラーは Problems パネルに出ます**（該当行を含むメッセージ付き）。テーマ未指定のような
+  ファイルに紐づかないエラーは端末にだけ出るので、見落としが気になるなら `presentation` の
+  `"reveal"` を `"always"` にしてください。
+- **`md2pptx: open preview` は「Markdown の隣に同じ名前の PDF ができる」前提**です
+  （`slide.md` → `slide.pdf`）。フロントマターの `output:` を別の場所や名前にしているときは、
+  タスクの `args` をその PDF のパスに書き換えてください。一度開いてしまえば、以降はタブが
+  自動で更新されるので、このタスクを使うのは最初の 1 回だけです。
+- **初回だけ macOS のオートメーション承認が要ります**（PowerPoint で変換する場合）。
+  「"Code" が "Microsoft PowerPoint" を制御しようとしています」というダイアログが出るので許可
+  してください。承認は**呼び出し元アプリごと**なので、Terminal で承認済みでも VS Code では
+  改めて出ます。押し損ねても 180 秒で諦めるだけなので、次の保存でまた出ます。
+- **PowerPoint を使いたくない場合**は `--pdf-converter libreoffice` を `args` に足してください
+  （GUI も承認も不要。ただし忠実度は当たり確認どまりです）。
+
 ### 試す
 
 ```bash
@@ -475,6 +620,7 @@ caption: 実験結果の比較
 | `md2pptx/flow.py` | フロー図 DSL のパーサ＋レイアウタ |
 | `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`） |
 | `md2pptx/watch.py` | 入力の変更監視（`--watch`） |
+| `.vscode/` | VS Code のタスク定義と PDF ビューアの関連付け（上記の節と同じ内容） |
 | `example.md` | 機能ひととおりのデモ |
 | `DESIGN.md` | 詳細設計 |
 
