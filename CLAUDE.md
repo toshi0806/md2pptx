@@ -88,7 +88,8 @@ magick montage ref.png md.png -tile 2x1 -geometry +4+4 -background '#888' /tmp/c
 - 構造の確認（枚数・プレースホルダ・フォントサイズ等）は python-pptx で読む。
 
 `md2pptx` 自身にも `--pdf` がある（Issue #39）。生成後に PDF を作る土台機能で、既定 `auto` は
-native PowerPoint → LibreOffice の順に試す。**macOS では PowerPoint.app があれば `auto` が
+native PowerPoint → LibreOffice の順に**使えるものを選ぶ**（無い物は飛ばすが、**在る物の失敗は
+握らない**——Issue #46。落とすと忠実度の違う PDF を黙って掴むことになる）。**macOS では PowerPoint.app があれば `auto` が
 osascript 経由で実 PowerPoint を使う**ので、`md2pptx … --pdf --pdf-converter powerpoint` の
 出力はそのまま最終確認に使える（LibreOffice 経路は当たり確認どまり）。初回はオートメーションの
 TCC 承認が要る（呼び出し元アプリごとに別管理・README 参照）。`--pdf-converter` に外部の実

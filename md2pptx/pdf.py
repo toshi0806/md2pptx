@@ -9,7 +9,8 @@ PowerPoint 経路は実 PowerPoint 自身の出力なので見た目の確認に
 
 変換器は 3 系統:
 
-- ``auto``（既定）: native PowerPoint → LibreOffice の順に，使えるものを試す．
+- ``auto``（既定）: native PowerPoint → LibreOffice の順に，**使えるもの**を選ぶ．
+  選んだ変換器が失敗したら次へは落とさずそのまま失敗する（Issue #46）．
 - ``powerpoint`` / ``libreoffice``: その系統を名指し．
 - 任意のコマンド行: ``mytool -o {output} {input}`` のように直接指定．
   プレースホルダ ``{input}`` / ``{output}`` / ``{outdir}`` を置換する．1 つも
@@ -55,8 +56,22 @@ class PdfError(Exception):
     """PDF 変換の失敗（原因メッセージ付き）．cli が警告表示に使う．"""
 
 
+class _Unavailable(PdfError):
+    """その変換器がこの環境に**無い**（＝失敗ではない）．
+
+    ``auto`` はこれだけを握って次の変換器へ進む．無い物を飛ばしても何も失われない
+    のに対し，**在る物の失敗**を飛ばすと忠実度の違う PDF を黙って掴ませることに
+    なる（Issue #46）．名指し指定のときは PdfError として そのまま利用者に届く．
+    """
+
+
 # 環境変数名（CLI 引数 --pdf-converter が優先）．
 ENV_CONVERTER = "MD2PPTX_PDF_CONVERTER"
+
+# Windows の COM 経路で「PowerPoint はあった」ことを示す目印．PowerShell に
+# COM オブジェクト生成の直後で出力させ，これが出る前に落ちたか後で落ちたかで
+# 「無い（_Unavailable）」と「失敗（PdfError）」を切り分ける．
+_WIN_COM_READY = "MD2PPTX_POWERPOINT_READY"
 
 # macOS の PowerPoint 変換がこれだけ待っても終わらなければ，ダイアログ待ちを疑って
 # 案内を出す（変換は続ける）．コンテナ経由の変換は例で 1〜8 秒なので誤検知しない幅．
@@ -103,8 +118,23 @@ def _which_libreoffice() -> str | None:
 
 
 def _macos_powerpoint_installed() -> bool:
-    """macOS に Microsoft PowerPoint が入っているか（app バンドルの有無で判定）．"""
-    return os.path.isdir("/Applications/Microsoft PowerPoint.app")
+    """macOS に Microsoft PowerPoint が入っているか．
+
+    既定の場所にあれば即座に真（ほとんどはこれで済む）．無ければ LaunchServices に
+    **名前で**問い合わせる．変換本体（``open -a`` と ``tell application``）も名前で
+    解決するので，置き場所を変えている環境で**ここだけがパスで否定する**と，動くはずの
+    PowerPoint を使わずに LibreOffice へ落ちる（＝#46 で消した無言の切り替えが戻る）．
+    この問い合わせはアプリを起動しない（実測 46ms）．
+    """
+    if os.path.isdir("/Applications/Microsoft PowerPoint.app"):
+        return True
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", 'id of app "Microsoft PowerPoint"'],
+            capture_output=True, text=True)
+    except OSError:
+        return False
+    return proc.returncode == 0
 
 
 def _macos_prelaunch_powerpoint_hidden() -> None:
@@ -116,7 +146,7 @@ def _macos_prelaunch_powerpoint_hidden() -> None:
     （利用者が表示して使っているインスタンスを勝手に隠すことはない）．
 
     失敗しても変換は AppleScript 側の暗黙起動で成立するので，ここでは握り潰す
-    （PowerPoint が無い場合の明示エラーは AppleScript の失敗として出る）．
+    （PowerPoint の有無は呼び出し側が先に判定している）．
     """
     try:
         subprocess.run(["open", "-g", "-j", "-a", "Microsoft PowerPoint"],
@@ -192,7 +222,7 @@ def _convert_libreoffice(src: str, dst: str) -> None:
     """LibreOffice で src(pptx) → dst(pdf)．--outdir 方式なので後で改名する．"""
     soffice = _which_libreoffice()
     if soffice is None:
-        raise PdfError(
+        raise _Unavailable(
             "LibreOffice not found (looked for soffice/libreoffice on PATH "
             "and the default install location)")
     outdir = os.path.dirname(os.path.abspath(dst)) or "."
@@ -215,10 +245,18 @@ def _convert_libreoffice(src: str, dst: str) -> None:
 
 
 def _convert_powerpoint(src: str, dst: str) -> None:
-    """native PowerPoint（macOS: AppleScript / Windows: COM）で変換する．"""
+    """native PowerPoint（macOS: AppleScript / Windows: COM）で変換する．
+
+    Raises:
+        _Unavailable: この環境に PowerPoint が無いとき（``auto`` はこれだけを握る）．
+        PdfError: PowerPoint はあったが変換に失敗したとき．
+    """
     src_abs = os.path.abspath(src)
     dst_abs = os.path.abspath(dst)
     if sys.platform == "darwin":
+        if not _macos_powerpoint_installed():
+            raise _Unavailable(
+                "PowerPoint is not installed (no /Applications/Microsoft PowerPoint.app)")
         # macOS は osascript 経由で実 PowerPoint を叩く．
         # スクリプト本体は stdin で，入出力パスは argv で渡す．
         # 文書を開く前に非表示で起動しておく——さもないと変換のたびにウィンドウが出る．
@@ -243,18 +281,31 @@ def _convert_powerpoint(src: str, dst: str) -> None:
         src_ps = src_abs.replace("'", "''")
         dst_ps = dst_abs.replace("'", "''")
         ps = (
-            # COM の失敗は既定では非ゼロ終了にならず _run の returncode 検査を
-            # すり抜ける．Stop にして例外＝非ゼロで終わらせ、原因を拾えるようにする．
+            # COM の失敗は既定では非ゼロ終了にならず returncode 検査をすり抜ける．
+            # Stop にして例外＝非ゼロで終わらせ、原因を拾えるようにする．
             "$ErrorActionPreference = 'Stop'; "
             "$ppt = New-Object -ComObject PowerPoint.Application; "
+            # ここまで来れば PowerPoint は在る．以降の失敗は「無い」ではなく「失敗」．
+            f"Write-Output '{_WIN_COM_READY}'; "
             "$pres = $ppt.Presentations.Open("
             f"'{src_ps}', $true, $false, $false); "
             f"$pres.SaveAs('{dst_ps}', 32); "
             "$pres.Close(); $ppt.Quit()"
         )
-        _run(["powershell", "-NoProfile", "-Command", ps], "powerpoint")
+        try:
+            proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                                  capture_output=True, text=True)
+        except FileNotFoundError:
+            raise _Unavailable("powerpoint: command not found: powershell")
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            tail = detail[-1] if detail else f"exit {proc.returncode}"
+            if _WIN_COM_READY not in (proc.stdout or ""):
+                # COM オブジェクトすら作れなかった＝PowerPoint が入っていない．
+                raise _Unavailable(f"PowerPoint is not available: {tail}")
+            raise PdfError(f"powerpoint failed: {tail}")
     else:
-        raise PdfError("native PowerPoint is only available on macOS or Windows")
+        raise _Unavailable("native PowerPoint is only available on macOS or Windows")
     # osascript/COM はいずれも無音失敗（exit 0 でも PDF が無い/空）がありうるので，
     # 終了コードだけでなく成果物の存在と非空を成功条件にする．
     if not os.path.isfile(dst_abs) or os.path.getsize(dst_abs) == 0:
@@ -330,7 +381,8 @@ def convert(src: str, dst: str, converter: str | None) -> None:
             それ以外は任意のコマンド行として解釈する．
 
     Raises:
-        PdfError: 変換に失敗したとき（cli が警告に整形する）．
+        PdfError: 変換に失敗したとき（cli が警告に整形する）．``auto`` でも，
+            **使える変換器が失敗したら**そのまま失敗する（次の変換器へは落とさない）．
     """
     if not os.path.isfile(src):
         raise PdfError(f"pptx not found: {src}")
@@ -354,27 +406,34 @@ def convert(src: str, dst: str, converter: str | None) -> None:
     name = (converter or "auto").strip()
 
     if name == "auto":
-        # 実 PowerPoint（テーマ忠実度が高い）→ LibreOffice の順に試す．PowerPoint を試すのは
-        # Windows，または macOS で PowerPoint.app がインストールされている場合．未インストール
-        # や変換失敗時は LibreOffice へフォールバックする．
-        errors: list[str] = []
-        try_powerpoint = sys.platform.startswith("win") or (
-            sys.platform == "darwin" and _macos_powerpoint_installed())
-        if try_powerpoint:
-            try:
-                _convert_powerpoint(src, dst)
-                return
-            except PdfError as e:
-                errors.append(str(e))
+        # auto は「**使えるものを探す**」だけ．実 PowerPoint（テーマ忠実度が高い）を
+        # 優先し，無ければ LibreOffice を使う．
+        # 在る物が失敗したときに次へ落とすことはしない（Issue #46）——忠実度という
+        # 成果物の性質が黙って入れ替わるうえ，隠れる原因（オートメーション承認の拒否，
+        # ライセンス未認証など）は利用者が直せるものだから．
+        missing: list[str] = []
+        try:
+            _convert_powerpoint(src, dst)
+            return
+        except _Unavailable as e:
+            # _Unavailable は PdfError のサブクラスなので，この except は必ず
+            # PdfError より**先**に置くこと．入れ替えると失敗まで握って次の変換器へ
+            # 落ちる＝#46 で消した挙動が黙って戻る．
+            missing.append(str(e))
+        except PdfError as e:
+            # 案内は LibreOffice が実際に使えるときだけ添える（無い物を勧めない）．
+            alt = ("; use --pdf-converter libreoffice to convert without PowerPoint"
+                   if _which_libreoffice() else "")
+            raise PdfError(f"{e}{alt}")
         try:
             _convert_libreoffice(src, dst)
             return
-        except PdfError as e:
-            errors.append(str(e))
+        except _Unavailable as e:
+            missing.append(str(e))
         raise PdfError(
             "no PDF converter available "
             "(tried PowerPoint / LibreOffice; use --pdf-converter or install "
-            "LibreOffice)\n  - " + "\n  - ".join(errors))
+            "LibreOffice)\n  - " + "\n  - ".join(missing))
 
     if name == "libreoffice":
         _convert_libreoffice(src, dst)
