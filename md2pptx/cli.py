@@ -136,6 +136,11 @@ def main(argv=None):
 def _run(args):
     if not os.path.isfile(args.input):
         raise SystemExit(f"md2pptx: input not found: {args.input}")
+    # 空の --pdf-output は「指定なし」と区別が付かないまま黙って PDF 生成を落とす
+    # （`--pdf-output "$PDF_OUT"` で変数が未設定のときに起こる）．黙って何もしないより，
+    # ここで落とす．pptx を書く前に検査するので、失敗しても成果物が中途半端に残らない．
+    if args.pdf_output is not None and not args.pdf_output.strip():
+        raise SystemExit("md2pptx: --pdf-output requires a path")
 
     # 1) Markdown -> IR（Deck）
     try:
