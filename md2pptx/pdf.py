@@ -547,7 +547,11 @@ def convert(src: str, dst: str, converter: str | None,
     name = (converter or "auto").strip()
     limit = _resolve_timeout(timeout, unattended)
     # 出力はその場では作らない．同じディレクトリに使い捨ての作業場所を作り，そこで
-    # 変換してから os.replace で置き換える（同一デバイスなのでアトミック）．
+    # 変換してから os.replace で置き換える．作業場所は dst_dir の**中に新しく作る**
+    # ディレクトリなので dst と必ず同一ファイルシステム上にあり，置き換えは常に
+    # アトミック——EXDEV は起こりえないので shutil.move（コピー＋削除）への
+    # フォールバックは要らない．むしろ非アトミックな経路を足すと，下記 1) の
+    # 「消えている時間を作らない」が崩れる．
     #
     # 1) **変換中に dst が「消えている」時間を作らない**．PDF ビューアはフォルダを監視
     #    していて，削除を確定するとそのファイルを監視集合から外す（LaTeX Workshop は
@@ -574,6 +578,9 @@ def convert(src: str, dst: str, converter: str | None,
             # ので，警告を見落とした人が前回の内容を新しい出力と取り違えてしまう．
             # **置き換えに失敗したときも同じ**——変換自体は成功していても，そこに
             # 残っているのは前回の内容だから．書きかけは work ごと消える．
+            # なお「消せるものだけ消える」のは意図どおり．rename も unlink も権限は
+            # 親ディレクトリで決まるので，権限で置き換えられなかった dst は削除でき
+            # ない（実測でどちらも EACCES）．無事な出力を巻き添えにはしない．
             try:
                 os.remove(dst)
             except OSError:

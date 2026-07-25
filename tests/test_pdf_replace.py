@@ -180,24 +180,31 @@ def test_a_failed_replacement_leaves_no_stale_pdf(deck, tmp_path, backend, monke
     dst.write_bytes(OLD)
     backend.setup(lambda staged: Path(staged).write_bytes(NEW))
 
-    def refuse(src, dst_):
-        raise OSError("device busy")
+    real_replace = pdf.os.replace
+
+    def refuse(source, target):
+        # 目的の PDF への置き換えだけを失敗させる．os.replace を丸ごと差し替えると
+        # このテストの間だけとはいえ無関係な処理まで巻き込む．
+        if str(target) == str(dst):
+            raise OSError("device busy")
+        return real_replace(source, target)
 
     monkeypatch.setattr(pdf.os, "replace", refuse)
 
     with pytest.raises(pdf.PdfError, match="cannot replace existing PDF"):
         pdf.convert(str(deck), str(dst), "powerpoint", timeout=1)
 
-    assert not dst.exists()
+    assert not dst.exists(), "置き換えに失敗しても古い PDF を残してはいけない"
 
 
 @pytest.mark.parametrize("converter", ["auto", "powerpoint"])
 def test_unattended_reaches_the_backend(deck, tmp_path, monkeypatch, converter):
     """``unattended`` は「止まっても PowerPoint を前面化しない」まで届く．
 
-    上限の決め方（``_resolve_timeout``）は test_pdf_timeout.py が固定する．ここで
-    見るのは ``convert`` からバックエンドまでの配線で，``auto`` と名指しは
-    ``_dispatch`` の**別々の呼び出し箇所**なので両方を通す．
+    見るのは ``convert`` からバックエンドまでの**配線**であって，上限の決め方
+    （test_pdf_timeout.py）でも探索順（test_pdf_converter_choice.py）でもない．
+    ``auto`` と名指しは ``_dispatch`` の**別々の呼び出し箇所**なので両方を通す
+    ——片方だけ ``attended`` を落としても気づけるように．
     """
     seen: dict[str, object] = {}
 
@@ -212,4 +219,4 @@ def test_unattended_reaches_the_backend(deck, tmp_path, monkeypatch, converter):
 
     pdf.convert(str(deck), str(tmp_path / "b.pdf"), converter, timeout=1,
                 unattended=True)
-    assert seen["attended"] is False
+    assert seen["attended"] is False, "unattended なら前面化しないと伝わること"
