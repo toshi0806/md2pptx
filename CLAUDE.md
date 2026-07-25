@@ -61,8 +61,10 @@ python3 -m md2pptx.parser
 依存: `python-pptx>=1.0` / `PyYAML>=6`（`pyproject.toml` で宣言。インストール時に自動導入）。
 環境は python-pptx 1.0.2 / PyYAML 6 で検証。
 
-CI（`.github/workflows/ci.yml`）は 2 ジョブ。`typecheck` が mypy を 1 回、`generate` が
-**3.11 と 3.14 のマトリクス**で `example.md` の生成まで通す。mypy は `pyproject.toml` の
+CI（`.github/workflows/ci.yml`）は 3 ジョブ。`typecheck` が mypy を 1 回、`generate` が
+**3.11 と 3.14 のマトリクス**で `example.md` の生成まで通し、`pdf` が LibreOffice を入れて
+`--pdf` のページ数まで検証する（runner に PowerPoint は無いので **LibreOffice 経路のみ**。
+macOS の実 PowerPoint 経路は CI では踏めず、手元での確認になる）。mypy は `pyproject.toml` の
 `python_version`（= サポート最古）として解析するので実行処理系は 1 つで足りるが、
 **実行マトリクスは別途必要**。mypy が通ることと実際に動くことは別で、#32 では
 `cli.py` の future import 欠落を実行側だけが捕まえた。
@@ -79,14 +81,18 @@ pdftoppm -png -r 110 -f 3 -l 3 out.pdf /tmp/p # 特定ページを画像化 → 
 magick montage ref.png md.png -tile 2x1 -geometry +4+4 -background '#888' /tmp/cmp.png
 ```
 
-- 見た目の最終確認は **実 PowerPoint** で行う。`--pdf`（後述）の LibreOffice 経路は
-  フォント解決差で崩れるため、当たり確認には使えても最終確認の代替にはならない。
+- 見た目の最終確認は **実 PowerPoint** で行う（macOS なら `--pdf --pdf-converter powerpoint`
+  でも同等）。`--pdf` の LibreOffice 経路はフォント解決差で崩れるため、当たり確認には
+  使えても最終確認の代替にはならない。
 - 実 PowerPoint 変換に使う手元のツールは、出力先を指定できて入力の場所にも制約が無いものを想定。
 - 構造の確認（枚数・プレースホルダ・フォントサイズ等）は python-pptx で読む。
 
 `md2pptx` 自身にも `--pdf` がある（Issue #39）。生成後に PDF を作る土台機能で、既定 `auto` は
-native PowerPoint → LibreOffice の順に試す。`--pdf-converter` に実 PowerPoint 変換ツールを
-指定して使うこともできる。忠実度は保証しない（README 参照）。
+native PowerPoint → LibreOffice の順に試す。**macOS では PowerPoint.app があれば `auto` が
+osascript 経由で実 PowerPoint を使う**ので、`md2pptx … --pdf --pdf-converter powerpoint` の
+出力はそのまま最終確認に使える（LibreOffice 経路は当たり確認どまり）。初回は TCC 承認が要り、
+承認は呼び出し元アプリごとに別管理（README 参照）。`--pdf-converter` に外部の実 PowerPoint
+変換ツールを指定することもできる。忠実度は保証しない（README 参照）。
 
 ## 規約・設計上の約束
 

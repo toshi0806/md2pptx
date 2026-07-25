@@ -3,9 +3,9 @@
 """pptx → PDF 変換（生成後プレビュー用の土台．DESIGN.md §7 / Issue #39）．
 
 「Markdown を編集しながら PDF を見る」運用の基礎として，生成した pptx を
-そのまま PDF にする．**忠実度は保証しない**：LibreOffice の出力はテーマ
-フォントの解決差などで実 PowerPoint と一致しない（README 参照）。見た目の
-最終確認は実 PowerPoint で行う前提は変えない．
+そのまま PDF にする．**忠実度は変換器による**：LibreOffice の出力はテーマ
+フォントの解決差などで実 PowerPoint と一致しない（当たり確認どまり）が，
+PowerPoint 経路は実 PowerPoint 自身の出力なので見た目の確認に使える（README 参照）．
 
 変換器は 3 系統:
 
@@ -16,12 +16,14 @@
   無ければ末尾に ``{input}`` を補う（出力パスを取らないツール向け）．その場合
   ツールは入力の隣に ``<basename>.pdf`` を書く想定で，期待パスと違えば移動する．
 
-**macOS の native PowerPoint は非対応**：この PowerPoint ビルドの AppleScript 辞書には
-``export`` コマンドが無く，標準 ``save … as save as PDF`` は宛先型により無反応または保存
-ダイアログでハングする（実測）。ハングは実害なので試みず明示エラーにし，``auto`` は
-LibreOffice へフォールバックする．実 PowerPoint 相当の忠実な変換が要る場合は，実 PowerPoint
-を叩く外部変換ツールを ``--pdf-converter`` に指定する．Windows の PowerPoint は
-COM（``SaveAs`` format 32）で対応．
+**macOS の native PowerPoint 対応**：AppleScript 辞書に ``export`` コマンドは無いが，
+``save … in (POSIX file p) as save as PDF`` は POSIX file への coerce により安定して動作
+する（PowerPoint 16.111.1 で 14 ページの変換を実測）。以前「無反応／保存ダイアログでハング」
+と観測したのは，オートメーション／powerbox の TCC 承認が未取得でダイアログの応答待ちに
+なっていたためで，承認済みなら問題なく変換できる（TCC 承認は実行元バイナリごとに別管理な
+ので，iTerm・VS Code・launchd から呼ぶならそれぞれで承認が要る）。``auto`` は macOS で
+PowerPoint.app があれば実 PowerPoint を優先し，無い／失敗した場合は LibreOffice へフォール
+バックする．Windows の PowerPoint は COM（``SaveAs`` format 32）で対応．
 
 このモジュールは cli 以外に依存しない（python-pptx 非依存）．外部プロセスの
 起動と，どのバイナリを使うかの解決だけを担う．
@@ -45,6 +47,23 @@ class PdfError(Exception):
 ENV_CONVERTER = "MD2PPTX_PDF_CONVERTER"
 
 
+# macOS の実 PowerPoint で pptx → PDF にする AppleScript．osascript に stdin で渡し，
+# 入出力パスは argv で渡す（パスを文字列リテラルに埋め込まないので，スペースや引用符を
+# 含むパスでも構文が壊れない）．``POSIX file`` への coerce は Sonoma 以降の alias 問題の
+# 回避に必須（素の POSIX パス文字列では保存先を解決できない）．
+_APPLESCRIPT_PPTX_TO_PDF = '''on run argv
+    set inPath to item 1 of argv
+    set outPath to item 2 of argv
+    tell application "Microsoft PowerPoint"
+        activate
+        open (POSIX file inPath)
+        set theDoc to active presentation
+        save theDoc in (POSIX file outPath) as save as PDF
+        close theDoc saving no
+    end tell
+end run'''
+
+
 def _which_libreoffice() -> str | None:
     """LibreOffice の実行ファイルを探す．PATH 優先，無ければ OS 既知の場所．"""
     for name in ("soffice", "libreoffice"):
@@ -66,14 +85,20 @@ def _which_libreoffice() -> str | None:
     return None
 
 
-def _run(cmd: list[str], what: str) -> None:
+def _macos_powerpoint_installed() -> bool:
+    """macOS に Microsoft PowerPoint が入っているか（app バンドルの有無で判定）．"""
+    return os.path.isdir("/Applications/Microsoft PowerPoint.app")
+
+
+def _run(cmd: list[str], what: str, input: str | None = None) -> None:
     """外部コマンドを実行し，失敗を PdfError に変換する．
 
     成功時の出力は捨てる．失敗時のみ stderr（無ければ stdout）の末尾 1 行を
-    原因として拾う（cli が警告に整形する）．
+    原因として拾う（cli が警告に整形する）．input を渡すと stdin に流す
+    （osascript にスクリプト本体を与えるのに使う）．
     """
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, input=input)
     except FileNotFoundError:
         raise PdfError(f"{what}: command not found: {cmd[0]}")
     if proc.returncode != 0:
@@ -113,17 +138,13 @@ def _convert_powerpoint(src: str, dst: str) -> None:
     src_abs = os.path.abspath(src)
     dst_abs = os.path.abspath(dst)
     if sys.platform == "darwin":
-        # macOS の PowerPoint（AppleScript）は無人 PDF 化が不安定．sdef に `export`
-        # コマンドは無く，標準 `save … in <file> as save as PDF` は宛先の型次第で
-        # 無反応（POSIX パス文字列）か保存ダイアログでハング（POSIX file）になる
-        # （このビルドで実測）．ハングは実害なので試みず，明示エラーにして呼び出し側に
-        # 委ねる：`auto` は LibreOffice へフォールバックし，実 PowerPoint 相当の忠実な
-        # 変換が要る場合は実 PowerPoint を叩く外部ツールを --pdf-converter に指定する．
-        raise PdfError(
-            "native PowerPoint on macOS is not supported for headless PDF "
-            "(no reliable AppleScript path on this build); use LibreOffice, or "
-            "point --pdf-converter at an external converter")
-    if sys.platform.startswith("win"):
+        # macOS は osascript 経由で実 PowerPoint を叩く．
+        # スクリプト本体は stdin で，入出力パスは argv で渡す．TCC 承認（オート
+        # メーション＋ファイルアクセス）が済んでいれば安定して変換できる（未承認だと承認
+        # ダイアログの応答待ちでハングしたように見えるので注意）．
+        _run(["osascript", "-", src_abs, dst_abs], "powerpoint",
+             input=_APPLESCRIPT_PPTX_TO_PDF)
+    elif sys.platform.startswith("win"):
         # PowerShell + COM．32 = ppSaveAsPDF．パスは単一引用符文字列に埋めるので，
         # パス内の ' は '' にエスケープする（O'Brien 等でコマンドが壊れるのを防ぐ）．
         src_ps = src_abs.replace("'", "''")
@@ -141,8 +162,10 @@ def _convert_powerpoint(src: str, dst: str) -> None:
         _run(["powershell", "-NoProfile", "-Command", ps], "powerpoint")
     else:
         raise PdfError("native PowerPoint is only available on macOS or Windows")
-    if not os.path.isfile(dst_abs):
-        raise PdfError("powerpoint did not produce a PDF")
+    # osascript/COM はいずれも無音失敗（exit 0 でも PDF が無い/空）がありうるので，
+    # 終了コードだけでなく成果物の存在と非空を成功条件にする．
+    if not os.path.isfile(dst_abs) or os.path.getsize(dst_abs) == 0:
+        raise PdfError("powerpoint did not produce a (non-empty) PDF")
 
 
 def _convert_custom(command: str, src: str, dst: str) -> None:
@@ -225,13 +248,26 @@ def convert(src: str, dst: str, converter: str | None) -> None:
     if not os.path.isdir(dst_dir):
         raise PdfError(f"output directory does not exist: {dst_dir}")
 
+    # 既存の出力は変換前に消す．残したままだと，変換が実際には失敗しても前回の PDF が
+    # 「存在かつ非空」の成功条件を満たしてしまい，古い内容を見続けることになる
+    # （macOS の save as PDF は無音失敗しうる）．
+    try:
+        os.remove(dst)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        raise PdfError(f"cannot replace existing PDF: {dst} ({e})")
+
     name = (converter or "auto").strip()
 
     if name == "auto":
-        # native PowerPoint → LibreOffice の順に試す．native PowerPoint を試すのは
-        # Windows のみ（macOS の PowerPoint は非対応で必ず失敗するため試さない）．
+        # 実 PowerPoint（テーマ忠実度が高い）→ LibreOffice の順に試す．PowerPoint を試すのは
+        # Windows，または macOS で PowerPoint.app がインストールされている場合．未インストール
+        # や変換失敗時は LibreOffice へフォールバックする．
         errors: list[str] = []
-        if sys.platform.startswith("win"):
+        try_powerpoint = sys.platform.startswith("win") or (
+            sys.platform == "darwin" and _macos_powerpoint_installed())
+        if try_powerpoint:
             try:
                 _convert_powerpoint(src, dst)
                 return

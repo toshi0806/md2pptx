@@ -97,8 +97,9 @@ def _parse_args(argv):
     )
     ap.add_argument(
         "--pdf", nargs="?", const=True, default=None, metavar="PATH",
-        help="also render a PDF after the pptx (preview only, not a faithful "
-             "PowerPoint render); PATH defaults to the output with a .pdf suffix",
+        help="also render a PDF after the pptx (fidelity depends on the "
+             "converter: LibreOffice is a preview, PowerPoint is the real "
+             "render); PATH defaults to the output with a .pdf suffix",
     )
     ap.add_argument(
         "--pdf-converter", metavar="NAME|COMMAND",
