@@ -1,0 +1,88 @@
+// md2pptx を VS Code から使うためのタスク定義。
+//
+// 中身は README の「VS Code で編集しながらプレビューする」節と同じもので、
+// ここに置いてあるのは example.md で実際に動かして確かめるため（ドッグフーディング）。
+// **片方だけ直さないこと**——直したらもう片方も揃える。
+//
+// problemMatcher が読む 2 行（`rebuilding` / `watching for changes`）は md2pptx 側との
+// 契約。変えると background task が「走り終わった」と判定できなくなる。
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // 編集中の Markdown を見張り続ける。Cmd-Shift-P →「タスクの実行」→ これ。
+      "label": "md2pptx: watch",
+      "type": "shell",
+      "command": "md2pptx",
+      "args": ["${file}", "--watch", "--pdf"],
+      "options": { "cwd": "${fileDirname}" },
+      "isBackground": true,
+      "presentation": {
+        // 端末は出さない（PDF を見ていればよい）。問題は Problems パネルに出る。
+        // 端末も見たいときは "always" にする。
+        "reveal": "silent",
+        "panel": "dedicated",
+        "clear": true,
+        "close": false
+      },
+      // 同じ md を二重に見張らない。
+      "runOptions": { "instanceLimit": 1 },
+      "problemMatcher": {
+        "owner": "md2pptx",
+        "source": "md2pptx",
+        "fileLocation": ["autoDetect", "${fileDirname}"],
+        "severity": "error",
+        "pattern": {
+          // md2pptx: failed to parse /path/slide.md: invalid YAML front matter at line 2: ...
+          // md2pptx: failed to render /path/slide.md: image not found: fig.png
+          //
+          // 拾うのは**ファイルに紐づく失敗だけ**。`converting to PDF: out.pdf` や
+          // `no theme specified` を診断にしないため、接頭辞まで含めて照合する。
+          // パスは非貪欲——理由の側に別の `.md:` が出ても先頭で切る。
+          "kind": "file",
+          "regexp": "^md2pptx: failed to (?:parse|render) (.+?\\.md): (.+)$",
+          "file": 1,
+          "message": 2
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^md2pptx: \\d\\d:\\d\\d:\\d\\d rebuilding\\b",
+          "endsPattern": "^md2pptx: \\d\\d:\\d\\d:\\d\\d watching for changes\\b"
+        }
+      }
+    },
+    {
+      // 単発ビルド（Cmd-Shift-B の既定）。
+      "label": "md2pptx: build",
+      "type": "shell",
+      "command": "md2pptx",
+      "args": ["${file}", "--pdf"],
+      "options": { "cwd": "${fileDirname}" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "silent", "panel": "dedicated", "clear": true },
+      "problemMatcher": {
+        "owner": "md2pptx",
+        "source": "md2pptx",
+        "fileLocation": ["autoDetect", "${fileDirname}"],
+        "severity": "error",
+        "pattern": {
+          "kind": "file",
+          "regexp": "^md2pptx: failed to (?:parse|render) (.+?\\.md): (.+)$",
+          "file": 1,
+          "message": 2
+        }
+      }
+    },
+    {
+      // 出来上がった PDF を開く（.vscode/settings.json の関連付けで内蔵ビューアへ）。
+      // `code` コマンドが PATH に要る（コマンドパレット →
+      // 「Shell Command: Install 'code' command in PATH」）。
+      "label": "md2pptx: open preview",
+      "type": "shell",
+      "command": "code",
+      "args": ["-r", "${fileDirname}/${fileBasenameNoExtension}.pdf"],
+      "presentation": { "reveal": "never" },
+      "problemMatcher": []
+    }
+  ]
+}

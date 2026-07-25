@@ -1,0 +1,12 @@
+{
+  // PDF を LaTeX Workshop の内蔵ビューアで開く。**ディスク上の更新を検知して自動で
+  // 読み直す**のがこれを選ぶ理由で、md2pptx が PDF をアトミックに差し替えるのと
+  // 組み合わさって「保存 → 数秒でプレビューが更新」が成立する（README 参照）。
+  //
+  // LaTeX Workshop（James-Yu.latex-workshop）が要る。入れていない場合、PDF を開くと
+  // 「このビューアが無い」と言われるので、この行を消すか右クリック →
+  // 「エディターの再度オープン」で既定に戻す。
+  "workbench.editorAssociations": {
+    "*.pdf": "latex-workshop-pdf-hook"
+  }
+}
