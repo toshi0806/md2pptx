@@ -197,6 +197,23 @@ def test_a_failed_replacement_leaves_no_stale_pdf(deck, tmp_path, backend, monke
     assert not dst.exists(), "置き換えに失敗しても古い PDF を残してはいけない"
 
 
+def test_an_unusable_output_directory_is_a_pdf_failure(deck, tmp_path, monkeypatch):
+    """作業場所を作れないときも ``PdfError``——素の ``OSError`` を通さない．
+
+    通してしまうと cli の ``except PdfError`` をすり抜けて ``SystemExit`` になり，
+    **pptx は保存できているのに終了コードが 1** になる（`main` が ``PermissionError``
+    を握って整形するため）．「PDF が作れなくても pptx は成功」（Issue #39）が崩れ，
+    編集しながらの運用が出力先の権限ひとつで止まってしまう．
+    """
+    def refuse(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(pdf.tempfile, "mkdtemp", refuse)
+
+    with pytest.raises(pdf.PdfError, match="cannot create a working directory"):
+        pdf.convert(str(deck), str(tmp_path / "out.pdf"), "powerpoint", timeout=1)
+
+
 @pytest.mark.parametrize("converter", ["auto", "powerpoint"])
 def test_unattended_reaches_the_backend(deck, tmp_path, monkeypatch, converter):
     """``unattended`` は「止まっても PowerPoint を前面化しない」まで届く．

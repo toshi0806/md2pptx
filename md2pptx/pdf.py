@@ -565,7 +565,20 @@ def convert(src: str, dst: str, converter: str | None,
     #    LibreOffice は --outdir に <入力 basename>.pdf を書くので，slide.pptx →
     #    slide.pdf の既定運用では **dst を直接・逐次的に書いていた**．作業場所を
     #    挟むと outdir がそちらへ移り，この衝突も消える．
-    with tempfile.TemporaryDirectory(dir=dst_dir, prefix=".md2pptx-") as work:
+    try:
+        work = tempfile.mkdtemp(dir=dst_dir, prefix=".md2pptx-")
+    except OSError as e:
+        # 作業場所すら作れない（多くは出力先の書き込み権限）．**PDF 変換の失敗として
+        # 扱う**——素の OSError を通すと cli の `except PdfError` をすり抜けて
+        # SystemExit になり，pptx は保存できているのに終了コードが 1 になる．
+        # 「PDF が作れなくても pptx は成功」（#39）が崩れ，編集しながらの運用が
+        # 出力先の権限ひとつで止まる．
+        raise PdfError(f"cannot create a working directory in {dst_dir} ({e})")
+    # 後片付けは TemporaryDirectory ではなく自前で行う．with で包むと，変換の本体が
+    # 投げた**想定外の**例外まで巻き込んで扱いを変えてしまう．ここで OSError を
+    # PdfError に読み替えてよいのは「作業場所を用意できなかった」ときだけで，
+    # 想定外の例外はトレースバックのまま伝播させる（バグを隠さない）．
+    try:
         staged = os.path.join(work, os.path.basename(dst))
         try:
             _dispatch(name, src, staged, limit, not unattended)
@@ -586,6 +599,9 @@ def convert(src: str, dst: str, converter: str | None,
             except OSError:
                 pass
             raise
+    finally:
+        # 片付けの失敗で成否を変えない（残るのは隠しディレクトリ 1 つ）．
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def _dispatch(name: str, src: str, dst: str, limit: float | None,
