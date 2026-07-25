@@ -36,13 +36,20 @@ Windows の PowerPoint は COM（``SaveAs`` format 32）で対応．
   あっても動くという副次効果もある．
 
 隠したことで気づけない停止（オートメーション承認など）に備え，``_MACOS_HINT_AFTER`` 秒で
-案内を stderr に出し PowerPoint を前面に出す（変換自体は中断しない）．
+案内を stderr に出す（前面化は tty のときだけ）．
+
+**待ちの上限（Issue #48）**：止まり方には「人が今すぐ直せるもの」（承認ダイアログ・サインイン
+画面）と「誰も直さないもの」（GUI セッションの無い cron / CI・クラッシュ）がある．時計では
+区別できないので **stderr が tty か**で分ける——tty なら打ち切らず（案内が効くので待つ意味が
+ある．``Ctrl-C`` で止められる），非 tty なら ``_TIMEOUT_UNATTENDED`` 秒で打ち切る．
+``--pdf-timeout`` / ``MD2PPTX_PDF_TIMEOUT`` で上書きでき，``0`` は無制限．
 
 このモジュールは cli 以外に依存しない（python-pptx 非依存）．外部プロセスの
 起動と，どのバイナリを使うかの解決だけを担う．
 """
 from __future__ import annotations
 
+import math
 import os
 import pathlib
 import shlex
@@ -50,6 +57,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 
 class PdfError(Exception):
@@ -65,8 +73,17 @@ class _Unavailable(PdfError):
     """
 
 
-# 環境変数名（CLI 引数 --pdf-converter が優先）．
+# 環境変数名（CLI 引数 --pdf-converter / --pdf-timeout が優先）．
 ENV_CONVERTER = "MD2PPTX_PDF_CONVERTER"
+ENV_TIMEOUT = "MD2PPTX_PDF_TIMEOUT"
+
+# 人が見ていないときに変換を待つ上限（秒）．30 秒の案内を見てから応答するまでの猶予として
+# 置いている——支配項は変換そのものの所要時間（実測で数秒〜1 分）ではなく人の応答時間．
+_TIMEOUT_UNATTENDED = 180.0
+
+# 補助コマンド（LaunchServices への問い合わせ）の上限．実測 50ms 前後なので，これだけ
+# 待って返らなければ異常．人の応答を待つ場面ではないので tty かどうかで分けない．
+_HELPER_TIMEOUT = 10.0
 
 # Windows の COM 経路で「PowerPoint はあった」ことを示す目印．PowerShell に
 # COM オブジェクト生成の直後で出力させ，これが出る前に落ちたか後で落ちたかで
@@ -94,6 +111,64 @@ _APPLESCRIPT_PPTX_TO_PDF = '''on run argv
         close theDoc saving no
     end tell
 end run'''
+
+
+def _resolve_timeout(explicit: float | None) -> float | None:
+    """変換の待ち上限（秒）を決める．``None`` は無制限．
+
+    明示指定（``--pdf-timeout`` → ``MD2PPTX_PDF_TIMEOUT``）が最優先で，``0`` は
+    無制限の意味．無指定なら **stderr が tty か**で分ける（Issue #48）：
+
+    - **tty**（人が端末を見ている）→ 無制限．止まる原因の多くは承認ダイアログのような
+      「人が今すぐ直せるもの」で，30 秒の案内はそれを直してもらうための仕掛けだから，
+      上から打ち切ると自分で用意した解決手段を潰すことになる．``Ctrl-C`` で止められる．
+    - **非 tty**（cron / CI / エディタ拡張）→ ``_TIMEOUT_UNATTENDED``．誰も応答しないので
+      待っても状況は変わらない．
+    """
+    if explicit is not None:
+        return _checked(explicit, "--pdf-timeout")
+    raw = (os.environ.get(ENV_TIMEOUT) or "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            raise PdfError(f"invalid {ENV_TIMEOUT}: {raw!r} (seconds, 0 = no limit)")
+        return _checked(value, ENV_TIMEOUT)
+    return None if sys.stderr.isatty() else _TIMEOUT_UNATTENDED
+
+
+def _checked(value: float, source: str) -> float | None:
+    """秒数を検証する．``0`` は無制限，負値・``nan``・``inf`` は誤りとして弾く．
+
+    ``float("nan")`` はどんな比較も偽になるのでそのまま subprocess へ渡ってしまい，
+    「上限があるようで無い」不可解な状態になる．負値も同様に弾く——``-5``（``5`` の
+    打ち間違い）を無制限と解釈すると，**この機能が防ごうとしている「無人で永久に待つ」
+    状態を作ってしまう**．無制限にしたい人には ``0`` という明示の入口がある．
+    """
+    if math.isnan(value) or math.isinf(value) or value < 0:
+        raise PdfError(f"invalid {source}: {value} (seconds, 0 = no limit)")
+    return None if value == 0 else value
+
+
+def _kill(proc: subprocess.Popen[str]) -> None:
+    """打ち切りのために**自分で起こした子プロセスだけ**を殺して回収する．
+
+    PowerPoint 本体は殺さない——利用者が開いて使っているインスタンスかもしれないし，
+    ダイアログが原因なら画面に残っている方がよい（応答すれば次の実行は通る）．
+    """
+    proc.kill()
+    try:
+        proc.communicate(timeout=_HELPER_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
+def _timed_out(what: str, limit: float) -> PdfError:
+    """打ち切りを PdfError にする．原因の見当と延ばし方を添える．"""
+    return PdfError(
+        f"{what} timed out after {limit:.0f}s (it may be waiting for a dialog, "
+        f"e.g. the automation approval); answer it and run again, or raise the "
+        f"limit with --pdf-timeout / {ENV_TIMEOUT}")
 
 
 def _which_libreoffice() -> str | None:
@@ -131,8 +206,8 @@ def _macos_powerpoint_installed() -> bool:
     try:
         proc = subprocess.run(
             ["osascript", "-e", 'id of app "Microsoft PowerPoint"'],
-            capture_output=True, text=True)
-    except OSError:
+            capture_output=True, text=True, timeout=_HELPER_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
         return False
     return proc.returncode == 0
 
@@ -150,8 +225,8 @@ def _macos_prelaunch_powerpoint_hidden() -> None:
     """
     try:
         subprocess.run(["open", "-g", "-j", "-a", "Microsoft PowerPoint"],
-                       capture_output=True)
-    except OSError:
+                       capture_output=True, timeout=_HELPER_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
         pass
 
 
@@ -180,58 +255,90 @@ def _macos_container_tmp() -> str | None:
     return base
 
 
-def _macos_run_applescript(src: str, dst: str) -> None:
+def _macos_run_applescript(src: str, dst: str, timeout: float | None) -> None:
     """AppleScript で src → dst を変換する．長引いたら理由を stderr に出す．
 
     PowerPoint を隠して動かしているので，何かのダイアログ（オートメーションの承認
     など）で止まると，利用者には Dock を見ない限り「無音で固まった」ようにしか見え
     ない．そこで ``_MACOS_HINT_AFTER`` 秒たっても終わらなければ，何が起きている
-    可能性があるかを stderr に出し，PowerPoint を前面に出してダイアログを見せる．
-    **変換は中断しない**——単に遅いだけのときに壊さないため．
+    可能性があるかを stderr に出す．
+
+    **PowerPoint を前面に出すのは stderr が tty のときだけ**（Issue #48）．非対話の
+    呼び出し元（cron / エディタ拡張）では，そこで出ているのは*呼び出し元アプリ*に対する
+    承認ダイアログなので PowerPoint を前面化しても押せず，作業中の画面からフォーカスを
+    奪うだけになる．
+
+    その後の待ちは ``timeout``（``None`` で無制限）に従う．
     """
+    started = time.monotonic()
     proc = subprocess.Popen(
         ["osascript", "-", src, dst],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True)
+    # 上限が案内より短ければ，案内を待たずにそこで打ち切る．
+    first = _MACOS_HINT_AFTER
+    if timeout is not None and timeout <= _MACOS_HINT_AFTER:
+        first = timeout
     try:
-        _, err = proc.communicate(input=_APPLESCRIPT_PPTX_TO_PDF,
-                                  timeout=_MACOS_HINT_AFTER)
+        _, err = proc.communicate(input=_APPLESCRIPT_PPTX_TO_PDF, timeout=first)
     except subprocess.TimeoutExpired:
+        if first != _MACOS_HINT_AFTER:
+            _kill(proc)
+            raise _timed_out("powerpoint", first)
         sys.stderr.write(
             "md2pptx: PowerPoint is taking longer than "
             f"{_MACOS_HINT_AFTER:.0f}s — it may be waiting for a dialog "
-            "(e.g. the automation approval). Bringing it to the front; "
-            "answer the dialog to continue.\n")
-        try:
-            subprocess.run(["open", "-a", "Microsoft PowerPoint"],
-                           capture_output=True)
-        except OSError:
-            pass
-        _, err = proc.communicate()
+            "(e.g. the automation approval).\n")
+        if sys.stderr.isatty():
+            sys.stderr.write(
+                "md2pptx: bringing it to the front; answer the dialog to continue.\n")
+            try:
+                subprocess.run(["open", "-a", "Microsoft PowerPoint"],
+                               capture_output=True, timeout=_HELPER_TIMEOUT)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        if timeout is None:
+            _, err = proc.communicate()     # 無制限：応答があるまで待つ
+        else:
+            # 残りは経過時間から引く．案内と前面化にも時間がかかるので，定数
+            # （_MACOS_HINT_AFTER）を引くと利用者の指定した上限を超えてしまう．
+            rest = timeout - (time.monotonic() - started)
+            try:
+                _, err = proc.communicate(timeout=max(rest, 0.0))
+            except subprocess.TimeoutExpired:
+                _kill(proc)
+                raise _timed_out("powerpoint", timeout)
     if proc.returncode != 0:
         detail = (err or "").strip().splitlines()
         tail = detail[-1] if detail else f"exit {proc.returncode}"
         raise PdfError(f"powerpoint failed: {tail}")
 
 
-def _run(cmd: list[str], what: str, input: str | None = None) -> None:
+def _run(cmd: list[str], what: str, input: str | None = None,
+         timeout: float | None = None) -> None:
     """外部コマンドを実行し，失敗を PdfError に変換する．
 
     成功時の出力は捨てる．失敗時のみ stderr（無ければ stdout）の末尾 1 行を
     原因として拾う（cli が警告に整形する）．input を渡すと stdin に流す
-    （osascript にスクリプト本体を与えるのに使う）．
+    （osascript にスクリプト本体を与えるのに使う）．``timeout`` を超えたら
+    ``subprocess.run`` が子を kill して待ち直す（Python の仕様）ので，こちらは
+    PdfError に変えるだけ．
     """
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, input=input)
+        proc = subprocess.run(cmd, capture_output=True, text=True, input=input,
+                              timeout=timeout)
     except FileNotFoundError:
         raise PdfError(f"{what}: command not found: {cmd[0]}")
+    except subprocess.TimeoutExpired as e:
+        # 例外が持つ値を使う（timeout=None なら送出されないので None にならない）．
+        raise _timed_out(what, e.timeout)
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip().splitlines()
         tail = detail[-1] if detail else f"exit {proc.returncode}"
         raise PdfError(f"{what} failed: {tail}")
 
 
-def _convert_libreoffice(src: str, dst: str) -> None:
+def _convert_libreoffice(src: str, dst: str, timeout: float | None = None) -> None:
     """LibreOffice で src(pptx) → dst(pdf)．--outdir 方式なので後で改名する．"""
     soffice = _which_libreoffice()
     if soffice is None:
@@ -248,7 +355,7 @@ def _convert_libreoffice(src: str, dst: str) -> None:
             soffice, "--headless",
             f"-env:UserInstallation={uri}",
             "--convert-to", "pdf", "--outdir", outdir, src,
-        ], "libreoffice")
+        ], "libreoffice", timeout=timeout)
     # soffice は <入力 basename>.pdf を outdir に書く．期待名と違えば移動する．
     # 使い捨てプロファイル（with）は変換が終わった時点で不要なので，PDF の移動は
     # with を抜けてから行う（プロファイルの寿命と成果物の移動を分離）．
@@ -257,7 +364,7 @@ def _convert_libreoffice(src: str, dst: str) -> None:
     _finish(produced, dst, "libreoffice")
 
 
-def _convert_powerpoint(src: str, dst: str) -> None:
+def _convert_powerpoint(src: str, dst: str, timeout: float | None = None) -> None:
     """native PowerPoint（macOS: AppleScript / Windows: COM）で変換する．
 
     Raises:
@@ -279,7 +386,7 @@ def _convert_powerpoint(src: str, dst: str) -> None:
         if stage is None:
             # コンテナが見つからない（サンドボックス外のビルド等）．その場で変換する．
             # この経路では未承認の場所を渡すとファイルアクセスの承認ダイアログが出る．
-            _macos_run_applescript(src_abs, dst_abs)
+            _macos_run_applescript(src_abs, dst_abs, timeout)
         else:
             # PowerPoint には**自分のコンテナの中だけ**を触らせる．承認ダイアログを
             # 出さずに済み，入出力がどこにあっても（/tmp でも外部ボリュームでも）動く．
@@ -287,7 +394,7 @@ def _convert_powerpoint(src: str, dst: str) -> None:
                 staged_src = os.path.join(work, os.path.basename(src_abs))
                 staged_dst = os.path.join(work, "out.pdf")
                 shutil.copy2(src_abs, staged_src)
-                _macos_run_applescript(staged_src, staged_dst)
+                _macos_run_applescript(staged_src, staged_dst, timeout)
                 _finish(staged_dst, dst_abs, "powerpoint")
     elif sys.platform.startswith("win"):
         # PowerShell + COM．32 = ppSaveAsPDF．パスは単一引用符文字列に埋めるので，
@@ -326,7 +433,8 @@ def _convert_powerpoint(src: str, dst: str) -> None:
         raise PdfError("powerpoint did not produce a (non-empty) PDF")
 
 
-def _convert_custom(command: str, src: str, dst: str) -> None:
+def _convert_custom(command: str, src: str, dst: str,
+                    timeout: float | None = None) -> None:
     """任意のコマンド行で変換する．プレースホルダを置換して実行する．"""
     outdir = os.path.dirname(os.path.abspath(dst)) or "."
     parts = shlex.split(command)
@@ -344,7 +452,7 @@ def _convert_custom(command: str, src: str, dst: str) -> None:
         parts.append("{input}")
     subst = {"input": src, "output": dst, "outdir": outdir}
     cmd = [p.format(**subst) for p in parts]
-    _run(cmd, "converter")
+    _run(cmd, "converter", timeout=timeout)
     if has_output:
         # ツールが {output} をそのまま書いたはず．そこに無ければ失敗．
         if not os.path.isfile(dst):
@@ -384,7 +492,8 @@ def default_pdf_path(output_pptx: str) -> str:
     return os.path.splitext(output_pptx)[0] + ".pdf"
 
 
-def convert(src: str, dst: str, converter: str | None) -> None:
+def convert(src: str, dst: str, converter: str | None,
+            timeout: float | None = None) -> None:
     """src(pptx) を dst(pdf) へ変換する．
 
     Args:
@@ -393,6 +502,9 @@ def convert(src: str, dst: str, converter: str | None) -> None:
         converter: 変換器の指定．None または "auto" で自動探索
             （PowerPoint → LibreOffice）．"powerpoint" / "libreoffice" で名指し．
             それ以外は任意のコマンド行として解釈する．
+        timeout: 待ちの上限（秒）．``0`` で無制限，``None`` で「指定なし」．
+            指定なしのときは ``MD2PPTX_PDF_TIMEOUT``，それも無ければ tty かどうかで
+            決まる（``_resolve_timeout``）．
 
     Raises:
         PdfError: 変換に失敗したとき（cli が警告に整形する）．``auto`` でも，
@@ -418,7 +530,21 @@ def convert(src: str, dst: str, converter: str | None) -> None:
         raise PdfError(f"cannot replace existing PDF: {dst} ({e})")
 
     name = (converter or "auto").strip()
+    limit = _resolve_timeout(timeout)
+    try:
+        _dispatch(name, src, dst, limit)
+    except PdfError:
+        # 打ち切りや失敗の途中で書きかけの PDF が残ると，次に開いた人が新しい出力と
+        # 取り違える（変換前に既存 PDF を消しているのと同じ理由）．
+        try:
+            os.remove(dst)
+        except OSError:
+            pass
+        raise
 
+
+def _dispatch(name: str, src: str, dst: str, limit: float | None) -> None:
+    """変換器を選んで実行する（``convert`` の下請け）．"""
     if name == "auto":
         # auto は「**使えるものを探す**」だけ．実 PowerPoint（テーマ忠実度が高い）を
         # 優先し，無ければ LibreOffice を使う．
@@ -427,7 +553,7 @@ def convert(src: str, dst: str, converter: str | None) -> None:
         # ライセンス未認証など）は利用者が直せるものだから．
         missing: list[str] = []
         try:
-            _convert_powerpoint(src, dst)
+            _convert_powerpoint(src, dst, limit)
             return
         except _Unavailable as e:
             # _Unavailable は PdfError のサブクラスなので，この except は必ず
@@ -440,7 +566,7 @@ def convert(src: str, dst: str, converter: str | None) -> None:
                    if _which_libreoffice() else "")
             raise PdfError(f"{e}{alt}")
         try:
-            _convert_libreoffice(src, dst)
+            _convert_libreoffice(src, dst, limit)
             return
         except _Unavailable as e:
             missing.append(str(e))
@@ -450,8 +576,8 @@ def convert(src: str, dst: str, converter: str | None) -> None:
             "LibreOffice)\n  - " + "\n  - ".join(missing))
 
     if name == "libreoffice":
-        _convert_libreoffice(src, dst)
+        _convert_libreoffice(src, dst, limit)
     elif name == "powerpoint":
-        _convert_powerpoint(src, dst)
+        _convert_powerpoint(src, dst, limit)
     else:
-        _convert_custom(name, src, dst)
+        _convert_custom(name, src, dst, limit)

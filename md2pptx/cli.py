@@ -28,7 +28,7 @@ from . import __version__
 from . import parser as md_parser  # 標準ライブラリ parser とは別物
 from . import pdf as pdf_backend
 from . import render
-from .pdf import ENV_CONVERTER
+from .pdf import ENV_CONVERTER, ENV_TIMEOUT
 from .thmx2pptx import ThmxError, thmx_to_pptx
 
 
@@ -114,6 +114,12 @@ def _parse_args(argv):
              "command line with {input}/{output}/{outdir} placeholders; "
              f"overrides ${ENV_CONVERTER}",
     )
+    ap.add_argument(
+        "--pdf-timeout", metavar="SEC", type=float,
+        help="give up on the converter after SEC seconds (0 = wait forever); "
+             f"overrides ${ENV_TIMEOUT}. Without it, md2pptx waits forever when "
+             "stderr is a terminal and gives up after 180s when it is not",
+    )
     return ap.parse_args(argv)
 
 
@@ -186,9 +192,9 @@ def _run(args):
     # 4) 任意: PDF も生成（プレビュー用）．失敗しても pptx は成功なので終了コードは
     # 変えない——編集しながらのプレビュー運用を変換失敗で止めないため（Issue #39）．
     # --pdf-output は単体で生成を有効にする（出力先を書いた人が「作るな」を意図する
-    # ことはない）．--pdf-converter は「どう作るか」の指定なので有効化しない——
-    # 環境変数 MD2PPTX_PDF_CONVERTER を export しただけで全実行が PDF を作り始めて
-    # しまうため（Issue #42）．
+    # ことはない）．--pdf-converter と --pdf-timeout は「どう作るか」の指定なので
+    # 有効化しない——環境変数を export しただけで全実行が PDF を作り始めてしまうため
+    # （Issue #42）．
     if args.pdf or args.pdf_output:
         pdf_out = args.pdf_output or pdf_backend.default_pdf_path(output)
         converter = args.pdf_converter or os.environ.get(ENV_CONVERTER)
@@ -196,7 +202,7 @@ def _run(args):
         # 開始を stderr に出す（stdout の saved: 行は汚さない）．
         sys.stderr.write(f"md2pptx: converting to PDF: {pdf_out}\n")
         try:
-            pdf_backend.convert(output, pdf_out, converter)
+            pdf_backend.convert(output, pdf_out, converter, args.pdf_timeout)
             print(f"saved: {pdf_out}")
         except pdf_backend.PdfError as e:
             sys.stderr.write(f"md2pptx: warning: PDF not generated: {e}\n")
