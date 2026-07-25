@@ -61,7 +61,7 @@ class _Unavailable(PdfError):
 
     ``auto`` はこれだけを握って次の変換器へ進む．無い物を飛ばしても何も失われない
     のに対し，**在る物の失敗**を飛ばすと忠実度の違う PDF を黙って掴ませることに
-    なる（Issue #46）．名指し指定のときは PdfError として そのまま利用者に届く．
+    なる（Issue #46）．名指し指定のときは PdfError としてそのまま利用者に届く．
     """
 
 
@@ -161,10 +161,23 @@ def _macos_container_tmp() -> str | None:
     ここに pptx を置いてから開かせると，**ファイルアクセスの承認ダイアログが出ない**．
     コンテナはアプリ自身のサンドボックス領域なので承認の対象外だからで，これにより
     どの場所の入出力でも（``/tmp`` でもネットワークボリュームでも）変換できる．
+
+    ``tmp`` が無いだけなら作る（掃除された後など）．ただし**コンテナ本体（``Data``）が
+    無いときは作らない**——コンテナを用意するのは containermanagerd の仕事で，手で
+    骨組みだけ置くと正規の初期化を妨げうる．その場合は None を返し，承認ダイアログの
+    出うる直接変換へ委ねる．
     """
     base = os.path.expanduser(
         "~/Library/Containers/com.microsoft.Powerpoint/Data/tmp")
-    return base if os.path.isdir(base) else None
+    if os.path.isdir(base):
+        return base
+    if not os.path.isdir(os.path.dirname(base)):
+        return None
+    try:
+        os.makedirs(base, exist_ok=True)
+    except OSError:
+        return None
+    return base
 
 
 def _macos_run_applescript(src: str, dst: str) -> None:
@@ -256,7 +269,8 @@ def _convert_powerpoint(src: str, dst: str) -> None:
     if sys.platform == "darwin":
         if not _macos_powerpoint_installed():
             raise _Unavailable(
-                "PowerPoint is not installed (no /Applications/Microsoft PowerPoint.app)")
+                "PowerPoint is not installed (not in /Applications and unknown "
+                "to LaunchServices)")
         # macOS は osascript 経由で実 PowerPoint を叩く．
         # スクリプト本体は stdin で，入出力パスは argv で渡す．
         # 文書を開く前に非表示で起動しておく——さもないと変換のたびにウィンドウが出る．
