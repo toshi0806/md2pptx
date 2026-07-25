@@ -118,8 +118,23 @@ def _which_libreoffice() -> str | None:
 
 
 def _macos_powerpoint_installed() -> bool:
-    """macOS に Microsoft PowerPoint が入っているか（app バンドルの有無で判定）．"""
-    return os.path.isdir("/Applications/Microsoft PowerPoint.app")
+    """macOS に Microsoft PowerPoint が入っているか．
+
+    既定の場所にあれば即座に真（ほとんどはこれで済む）．無ければ LaunchServices に
+    **名前で**問い合わせる．変換本体（``open -a`` と ``tell application``）も名前で
+    解決するので，置き場所を変えている環境で**ここだけがパスで否定する**と，動くはずの
+    PowerPoint を使わずに LibreOffice へ落ちる（＝#46 で消した無言の切り替えが戻る）．
+    この問い合わせはアプリを起動しない（実測 46ms）．
+    """
+    if os.path.isdir("/Applications/Microsoft PowerPoint.app"):
+        return True
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", 'id of app "Microsoft PowerPoint"'],
+            capture_output=True, text=True)
+    except OSError:
+        return False
+    return proc.returncode == 0
 
 
 def _macos_prelaunch_powerpoint_hidden() -> None:
