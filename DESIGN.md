@@ -667,10 +667,24 @@ md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
 - `--pdf-converter NAME|COMMAND`：PDF 変換器。`auto`（既定・PowerPoint→LibreOffice）/
   `powerpoint` / `libreoffice` / 任意コマンド（`{input}`/`{output}`/`{outdir}` 置換）。
   環境変数 `MD2PPTX_PDF_CONVERTER` を上書き。
+  - `auto` がするのは**探索だけ**で、失敗の肩代わりはしない（#46）。「その変換器が無い」
+    （`_Unavailable`）ときだけ次へ進み、**在る物が失敗したらそのまま失敗**させて
+    `--pdf-converter libreoffice` を案内する。落としてしまうと忠実度という成果物の性質が
+    黙って入れ替わるうえ、隠れる原因（オートメーション承認の拒否・ライセンス未認証など）は
+    利用者が直せるものだから。可用性の判定は macOS が app バンドルの有無、Windows は
+    COM オブジェクトを作れたか（PowerShell に成功マーカーを出させて切り分ける）、
+    LibreOffice は `soffice` が見つかるか。
   - macOS の `powerpoint` は `osascript`（`save … in (POSIX file p) as save as PDF`）で
     実 PowerPoint に変換させる。`POSIX file` への coerce は必須（POSIX パス文字列だと
-    保存先を解決できない）。TCC 承認（オートメーション＋ファイルアクセス）は**呼び出し元
-    バイナリごと**に別管理で、未承認だと承認待ちで止まる（README の注意参照）。
+    保存先を解決できない）。オートメーションの TCC 承認は**呼び出し元バイナリごと**に
+    別管理で、未承認だと承認待ちで止まる（README の注意参照）。
+  - PowerPoint は**非表示で起動し**（`open -g -j -a`・AppleScript に `activate` を入れない）、
+    **自分のサンドボックスコンテナの中だけを触らせる**（pptx をそこへコピーして変換し、
+    PDF を目的地へ移す）。前者は変換のたびに画面を奪わないため、後者はフォルダごとの
+    アクセス承認を要求させないため——隠して動かしている以上、承認ダイアログで止まっても
+    利用者には見えないので、そもそも出さない（#44）。隠したことで気づけない残りの停止
+    （オートメーション承認など）に備え、30 秒で stderr に案内を出し PowerPoint を前面に
+    出す（変換は中断しない）。
   - `save as PDF` は印刷パイプライン経由で**無音失敗しうる**（exit 0 でも PDF が無い・空）。
     そのため終了コードを信じず、変換前に既存出力を消したうえで**成果物の存在＋非空**を
     成功条件にする。既存出力の削除は `convert()` で全バックエンド共通に行う——残したままだと

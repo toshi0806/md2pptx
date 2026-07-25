@@ -79,44 +79,45 @@ python3 -m md2pptx input.md
 
 ### PDF プレビュー（`--pdf`）
 
-`--pdf` を付けると pptx に続けて PDF も書き出します。Markdown を編集しながら PDF ビューアで
-結果を確認する、という使い方の土台です。
+`--pdf` を付けると pptx に続けて PDF も書き出します（出力 pptx と同じ場所・同じ名前）。
+Markdown を編集しながら PDF ビューアで結果を確認する、という使い方の土台です。
 
 ```bash
-md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf              # slide.pdf も作る
-md2pptx slide.md --theme theme.pptx --pdf-output out.pdf             # 出力先を指定（--pdf は不要）
+md2pptx slide.md --pdf
+md2pptx slide.md --pdf-output preview.pdf  # PDF の名前や場所を変える（--pdf は不要）
 ```
 
-- **`--pdf-output` を指定すれば `--pdf` は要りません**（出力先を書いた時点で「作る」意思は明らか
-  なので、`--keep-base PATH` と同じく指定すること自体が有効化になります）。両方指定した場合は
-  `--pdf-output` のパスに作ります。逆に **`--pdf-converter` は PDF 生成を有効にしません**——
-  あれは「どう作るか」の指定で、`MD2PPTX_PDF_CONVERTER` を export しているだけで毎回 PDF が
-  作られては困るからです。
+- **PDF を作らせるのは `--pdf` と `--pdf-output` の 2 つ**です（両方指定したときは
+  `--pdf-output` のパスに作ります）。
+- `--pdf-output` には**存在するディレクトリ**を指定してください（無い場所を指すと PDF はできません）。
+- **PDF 変換に失敗しても pptx は保存され、終了コードは 0 です**（警告は stderr に出ます）。
+  編集しながらのプレビューを変換失敗で止めないためです。ただし**変換前に既存の PDF を消す**ので、
+  失敗すると PDF は残りません。
 
-- 変換器は `--pdf-converter` か環境変数 `MD2PPTX_PDF_CONVERTER` で選べます（CLI 引数が優先）。
-  既定の `auto` は **native PowerPoint → LibreOffice** の順に、使えるものを試します。
-  macOS では PowerPoint.app があれば AppleScript（`osascript`）経由で実 PowerPoint に
-  変換させ、未インストールや失敗時に LibreOffice へフォールバックします。
-- **macOS では初回に TCC（プライバシーとセキュリティ）の承認が必要**です。PowerPoint を
-  操作する許可（オートメーション）とファイルアクセスのダイアログが出るので、GUI セッション
-  で一度許可してください。承認は**呼び出し元アプリごと**（Terminal / iTerm / VS Code など）
-  に別管理なので、実行元を変えると再度承認が要ります。ダイアログを出せない実行環境
-  （launchd / cron など）では、未承認だと応答待ちのまま止まって見えます。
-- 任意のツールも指定できます。プレースホルダ `{input}` / `{output}` / `{outdir}` を置換します
-  （1 つも無ければ末尾に `{input}` を補い、ツールが入力の隣に書いた `.pdf` を目的地へ移します）。
+#### 変換器（`--pdf-converter`）
 
-  ```bash
-  export MD2PPTX_PDF_CONVERTER='soffice --headless --convert-to pdf --outdir {outdir} {input}'
-  ```
+既定の `auto` は**実 PowerPoint → LibreOffice** の順に、使えるものを選びます。
 
-- **PDF 変換だけ失敗しても pptx は保存済みとして終了コードは 0**（警告を stderr に出すのみ）。
-  編集しながらのプレビュー運用を変換失敗で止めないためです。ただし**変換前に既存の PDF は
-  消します**（失敗すると PDF は無くなります）。古い PDF が残っていると、それを新しい出力と
-  取り違えて見続けることになるためです。
-- **忠実度は変換器によります。** LibreOffice の出力はテーマフォントの解決差などで実 PowerPoint
-  と一致しません（太字寄りになる・行送りが詰まる等）ので、**編集中の当たり確認**用と考えて
-  ください。PowerPoint 経路（macOS / Windows）は実 PowerPoint 自身の出力なので、そのまま
-  見た目の確認に使えます。どちらを使ったかは PDF の Producer（`pdfinfo` 等）で分かります。
+**任意のコマンド**も指定できます。`{input}`（pptx）/ `{output}`（PDF のパス）/ `{outdir}`
+（その親ディレクトリ）が実際のパスに置き換わります。出力先を指定できないツールなら、
+プレースホルダは書かなくて構いません。pptx のパスが末尾に付いて実行されるので、**pptx と同じ
+ディレクトリに同じ名前で `.pdf` を書く**ツール（`slide.pptx` なら `slide.pdf`）なら、そのまま
+使えます。
+
+```bash
+export MD2PPTX_PDF_CONVERTER='soffice --headless --convert-to pdf --outdir {outdir} {input}'
+```
+
+macOS で PowerPoint に変換させるときの注意です。
+
+- **初回に「オートメーション」の承認**が要ります。PowerPoint を操作してよいか尋ねるダイアログが
+  出るので、一度許可してください。承認は**呼び出し元アプリごと**（Terminal / iTerm / VS Code
+  など）に別管理なので、実行元を変えると再度承認が要ります。
+- **変換中に PowerPoint は表示しません。** そのため、承認ダイアログのような応答待ちは無音の停止に
+  しか見えません。**30 秒たっても終わらなければ、その旨を stderr に出して PowerPoint を前面に
+  出します**（変換は中断しません）。
+- **すでに PowerPoint を開いているときは、変換中にウィンドウが出ます。** 作業中の PowerPoint を
+  勝手に隠さないための割り切りです（フォーカスは奪いません）。
 
 ### 試す
 
