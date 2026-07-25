@@ -84,10 +84,10 @@ python3 -m md2pptx input.md
 
 ```bash
 # slide.pptx と slide.pdf ができる
-md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf
+md2pptx slide.md -o slide.pptx --pdf
 
 # PDF の名前や場所を変えるなら --pdf-output（--pdf は不要）→ slide.pptx と preview.pdf
-md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf-output preview.pdf
+md2pptx slide.md -o slide.pptx --pdf-output preview.pdf
 ```
 
 - 既定の `auto` は**実 PowerPoint → LibreOffice** の順に、使えるものを試します。
