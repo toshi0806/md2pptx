@@ -14,6 +14,7 @@ PDF のページ数も変わらない．気づけるのは「PowerPoint が失�
 """
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -44,8 +45,7 @@ def called(monkeypatch):
                 log.append(name)
                 if isinstance(outcome, Exception):
                     raise outcome
-                with open(dst, "wb") as f:
-                    f.write(b"%PDF-1.4 " + name.encode())
+                Path(dst).write_bytes(b"%PDF-1.4 " + name.encode())
             return backend
 
         monkeypatch.setattr(pdf, "_convert_powerpoint", make("powerpoint", powerpoint))
@@ -142,7 +142,7 @@ class TestCustomCommand:
     def test_output_placeholder_is_written_in_place(self, deck, tmp_path, monkeypatch):
         dst = tmp_path / "named.pdf"
         cmd = self._run(monkeypatch, "mytool -o {output} {input}", deck, dst,
-                        lambda cmd: open(cmd[2], "wb").write(b"%PDF"))
+                        lambda cmd: Path(cmd[2]).write_bytes(b"%PDF"))
         assert cmd == ["mytool", "-o", str(dst), str(deck)]
         assert dst.exists()
 
@@ -151,7 +151,7 @@ class TestCustomCommand:
         """soffice 方式：出力先ディレクトリに <入力 basename>.pdf を書く．"""
         dst = tmp_path / "renamed.pdf"
         self._run(monkeypatch, "soffice --outdir {outdir} {input}", deck, dst,
-                  lambda cmd: open(tmp_path / "slide.pdf", "wb").write(b"%PDF"))
+                  lambda cmd: (tmp_path / "slide.pdf").write_bytes(b"%PDF"))
         assert dst.exists(), "入力名の PDF を出力先の名前へ揃えること"
         assert not (tmp_path / "slide.pdf").exists()
 
@@ -160,7 +160,7 @@ class TestCustomCommand:
         """出力先を取れないツール：入力を末尾に足し，その隣の PDF を回収する．"""
         dst = tmp_path / "out.pdf"
         cmd = self._run(monkeypatch, "convert-to-pdf", deck, dst,
-                        lambda cmd: open(deck.with_suffix(".pdf"), "wb").write(b"%PDF"))
+                        lambda cmd: deck.with_suffix(".pdf").write_bytes(b"%PDF"))
         assert cmd == ["convert-to-pdf", str(deck)]
         assert dst.exists()
 

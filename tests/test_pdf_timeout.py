@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -83,7 +84,7 @@ class TestPolicy:
 
         def backend(src, dst, timeout=None):
             seen.append(timeout)
-            open(dst, "wb").write(b"%PDF")
+            Path(dst).write_bytes(b"%PDF")
 
         monkeypatch.setattr(pdf, "_convert_libreoffice", backend)
         src = tmp_path / "slide.pptx"
