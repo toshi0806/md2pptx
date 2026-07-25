@@ -565,19 +565,20 @@ def convert(src: str, dst: str, converter: str | None,
         staged = os.path.join(work, os.path.basename(dst))
         try:
             _dispatch(name, src, staged, limit, not unattended)
+            try:
+                os.replace(staged, dst)
+            except OSError as e:
+                raise PdfError(f"cannot replace existing PDF: {dst} ({e})")
         except PdfError:
             # 失敗したら古い PDF は残さない．PDF 変換の失敗は終了コードを変えない
             # ので，警告を見落とした人が前回の内容を新しい出力と取り違えてしまう．
-            # 書きかけは work ごと消える．
+            # **置き換えに失敗したときも同じ**——変換自体は成功していても，そこに
+            # 残っているのは前回の内容だから．書きかけは work ごと消える．
             try:
                 os.remove(dst)
             except OSError:
                 pass
             raise
-        try:
-            os.replace(staged, dst)
-        except OSError as e:
-            raise PdfError(f"cannot replace existing PDF: {dst} ({e})")
 
 
 def _dispatch(name: str, src: str, dst: str, limit: float | None,
@@ -604,6 +605,9 @@ def _dispatch(name: str, src: str, dst: str, limit: float | None,
                    if _which_libreoffice() else "")
             raise PdfError(f"{e}{alt}")
         try:
+            # attended は渡さない——LibreOffice は --headless で走り，前面に出せる
+            # ウィンドウも人が答えるダイアログも無い（この引数が効くのは macOS の
+            # PowerPoint 経路だけ）．増やすなら _convert_libreoffice の側で受ける．
             _convert_libreoffice(src, dst, limit)
             return
         except _Unavailable as e:
