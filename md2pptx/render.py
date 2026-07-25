@@ -26,10 +26,8 @@ from __future__ import annotations
 import copy
 import math
 import os
-import shutil
 import struct
 import sys
-import tempfile
 
 from pptx import Presentation
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
@@ -42,6 +40,7 @@ from .ir import (
     Block, Deck, Flow, Image, Line, ObjectBlock, Slide, Table, TitleSlide,
 )
 from .flow import plan_flow
+from . import workdir
 
 
 # Table.aligns の寄せ名 → PowerPoint の段落水平アラインメント．
@@ -1493,7 +1492,7 @@ class Renderer:
         """
         directory = os.path.dirname(os.path.abspath(path))
         try:
-            work = tempfile.mkdtemp(dir=directory, prefix=".md2pptx-")
+            work = workdir.create(directory)
         except OSError as e:
             # 素の errno を通すと「一時ディレクトリ名が読めない形で出る」だけになるので，
             # 何をしようとして失敗したかを添える（cli が整形して表示する）．
@@ -1505,15 +1504,9 @@ class Renderer:
             self.prs.save(staged)
             os.replace(staged, path)
         finally:
-            # 成功後は staged が移動済みで work は空，失敗時は書きかけが中に残る
-            # ——``rmtree`` はどちらも同じ 1 行で片付く．``ignore_errors`` なのは
-            # **片付けの失敗で保存の成否を変えない**ため（保存はもう終わっている）．
-            shutil.rmtree(work, ignore_errors=True)
-            if os.path.isdir(work):
-                # ただし黙って残すと ``--watch`` では保存のたびに積もる．消せなかった
-                # ことだけは伝える（原因は環境側——Windows で走査ソフトがファイルを
-                # 掴んでいる等——なので、ここで再試行はしない）．
-                sys.stderr.write(f"md2pptx: warning: could not remove {work}\n")
+            # 成功後は staged が移動済みで work は空，失敗時は書きかけが中に残る．
+            # どちらも同じ扱いで片付ける（規則と理由は workdir.discard に 1 か所だけ）．
+            workdir.discard(work)
         return path
 
 

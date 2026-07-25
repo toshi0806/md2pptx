@@ -623,6 +623,7 @@ caption: 実験結果の比較
 | `md2pptx/flow.py` | フロー図 DSL のパーサ＋レイアウタ |
 | `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`） |
 | `md2pptx/watch.py` | 入力の変更監視（`--watch`） |
+| `md2pptx/workdir.py` | 使い捨て作業ディレクトリの作成と片付け |
 | `.vscode/` | VS Code のタスク定義と PDF ビューアの関連付け（上記の節と同じ内容） |
 | `example.md` | 機能ひととおりのデモ |
 | `DESIGN.md` | 詳細設計 |

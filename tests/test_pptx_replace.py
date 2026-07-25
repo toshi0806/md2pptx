@@ -15,6 +15,10 @@
 
 python-pptx の実物は使わず ``Renderer`` の ``prs`` を差し替えるので，テーマも要らず
 一瞬で回る．
+
+作業ディレクトリの**片付け方**（消せなくても投げない／黙らない）は ``workdir.discard``
+の責務で、tests/test_workdir.py が固定する．ここが見るのは「``save`` が作業場所を
+経由し，最後に残骸を残さない」という配線まで．
 """
 from __future__ import annotations
 
@@ -157,29 +161,13 @@ def test_an_unusable_output_directory_says_what_failed(renderer, monkeypatch):
     def refuse(*args, **kwargs):
         raise PermissionError(13, "Permission denied")
 
-    monkeypatch.setattr(render.tempfile, "mkdtemp", refuse)
+    monkeypatch.setattr(render.workdir, "create", refuse)
 
     with pytest.raises(OSError, match="cannot create a working directory") as found:
         renderer.save()
 
     assert isinstance(found.value.__cause__, PermissionError)
     assert found.value.__cause__.errno == 13
-
-
-def test_a_cleanup_that_could_not_remove_the_directory_says_so(renderer, capsys,
-                                                               monkeypatch):
-    """片付けに失敗したら黙らない．
-
-    ``ignore_errors=True`` は「片付けの失敗で保存の成否を変えない」ためだが、その
-    まま黙ると ``--watch`` では保存のたびに ``.md2pptx-*`` が積もり、しかも誰も
-    気づけない．保存自体は成功させたうえで、消せなかったことだけ伝える．
-    """
-    monkeypatch.setattr(render.shutil, "rmtree", lambda *a, **kw: None)
-
-    renderer.save()
-
-    assert renderer.dst.read_bytes() == NEW, "片付けの失敗で保存を壊さないこと"
-    assert "could not remove" in capsys.readouterr().err
 
 
 def test_a_first_save_needs_no_existing_file(renderer):

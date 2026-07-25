@@ -658,6 +658,21 @@ caption: 実験結果の比較
     終えるため取り違えようがなく、それなら主成果物（PowerPoint で開いているかも
     しれない）を消さない方がよい。
   - `--keep-base` の中間 base pptx は対象外（デバッグ用の副産物で、`thmx2pptx` の担当）。
+- **使い捨て作業ディレクトリの作成と片付けは `workdir.py` に集約する**（Issue #58）。5 箇所
+  （`render.save` / `pdf.convert` / LibreOffice の使い捨てプロファイル / PowerPoint コンテナ内の
+  staging / `thmx2pptx` の展開先）が同じ規則で動く。
+  - **片付けの失敗で処理の成否を変えない。** 片付けに入る時点で保存も変換も終わっている。
+    ここで投げると成功した実行が失敗になり、本体が投げた例外があればそれを握りつぶして
+    置き換えてしまう。`tempfile.TemporaryDirectory` は既定（`ignore_cleanup_errors=False`）で
+    **片付けの失敗に例外を投げる**ので使わない——実測で `PermissionError` が送出され、それは
+    `PdfError` ではないため cli の `except PdfError` を素通りして終了コード 1 になる
+    （「PDF が作れなくても pptx は成功」§7 が崩れる）。
+  - **それでも黙って残さない。** 消せなかったと誰も知らないと `--watch` では保存のたびに
+    1 つずつ溜まる。とくに `render.save` と `pdf.convert` の作業場所は**出力先ディレクトリ**に
+    作るので利用者の目に触れる。原因は環境側（Windows で走査ソフトがファイルを掴んでいる等）
+    なので再試行はせず、起きた事実だけを stderr に出す。
+  - **作成**の失敗は整形しない（呼び出し側の事情で違う）。`pdf.convert` は `PdfError` にして
+    終了コードを変えず、`render.save` は何をしようとして失敗したかを添えて送出する。
 
 ## 7. CLI
 

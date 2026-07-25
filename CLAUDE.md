@@ -27,6 +27,7 @@ input.md ──[parser]──▶ IR(Deck) ───────┘
 | `md2pptx/flow.py` | フロー図 DSL のパーサ＋座標レイアウタ。python-pptx 非依存（EMU 計算のみ） |
 | `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`）。変換器の探索と外部プロセス起動。python-pptx 非依存 |
 | `md2pptx/watch.py` | 入力の変更監視（`--watch`）。stdlib ポーリング。cli にも python-pptx にも非依存 |
+| `md2pptx/workdir.py` | 使い捨て作業ディレクトリの作成と片付け。外部依存なし（render / pdf / thmx2pptx が使う） |
 
 パッケージ内モジュールは相対 import（`from .ir import …`）で結線する。`md2pptx/` は
 ルート直下の flat レイアウト（`pip install .` / `pipx install .` で `md2pptx` コマンドを生成）。
@@ -126,6 +127,15 @@ macOS 経路は **PowerPoint を目立たせずに使う**（Issue #44）。何�
 **ただし失敗時の契約は PDF と逆で、pptx は前回の出力を残す**（pptx の失敗は終了コード 1
 で終わるので取り違えようがなく、主成果物を消す理由がない）。固定しているのは
 `tests/test_pptx_replace.py`。
+
+**使い捨て作業ディレクトリの作成と片付けは `workdir.py` に集約する**（Issue #58）。全 5 箇所
+（`render.save` / `pdf.convert` / LibreOffice の使い捨てプロファイル / PowerPoint コンテナ内の
+staging / `thmx2pptx` の展開先）がここを通る。`workdir.discard` の規則は 2 つで、どちらも
+外すと壊れる: **①片付けの失敗で処理の成否を変えない**（片付けに入る時点で仕事は終わっている。
+投げると成功した実行が失敗になり、本体の例外があればそれを置き換えてしまう）、**②それでも
+黙って残さない**（`--watch` では保存のたびに 1 つずつ溜まり、出力先のものは利用者の目に触れる）。
+`tempfile.TemporaryDirectory` に戻してはいけない——**片付けの失敗で例外を投げる**（既定
+`ignore_cleanup_errors=False`）ので ① が崩れる。固定しているのは `tests/test_workdir.py`。
 
 PDF 側は加えて、**「変換前に既存 PDF を
 消す」実装に戻してはいけない**——PDF ビューアはフォルダを監視していて、削除を確定するとその
