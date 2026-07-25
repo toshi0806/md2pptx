@@ -49,10 +49,28 @@ class TestPolicy:
         stderr_is(False)
         assert pdf._resolve_timeout(None) == pdf._TIMEOUT_UNATTENDED
 
+    def test_unattended_gives_up_even_on_a_terminal(self, stderr_is):
+        """``--watch`` は tty でも打ち切る．
+
+        人が見ているのは**エディタと PDF** であってタスクの端末ではないので，tty から
+        「直してもらえる」を読み取れない．無制限に待つと以後のプレビューが全部止まる
+        ので，打ち切って次の保存で作り直す方に賭ける．
+        """
+        stderr_is(True)
+        assert pdf._resolve_timeout(None, unattended=True) == pdf._TIMEOUT_UNATTENDED
+
     def test_the_environment_overrides_the_default(self, monkeypatch, stderr_is):
         stderr_is(True)          # tty でも環境変数が勝つ
         monkeypatch.setenv(pdf.ENV_TIMEOUT, "42")
         assert pdf._resolve_timeout(None) == 42.0
+
+    def test_an_explicit_limit_still_wins_when_unattended(self, monkeypatch, stderr_is):
+        """``unattended`` は推測を打ち消すだけ．明示指定より上には立たない．"""
+        stderr_is(True)
+        assert pdf._resolve_timeout(7.0, unattended=True) == 7.0
+        assert pdf._resolve_timeout(0.0, unattended=True) is None
+        monkeypatch.setenv(pdf.ENV_TIMEOUT, "42")
+        assert pdf._resolve_timeout(None, unattended=True) == 42.0
 
     def test_the_option_overrides_the_environment(self, monkeypatch, stderr_is):
         stderr_is(False)

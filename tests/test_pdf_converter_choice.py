@@ -41,7 +41,7 @@ def called(monkeypatch):
 
     def setup(powerpoint=None, libreoffice=None):
         def make(name, outcome):
-            def backend(src, dst, timeout=None):
+            def backend(src, dst, timeout=None, attended=True):
                 log.append(name)
                 if isinstance(outcome, Exception):
                     raise outcome
@@ -140,18 +140,27 @@ class TestCustomCommand:
         return seen[0]
 
     def test_output_placeholder_is_written_in_place(self, deck, tmp_path, monkeypatch):
+        """``{output}`` はツールが直接書く先．変換は作業ディレクトリの中で行われるので，
+        そこに渡るのは最終パスではなく**同じ名前の staged パス**（最後に置き換わる）．
+        """
         dst = tmp_path / "named.pdf"
         cmd = self._run(monkeypatch, "mytool -o {output} {input}", deck, dst,
                         lambda cmd: Path(cmd[2]).write_bytes(b"%PDF"))
-        assert cmd == ["mytool", "-o", str(dst), str(deck)]
+        assert cmd[:2] == ["mytool", "-o"] and cmd[3] == str(deck)
+        assert Path(cmd[2]).name == dst.name and Path(cmd[2]).parent != tmp_path
         assert dst.exists()
 
     def test_outdir_placeholder_collects_the_input_basename(self, deck, tmp_path,
                                                             monkeypatch):
-        """soffice 方式：出力先ディレクトリに <入力 basename>.pdf を書く．"""
+        """soffice 方式：出力先ディレクトリに <入力 basename>.pdf を書く．
+
+        受け取った ``--outdir`` に書く（``tmp_path`` 決め打ちにはしない）．変換は
+        使い捨ての作業ディレクトリの中で行われるので，ツールに渡る outdir は
+        最終的な出力先とは別物．
+        """
         dst = tmp_path / "renamed.pdf"
         self._run(monkeypatch, "soffice --outdir {outdir} {input}", deck, dst,
-                  lambda cmd: (tmp_path / "slide.pdf").write_bytes(b"%PDF"))
+                  lambda cmd: (Path(cmd[2]) / "slide.pdf").write_bytes(b"%PDF"))
         assert dst.exists(), "入力名の PDF を出力先の名前へ揃えること"
         assert not (tmp_path / "slide.pdf").exists()
 
