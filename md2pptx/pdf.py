@@ -401,10 +401,15 @@ def convert(src: str, dst: str, converter: str | None) -> None:
             _convert_powerpoint(src, dst)
             return
         except _Unavailable as e:
+            # _Unavailable は PdfError のサブクラスなので，この except は必ず
+            # PdfError より**先**に置くこと．入れ替えると失敗まで握って次の変換器へ
+            # 落ちる＝#46 で消した挙動が黙って戻る．
             missing.append(str(e))
         except PdfError as e:
-            raise PdfError(
-                f"{e}; use --pdf-converter libreoffice to convert without PowerPoint")
+            # 案内は LibreOffice が実際に使えるときだけ添える（無い物を勧めない）．
+            alt = ("; use --pdf-converter libreoffice to convert without PowerPoint"
+                   if _which_libreoffice() else "")
+            raise PdfError(f"{e}{alt}")
         try:
             _convert_libreoffice(src, dst)
             return
