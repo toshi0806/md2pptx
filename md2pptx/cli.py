@@ -26,7 +26,9 @@ import sys
 
 from . import __version__
 from . import parser as md_parser  # 標準ライブラリ parser とは別物
+from . import pdf as pdf_backend
 from . import render
+from .pdf import ENV_CONVERTER
 from .thmx2pptx import ThmxError, thmx_to_pptx
 
 
@@ -93,6 +95,17 @@ def _parse_args(argv):
         "--keep-base", metavar="PATH",
         help="keep the intermediate base pptx (from .thmx) at PATH",
     )
+    ap.add_argument(
+        "--pdf", nargs="?", const=True, default=None, metavar="PATH",
+        help="also render a PDF after the pptx (preview only, not a faithful "
+             "PowerPoint render); PATH defaults to the output with a .pdf suffix",
+    )
+    ap.add_argument(
+        "--pdf-converter", metavar="NAME|COMMAND",
+        help="PDF backend: 'auto' (default), 'powerpoint', 'libreoffice', or a "
+             "command line with {input}/{output}/{outdir} placeholders; "
+             f"overrides ${ENV_CONVERTER}",
+    )
     return ap.parse_args(argv)
 
 
@@ -156,6 +169,22 @@ def _run(args):
 
     n = len(deck.slides) + (1 if deck.title_slide is not None else 0)
     print(f"saved: {output} slides: {n}")
+
+    # 4) 任意: PDF も生成（プレビュー用）．失敗しても pptx は成功なので終了コードは
+    # 変えない——編集しながらのプレビュー運用を変換失敗で止めないため（Issue #39）．
+    if args.pdf is not None:
+        pdf_out = args.pdf if isinstance(args.pdf, str) \
+            else pdf_backend.default_pdf_path(output)
+        converter = args.pdf_converter or os.environ.get(ENV_CONVERTER)
+        # 変換は数秒かかる（LibreOffice は例で ~4 秒）．無音で止まって見えないよう
+        # 開始を stderr に出す（stdout の saved: 行は汚さない）．
+        sys.stderr.write(f"md2pptx: converting to PDF: {pdf_out}\n")
+        try:
+            pdf_backend.convert(output, pdf_out, converter)
+            print(f"saved: {pdf_out}")
+        except pdf_backend.PdfError as e:
+            sys.stderr.write(f"md2pptx: warning: PDF not generated: {e}\n")
+
     return 0
 
 

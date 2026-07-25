@@ -69,10 +69,41 @@ python3 -m md2pptx input.md
 | `--theme PATH` | テーマファイル（`.thmx` / `.pptx` 両対応）。フロントマター `theme:` を上書き |
 | `-o, --output PATH` | 出力 pptx。フロントマター `output:` を上書き |
 | `--keep-base PATH` | `.thmx` から作る中間 base pptx を破棄せず保存（デバッグ用） |
+| `--pdf [PATH]` | pptx 生成後に PDF も作る。PATH 省略時は出力 pptx と同じ場所・同じ basename の `.pdf` |
+| `--pdf-converter NAME\|COMMAND` | PDF 変換器。`auto`（既定）/ `powerpoint` / `libreoffice` / 任意のコマンド行。環境変数 `MD2PPTX_PDF_CONVERTER` を上書き |
 | `--version` | バージョンを表示して終了（入力ファイルは不要） |
 
 `.thmx` を渡すと内部で base pptx に変換してから描画します（テーマ更新が即反映）。
 `.pptx` を渡すとそのまま土台に使います（変換をスキップ）。
+
+### PDF プレビュー（`--pdf`）
+
+`--pdf` を付けると pptx に続けて PDF も書き出します。Markdown を編集しながら PDF ビューアで
+結果を確認する、という使い方の土台です。
+
+```bash
+md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf          # slide.pdf も作る
+md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf out.pdf  # 出力先を指定
+```
+
+- 変換器は `--pdf-converter` か環境変数 `MD2PPTX_PDF_CONVERTER` で選べます（CLI 引数が優先）。
+  既定の `auto` は **native PowerPoint → LibreOffice** の順に、使えるものを試します。
+  ただし **macOS の native PowerPoint は非対応**です（AppleScript にヘッドレスで PDF を
+  書き出す確実な手段が無く、保存ダイアログでハングするため）。macOS では `auto` は
+  LibreOffice を使います。macOS で PowerPoint の忠実な出力が欲しい場合は、実 PowerPoint を
+  叩く外部ツールを `--pdf-converter 'yourtool -o {output} {input}'` のように指定してください。
+- 任意のツールも指定できます。プレースホルダ `{input}` / `{output}` / `{outdir}` を置換します
+  （1 つも無ければ末尾に `{input}` を補い、ツールが入力の隣に書いた `.pdf` を目的地へ移します）。
+
+  ```bash
+  export MD2PPTX_PDF_CONVERTER='soffice --headless --convert-to pdf --outdir {outdir} {input}'
+  ```
+
+- **PDF 変換だけ失敗しても pptx は保存済みとして終了コードは 0**（警告を stderr に出すのみ）。
+  編集しながらのプレビュー運用を変換失敗で止めないためです。
+- **忠実度は保証しません。** とくに LibreOffice の出力はテーマフォントの解決差などで
+  実 PowerPoint と一致しません（太字寄りになる・行送りが詰まる等）。PDF プレビューは
+  **編集中の当たり確認**用で、見た目の最終確認は実 PowerPoint で行ってください。
 
 ### 試す
 
@@ -382,6 +413,7 @@ caption: 実験結果の比較
 | `md2pptx/ir.py` | 中間表現のデータクラス定義 |
 | `md2pptx/render.py` | IR → pptx 描画 |
 | `md2pptx/flow.py` | フロー図 DSL のパーサ＋レイアウタ |
+| `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`） |
 | `example.md` | 機能ひととおりのデモ |
 | `DESIGN.md` | 詳細設計 |
 
