@@ -169,6 +169,10 @@ md2pptx: 14:04:07 rebuilding slide.md (fig.png changed)
 LaTeX Workshop のリアルタイムプレビューと同じ体験になります。**保存すると数秒で PDF の
 タブが更新されます**（タブは開いたまま、スクロール位置も保たれます）。
 
+以下は **macOS を前提**に書いています。Windows / Linux でも同じ仕組みで動きますが、キーは
+`Cmd` を `Ctrl` に読み替えてください（オートメーション承認は macOS だけの話です。Windows の
+PowerPoint 変換は COM 経由なので承認は要りません）。
+
 必要なものは 2 つです。
 
 1. **[LaTeX Workshop](https://marketplace.visualstudio.com/items?itemName=James-Yu.latex-workshop)**
@@ -239,6 +243,8 @@ LaTeX Workshop のリアルタイムプレビューと同じ体験になりま�
       "options": { "cwd": "${fileDirname}" },
       "group": { "kind": "build", "isDefault": true },
       "presentation": { "reveal": "silent", "panel": "dedicated", "clear": true },
+      // pattern は上の watch と同じもの。tasks.json にはカスタム matcher を名前で
+      // 使い回す仕組みが無いので写すしかない——**直すときは 2 か所とも直すこと**。
       "problemMatcher": {
         "owner": "md2pptx",
         "source": "md2pptx",
@@ -278,6 +284,9 @@ LaTeX Workshop のリアルタイムプレビューと同じ体験になりま�
   { "key": "cmd+alt+t", "command": "workbench.action.tasks.terminate" }
 ]
 ```
+
+`workbench.action.tasks.terminate` は **md2pptx 専用ではありません**。実行中のタスクが複数あると
+どれを止めるか尋ねられるので、そこで `md2pptx: watch` を選んでください。
 
 使い方と注意です。
 

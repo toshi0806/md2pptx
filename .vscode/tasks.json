@@ -60,6 +60,8 @@
       "options": { "cwd": "${fileDirname}" },
       "group": { "kind": "build", "isDefault": true },
       "presentation": { "reveal": "silent", "panel": "dedicated", "clear": true },
+      // pattern は上の watch と同じもの。tasks.json にはカスタム matcher を名前で
+      // 使い回す仕組みが無いので写すしかない——**直すときは 2 か所とも直すこと**。
       "problemMatcher": {
         "owner": "md2pptx",
         "source": "md2pptx",
