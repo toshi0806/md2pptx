@@ -22,6 +22,20 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: mypy
 
+  # Unit tests for decisions the other jobs cannot see. generate/pdf exercise the
+  # happy path, so a branch can invert — auto swallowing a failure, the timeout
+  # policy flipping — while the deck and its page count stay identical (#49).
+  # These start no external process, so one interpreter is enough.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -e ".[dev]"
+      - run: pytest
+
   generate:
     runs-on: ubuntu-latest
     strategy:
