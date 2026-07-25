@@ -46,6 +46,17 @@ from .flow import plan_flow
 _TABLE_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
 
 
+def resolve_image_path(src, base_dir):
+    """``Image.src`` の宣言パスを実際のファイルパスへ解決する．
+
+    絶対パスはそのまま，相対パスは ``base_dir``（Markdown の置き場）基準．
+    **存在確認はしない**——``--watch`` は「まだ置かれていない画像」も監視対象に
+    入れたいので（置かれたら作り直す），解決と存在確認を分けてある．描画側は
+    ``Renderer._resolve_image_path`` で解決したうえで存在を確かめる．
+    """
+    return src if os.path.isabs(src) else os.path.join(base_dir or ".", src)
+
+
 def _read_image_size(path):
     """画像（png / jpg）のピクセル寸法 (width, height) をヘッダ解析で取得する．
 
@@ -754,7 +765,7 @@ class Renderer:
 
     def _resolve_image_path(self, src):
         """画像パスを base_dir 基準で解決し，存在しなければ fail fast する．"""
-        path = src if os.path.isabs(src) else os.path.join(self.base_dir or ".", src)
+        path = resolve_image_path(src, self.base_dir)
         if not os.path.isfile(path):
             raise FileNotFoundError(f"image not found: {src}")
         return path

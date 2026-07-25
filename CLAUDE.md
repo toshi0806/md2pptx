@@ -26,6 +26,7 @@ input.md ──[parser]──▶ IR(Deck) ───────┘
 | `md2pptx/render.py` | IR → pptx 描画（`Renderer` クラス）。描画ヘルパーは手書きの参照スクリプトから移植 |
 | `md2pptx/flow.py` | フロー図 DSL のパーサ＋座標レイアウタ。python-pptx 非依存（EMU 計算のみ） |
 | `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`）。変換器の探索と外部プロセス起動。python-pptx 非依存 |
+| `md2pptx/watch.py` | 入力の変更監視（`--watch`）。stdlib ポーリング。cli にも python-pptx にも非依存 |
 
 パッケージ内モジュールは相対 import（`from .ir import …`）で結線する。`md2pptx/` は
 ルート直下の flat レイアウト（`pip install .` / `pipx install .` で `md2pptx` コマンドを生成）。
@@ -127,6 +128,21 @@ macOS 経路は **PowerPoint を目立たせずに使う**（Issue #44）。何�
 （`slide.pptx` → `slide.pdf` では出力 PDF を直接書いてしまう）。無音失敗の検出（存在＋非空）は
 削除ではなく「毎回まっさらな別名へ書かせる」ことで担保している。固定しているのは
 `tests/test_pdf_replace.py`。
+
+`--watch` は入力・テーマ・画像を stdlib のポーリング（0.25 秒）で見張り、変わるたびに作り直す
+（Issue #39）。**消すと壊れるもの**が 4 つ:
+
+- **`build_once` は `SystemExit` を投げない**（`BuildError` を投げる）。投げると watch のループごと
+  死に、直して保存しても誰も作り直さなくなる。一発実行のメッセージ・終了コードは `main` が
+  `md2pptx: <理由>` へ整形して復元する（`tests/test_cli_build.py` が固定）。
+- **監視対象に自分の出力（pptx / PDF）を入れない**。theme に出力 pptx を指されると「作る → 変わった
+  → また作る」の無限ループになる。
+- **`rebuilding` / `watching for changes` の 2 行は VS Code 側との契約**（`problemMatcher.background`
+  が走行中の判定に使う）。変えるなら `.vscode/tasks.json` と README も一緒に直す。
+- **SIGTERM を `KeyboardInterrupt` へ寄せるのは watch のときだけ**。既定の即死だと `finally` が
+  走らず、エディタの「タスクの終了」で PDF 変換の作業ディレクトリが残る。一発実行には入れない。
+
+画像パスの解決規則は `render.resolve_image_path` に集約してある（描画側と監視側で二重管理しない）。
 
 ## 規約・設計上の約束
 
