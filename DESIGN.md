@@ -653,9 +653,17 @@ md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
 - `--theme`：テーマファイル。**`.thmx` / `.pptx` 両対応**（拡張子で自動分岐。§3.5）。フロントマター `theme:` を上書き。
 - `-o/--output`：出力 pptx。フロントマター `output:` を上書き。
 - `--keep-base PATH`：ステージ 0 で作った base pptx を破棄せず保存（デバッグ用）。
-- `--pdf [PATH]`：pptx 生成後に PDF も作る（プレビュー用）。PATH 省略時は出力 pptx と同じ
-  場所・basename の `.pdf`。変換は `pdf.py` が担う。**PDF 変換だけ失敗しても終了コードは 0**
-  （警告のみ）——編集しながらのプレビューを止めないため。忠実度は変換器による（README 参照）。
+- `--pdf`：pptx 生成後に PDF も作る（値は取らない）。出力先は出力 pptx と同じ場所・basename の
+  `.pdf`。変換は `pdf.py` が担う。**PDF 変換だけ失敗しても終了コードは 0**（警告のみ）——編集
+  しながらのプレビューを止めないため。忠実度は変換器による（README 参照）。
+- `--pdf-output PATH`：PDF の出力先。**単独で指定しても生成を有効にする**（`--keep-base PATH` と
+  同じ形。出力先を書いた人が「作るな」を意図することはない）。`--pdf` と併用しても矛盾ではない
+  ので、その場合は PATH に作る。
+  - `--pdf` に値を持たせる形（`nargs="?"`）は採らない。`md2pptx --pdf deck.md` で入力ファイルが
+    `--pdf` の値として食われ、「input が無い」という原因の分からないエラーになるため（#42）。
+  - 有効化するのは**成果物を名指しするオプションだけ**。`--pdf-converter` は「どう作るか」の
+    指定なので有効化しない——`MD2PPTX_PDF_CONVERTER` を export しただけで全実行が PDF を
+    作り始めてしまう。
 - `--pdf-converter NAME|COMMAND`：PDF 変換器。`auto`（既定・PowerPoint→LibreOffice）/
   `powerpoint` / `libreoffice` / 任意コマンド（`{input}`/`{output}`/`{outdir}` 置換）。
   環境変数 `MD2PPTX_PDF_CONVERTER` を上書き。

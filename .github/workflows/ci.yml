@@ -66,7 +66,7 @@ jobs:
           python-version: "3.14"
       - run: sudo apt-get update && sudo apt-get install -y libreoffice-impress poppler-utils
       - run: pip install -e .
-      - run: md2pptx example.md --theme OfficeTheme.pptx -o out.pptx --pdf out.pdf --pdf-converter libreoffice
+      - run: md2pptx example.md --theme OfficeTheme.pptx -o out.pptx --pdf-output out.pdf --pdf-converter libreoffice
       - name: Check the PDF was produced with the expected page count
         run: |
           test -f out.pdf
