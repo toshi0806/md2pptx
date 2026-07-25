@@ -33,6 +33,13 @@ from typing import Any, Callable, Iterable
 # 保存から検知までは最悪 2 周（変更の検出＋落ち着いたことの確認）＝ 0.5 秒．
 POLL_INTERVAL = 0.25
 
+# 「落ち着くまで待つ」の上限（秒）．書き込みが延々と続く相手——別のプロセスが書き換え
+# 続けるファイル，非常に遅い回線越しのコピー——に当たると，落ち着く瞬間が来ないまま
+# **一度も作り直さずに黙り込む**．これは失敗の仕方として最悪で，利用者からは「watch が
+# 壊れた」としか見えない．そこで諦めて作りに行く．中途半端なファイルを読んで失敗しても
+# watch は止まらず，落ち着いた後の変更でまた作り直せるので，黙るよりはるかにましである．
+SETTLE_LIMIT = 10.0
+
 # 変更検知に使う指紋の型．mtime だけでは足りない——ファイルシステムによっては解像度が
 # 1 秒しかなく，同じ秒に同じ大きさで書き直されると見落とす．1 回の os.stat から取れる
 # 値を組み合わせて，取りこぼしを実用上無くす．None は「そこに無い」．
@@ -72,13 +79,19 @@ def _first_change(before: dict[str, Signature],
 
 
 def _wait_for_change(watched: dict[str, Signature], interval: float,
-                     sleep: Callable[[float], None]) -> str:
+                     sleep: Callable[[float], None],
+                     log: Callable[[str], None],
+                     settle_limit: float = SETTLE_LIMIT) -> str:
     """どれかが変わるまで待ち，**落ち着いてから**最初に変わったパスを返す．
 
     変化を見つけても即座には返さず，1 周期分静かになるまで待つ．エディタの保存は
     書き込みを複数回に分けることがあり，大きい画像のコピーは途中経過が見える．
     そのまま作り直すと，中途半端なファイルを読んで失敗したあと，もう一度作り直す
     ことになる．
+
+    ただし待つのは ``settle_limit`` 秒まで．書き込みが止まらない相手だと落ち着く瞬間が
+    来ず，**黙り込んだまま一度も作り直さない**——それは watch が壊れたようにしか
+    見えないので，上限に達したら理由を出して作りに行く．
     """
     while True:
         sleep(interval)
@@ -86,12 +99,18 @@ def _wait_for_change(watched: dict[str, Signature], interval: float,
         changed = _first_change(watched, current)
         if changed is None:
             continue
+        waited = 0.0
         while True:
             sleep(interval)
+            waited += interval
             settled = _snapshot(watched)
             if settled == current:
                 return changed
             current = settled
+            if waited >= settle_limit:
+                log(_stamp(f"{os.path.basename(changed)} keeps changing after "
+                           f"{settle_limit:.0f}s — rebuilding anyway"))
+                return changed
 
 
 def _stamp(message: str) -> str:
@@ -143,6 +162,7 @@ def _restore_sigterm(previous: Any) -> None:
 def run(build: Callable[[], Iterable[str]], label: str, *,
         seed: Iterable[str] = (),
         interval: float = POLL_INTERVAL,
+        settle_limit: float = SETTLE_LIMIT,
         sleep: Callable[[float], None] = time.sleep,
         log: Callable[[str], None] = _to_stderr) -> int:
     """変更のたびに ``build()`` を呼び続ける．戻り値は終了コード（常に 0）．
@@ -158,6 +178,8 @@ def run(build: Callable[[], Iterable[str]], label: str, *,
             初回ビルド中の保存が「反映済み」に見えてしまう．実 PowerPoint での初回は
             数秒かかる（実測 6 秒）ので，起動してすぐ書き始めると普通に踏む．
         interval: ポーリング間隔（秒）．
+        settle_limit: 「落ち着くまで待つ」の上限（秒）．超えたら書き込みが続いていても
+            作りに行く（``SETTLE_LIMIT``）．
         sleep: 待ち方（テストが差し替える）．
         log: 進捗の出力先（テストが差し替える）．**渡される文字列は完成した 1 行**で，
             ``md2pptx: `` の接頭辞も含む．log 側で飾り付けはしない（両方で付けると
@@ -187,7 +209,7 @@ def run(build: Callable[[], Iterable[str]], label: str, *,
             watched = {path: before[path] if path in before else _signature(path)
                        for path in sorted(sources)}
             log(_stamp("watching for changes"))
-            changed = _wait_for_change(watched, interval, sleep)
+            changed = _wait_for_change(watched, interval, sleep, log, settle_limit)
     except KeyboardInterrupt:
         log("md2pptx: stopped watching")
         return 0

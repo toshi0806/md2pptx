@@ -122,6 +122,25 @@ def test_a_file_still_being_written_is_left_alone(deck):
     assert build.seen[-1] == b"partial-more", "落ち着いた後の内容で作ること"
 
 
+def test_a_file_that_never_settles_is_built_anyway(deck):
+    """落ち着かない相手でも，いつかは作る——**黙り込むのが最悪**だから．
+
+    別プロセスが書き換え続けるファイルや、非常に遅い回線越しのコピーに当たると
+    「静かになった瞬間」が来ない．待ち続けると一度も作り直さないまま無言になり，
+    利用者からは watch が壊れたようにしか見えない．
+    """
+    build = Build([deck])
+    notes: list[str] = []
+    # 毎周期書き換え続ける（落ち着く瞬間が来ない）．
+    forever = [(lambda n=i: deck.write_text(f"v{n}")) for i in range(20)]
+
+    watch.run(build, "slide.md", interval=1.0, settle_limit=5.0,
+              sleep=Script(*forever), log=notes.append)
+
+    assert build.calls >= 2, "待ち続けて一度も作らないのは不可"
+    assert any("keeps changing" in n for n in notes), "諦めた理由を出すこと"
+
+
 def test_a_save_during_the_build_is_not_missed(deck):
     """ビルド中に来た保存を取りこぼさない．
 
@@ -129,11 +148,15 @@ def test_a_save_during_the_build_is_not_missed(deck):
     古い PDF を見続けることになる——指紋をビルド**前**に取っているのはこのため．
     """
     build = Build([deck])
-    # 2 回目のビルドの最中にだけ保存が届く（初回は依存がまだ分かっていないので，
-    # そこだけは死角．watch.run の docstring 参照）．
-    saves = iter([lambda: None,
-                  lambda: deck.write_text("during-2"),
-                  lambda: None, lambda: None])
+    # 台本は 2 本ある．build.during は**ビルドの回数**で進み，Script は**待った回数**で
+    # 進む．噛み合わせは次のとおり:
+    #   ビルド1（保存なし）→ 待1: 保存 → 待2: 落ち着く → ビルド2（最中に保存）
+    #   → 待3: その保存を検出 → 待4: 落ち着く → ビルド3 → 待5: 台本切れで停止
+    # 初回ビルド中に保存しないのは，seed 無しの run ではそこが死角だから
+    # （seed 版は test_a_save_during_the_first_build_is_not_missed が見る）．
+    saves = iter([lambda: None,                              # ビルド1
+                  lambda: deck.write_text("during-2"),       # ビルド2
+                  lambda: None])                             # ビルド3
     build.during = lambda: next(saves)()
 
     run(build, Script(lambda: deck.write_text("saved"), None, None, None))
