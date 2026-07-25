@@ -26,8 +26,10 @@ from __future__ import annotations
 import copy
 import math
 import os
+import shutil
 import struct
 import sys
+import tempfile
 
 from pptx import Presentation
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
@@ -1472,8 +1474,37 @@ class Renderer:
         return self.prs
 
     def save(self, path):
-        """現在の Presentation を保存する．"""
-        self.prs.save(path)
+        """現在の Presentation を保存する（差し替えは**アトミック**）．
+
+        出力先へ直接は書かない．同じディレクトリに使い捨ての作業ディレクトリを作って
+        そこへ保存し，``os.replace`` で置き換える．作業場所は出力先ディレクトリの中に
+        新しく作るので必ず同一ファイルシステム上にあり，置き換えは常にアトミックになる
+        （EXDEV は起こりえない）．``pdf.convert`` と同じ形（Issue #56 / #53）．
+
+        - **保存中も前回の pptx がそのまま読める．** python-pptx の ``save`` は出力先を
+          切り詰めてから書くので，直接書くと「開いたら壊れていた」時間が生まれる．
+          PowerPoint で開いたまま作り直す／``--watch`` と手で叩くのを併用する，という
+          使い方で中途半端な pptx を掴ませない．
+        - **失敗したら前回の pptx を残す．** ここは PDF と**逆の契約**で，理由は失敗の
+          見え方が違うこと——PDF 変換の失敗は終了コードを変えない（警告だけ）ので，
+          古い PDF を残すと「新しい出力」と取り違えられる．pptx の保存失敗は cli が
+          ``BuildError`` にして終了コード 1 で終えるため取り違えようがなく，それなら
+          主成果物（PowerPoint で開いているかもしれない）を消さない方がよい．
+        """
+        directory = os.path.dirname(os.path.abspath(path))
+        try:
+            work = tempfile.mkdtemp(dir=directory, prefix=".md2pptx-")
+        except OSError as e:
+            # 素の errno を通すと「一時ディレクトリ名が読めない形で出る」だけになるので，
+            # 何をしようとして失敗したかを添える（cli が整形して表示する）．
+            raise OSError(f"cannot create a working directory in {directory} ({e})")
+        try:
+            staged = os.path.join(work, os.path.basename(path))
+            self.prs.save(staged)
+            os.replace(staged, path)
+        finally:
+            # 片付けの失敗で成否を変えない（残るのは隠しディレクトリ 1 つ）．
+            shutil.rmtree(work, ignore_errors=True)
         return path
 
 
