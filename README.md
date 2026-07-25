@@ -87,10 +87,11 @@ md2pptx slide.md --pdf
 md2pptx slide.md --pdf-output preview.pdf  # PDF の名前や場所を変える（--pdf は不要）
 ```
 
-- 既定の `auto` は**実 PowerPoint → LibreOffice** の順に、使えるものを試します。LibreOffice で
-  変換した PDF は実 PowerPoint と一致しない（太字寄りになる・行送りが詰まる）ので、
-  **編集中の当たり確認**までと考えてください。どちらが使われたかは PDF の Producer
-  （`pdfinfo` 等）で分かります。
+- 既定の `auto` は**実 PowerPoint → LibreOffice** の順に、使えるものを選びます。PowerPoint が
+  ある環境では必ずそれを使い、**変換に失敗しても LibreOffice には切り替えません**（理由を表示
+  して終わります）。組版の違う PDF を黙って掴ませないためです。LibreOffice で変換した PDF は
+  実 PowerPoint と一致しない（太字寄りになる・行送りが詰まる）ので、**編集中の当たり確認**まで
+  と考えてください。
 - `--pdf` と `--pdf-output` を両方指定したときは `--pdf-output` のパスに作ります。置き先の
   ディレクトリは**あらかじめ用意しておいてください**（タイポで勝手にディレクトリを作らない
   ため、無ければ PDF は作りません）。**`--pdf-converter` だけでは PDF は作られません**——

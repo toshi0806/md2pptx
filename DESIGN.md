@@ -667,6 +667,13 @@ md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
 - `--pdf-converter NAME|COMMAND`：PDF 変換器。`auto`（既定・PowerPoint→LibreOffice）/
   `powerpoint` / `libreoffice` / 任意コマンド（`{input}`/`{output}`/`{outdir}` 置換）。
   環境変数 `MD2PPTX_PDF_CONVERTER` を上書き。
+  - `auto` がするのは**探索だけ**で、失敗の肩代わりはしない（#46）。「その変換器が無い」
+    （`_Unavailable`）ときだけ次へ進み、**在る物が失敗したらそのまま失敗**させて
+    `--pdf-converter libreoffice` を案内する。落としてしまうと忠実度という成果物の性質が
+    黙って入れ替わるうえ、隠れる原因（オートメーション承認の拒否・ライセンス未認証など）は
+    利用者が直せるものだから。可用性の判定は macOS が app バンドルの有無、Windows は
+    COM オブジェクトを作れたか（PowerShell に成功マーカーを出させて切り分ける）、
+    LibreOffice は `soffice` が見つかるか。
   - macOS の `powerpoint` は `osascript`（`save … in (POSIX file p) as save as PDF`）で
     実 PowerPoint に変換させる。`POSIX file` への coerce は必須（POSIX パス文字列だと
     保存先を解決できない）。オートメーションの TCC 承認は**呼び出し元バイナリごと**に
