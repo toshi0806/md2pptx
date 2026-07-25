@@ -28,6 +28,8 @@ import shutil
 import tempfile
 import zipfile
 
+from . import workdir
+
 # コンテンツタイプ文字列
 CT_PRESENTATION = (
     "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"
@@ -162,7 +164,7 @@ def thmx_to_pptx(thmx_path, out_path=None):
         fd, out_path = tempfile.mkstemp(suffix=".pptx", prefix="md2pptx-base-")
         os.close(fd)
 
-    work = tempfile.mkdtemp(prefix="md2pptx-thmx-")
+    work = workdir.create(prefix="md2pptx-thmx-")
     try:
         try:
             with zipfile.ZipFile(thmx_path) as z:
@@ -184,7 +186,7 @@ def thmx_to_pptx(thmx_path, out_path=None):
             os.remove(out_path)
         raise
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        workdir.discard(work)
 
     return out_path
 

@@ -64,8 +64,9 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
+
+from . import workdir
 
 
 class PdfError(Exception):
@@ -365,7 +366,11 @@ def _convert_libreoffice(src: str, dst: str, timeout: float | None = None) -> No
             "and the default install location)")
     outdir = os.path.dirname(os.path.abspath(dst)) or "."
     # 同一プロファイルの多重起動は失敗しうるので，毎回使い捨てのプロファイルを渡す．
-    with tempfile.TemporaryDirectory(prefix="md2pptx-lo-") as profile:
+    # 片付けは workdir.discard に任せる——TemporaryDirectory は**片付けに失敗すると
+    # 例外を投げる**ので，変換が成功していても実行全体が終了コード 1 で終わってしまう
+    # （Issue #58）．
+    profile = workdir.create(prefix="md2pptx-lo-")
+    try:
         # as_uri() は Windows のドライブレターも file:///C:/... と正しく組む
         # （手組みの "file://"+path だと file://C:/... になり不正）．
         uri = pathlib.Path(os.path.abspath(profile)).as_uri()
@@ -374,9 +379,11 @@ def _convert_libreoffice(src: str, dst: str, timeout: float | None = None) -> No
             f"-env:UserInstallation={uri}",
             "--convert-to", "pdf", "--outdir", outdir, src,
         ], "libreoffice", timeout=timeout)
+    finally:
+        workdir.discard(profile)
     # soffice は <入力 basename>.pdf を outdir に書く．期待名と違えば移動する．
-    # 使い捨てプロファイル（with）は変換が終わった時点で不要なので，PDF の移動は
-    # with を抜けてから行う（プロファイルの寿命と成果物の移動を分離）．
+    # 使い捨てプロファイルは変換が終わった時点で不要なので，PDF の移動はそれを捨てた
+    # 後に行う（プロファイルの寿命と成果物の移動を分離する）．
     produced = os.path.join(
         outdir, os.path.splitext(os.path.basename(src))[0] + ".pdf")
     _finish(produced, dst, "libreoffice")
@@ -413,12 +420,17 @@ def _convert_powerpoint(src: str, dst: str, timeout: float | None = None,
         else:
             # PowerPoint には**自分のコンテナの中だけ**を触らせる．承認ダイアログを
             # 出さずに済み，入出力がどこにあっても（/tmp でも外部ボリュームでも）動く．
-            with tempfile.TemporaryDirectory(dir=stage, prefix="md2pptx-") as work:
+            # 片付けを workdir.discard に任せる理由は _convert_libreoffice と同じ
+            # （TemporaryDirectory は片付けの失敗で例外を投げる．Issue #58）．
+            work = workdir.create(stage, prefix="md2pptx-")
+            try:
                 staged_src = os.path.join(work, os.path.basename(src_abs))
                 staged_dst = os.path.join(work, "out.pdf")
                 shutil.copy2(src_abs, staged_src)
                 _macos_run_applescript(staged_src, staged_dst, timeout, attended)
                 _finish(staged_dst, dst_abs, "powerpoint")
+            finally:
+                workdir.discard(work)
     elif sys.platform.startswith("win"):
         # PowerShell + COM．32 = ppSaveAsPDF．パスは単一引用符文字列に埋めるので，
         # パス内の ' は '' にエスケープする（O'Brien 等でコマンドが壊れるのを防ぐ）．
@@ -566,7 +578,7 @@ def convert(src: str, dst: str, converter: str | None,
     #    slide.pdf の既定運用では **dst を直接・逐次的に書いていた**．作業場所を
     #    挟むと outdir がそちらへ移り，この衝突も消える．
     try:
-        work = tempfile.mkdtemp(dir=dst_dir, prefix=".md2pptx-")
+        work = workdir.create(dst_dir)
     except OSError as e:
         # 作業場所すら作れない（多くは出力先の書き込み権限）．**PDF 変換の失敗として
         # 扱う**——素の OSError を通すと cli の `except PdfError` をすり抜けて
@@ -600,8 +612,7 @@ def convert(src: str, dst: str, converter: str | None,
                 pass
             raise
     finally:
-        # 片付けの失敗で成否を変えない（残るのは隠しディレクトリ 1 つ）．
-        shutil.rmtree(work, ignore_errors=True)
+        workdir.discard(work)
 
 
 def _dispatch(name: str, src: str, dst: str, limit: float | None,

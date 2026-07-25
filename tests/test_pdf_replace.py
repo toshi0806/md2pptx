@@ -208,7 +208,7 @@ def test_an_unusable_output_directory_is_a_pdf_failure(deck, tmp_path, monkeypat
     def refuse(*args, **kwargs):
         raise PermissionError(13, "Permission denied")
 
-    monkeypatch.setattr(pdf.tempfile, "mkdtemp", refuse)
+    monkeypatch.setattr(pdf.workdir, "create", refuse)
 
     with pytest.raises(pdf.PdfError, match="cannot create a working directory"):
         pdf.convert(str(deck), str(tmp_path / "out.pdf"), "powerpoint", timeout=1)
