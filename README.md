@@ -90,20 +90,23 @@ md2pptx slide.md --pdf-output preview.pdf  # PDF の名前や場所を変える�
 - **PDF を作らせるのは `--pdf` と `--pdf-output` の 2 つ**です（両方指定したときは
   `--pdf-output` のパスに作ります）。
 - `--pdf-output` には**存在するディレクトリ**を指定してください（無い場所を指すと PDF はできません）。
-- 既定の `auto` は**実 PowerPoint → LibreOffice** の順に、使えるものを選びます。
-- 変換器には**任意のコマンド**も指定できます。`{input}`（pptx）/ `{output}`（PDF のパス）/
-  `{outdir}`（その親ディレクトリ）が実際のパスに置き換わります。出力先を指定できないツールなら、
-  プレースホルダは書かなくて構いません。pptx のパスが末尾に付いて実行されるので、**pptx と同じ
-  ディレクトリに同じ名前で `.pdf` を書く**ツール（`slide.pptx` なら `slide.pdf`）なら、そのまま
-  使えます。
-
-  ```bash
-  export MD2PPTX_PDF_CONVERTER='soffice --headless --convert-to pdf --outdir {outdir} {input}'
-  ```
-
 - **PDF 変換に失敗しても pptx は保存され、終了コードは 0 です**（警告は stderr に出ます）。
   編集しながらのプレビューを変換失敗で止めないためです。ただし**変換前に既存の PDF を消す**ので、
   失敗すると PDF は残りません。
+
+#### 変換器（`--pdf-converter`）
+
+既定の `auto` は**実 PowerPoint → LibreOffice** の順に、使えるものを選びます。
+
+**任意のコマンド**も指定できます。`{input}`（pptx）/ `{output}`（PDF のパス）/ `{outdir}`
+（その親ディレクトリ）が実際のパスに置き換わります。出力先を指定できないツールなら、
+プレースホルダは書かなくて構いません。pptx のパスが末尾に付いて実行されるので、**pptx と同じ
+ディレクトリに同じ名前で `.pdf` を書く**ツール（`slide.pptx` なら `slide.pdf`）なら、そのまま
+使えます。
+
+```bash
+export MD2PPTX_PDF_CONVERTER='soffice --headless --convert-to pdf --outdir {outdir} {input}'
+```
 
 macOS で PowerPoint に変換させるときの注意です。
 
