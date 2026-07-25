@@ -83,8 +83,11 @@ python3 -m md2pptx input.md
 結果を確認する、という使い方の土台です。
 
 ```bash
-md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf              # slide.pdf も作る
-md2pptx slide.md --theme theme.pptx --pdf-output out.pdf             # 出力先を指定（--pdf は不要）
+# pptx は常に作られる。--pdf を足すと、同じ場所・同じ名前で PDF も作る
+md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf              # slide.pptx と slide.pdf
+
+# PDF の名前や場所を変えたいときは --pdf-output（--pdf は要らない）
+md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf-output preview.pdf
 ```
 
 - 既定の `auto` は**実 PowerPoint → LibreOffice** の順に、使えるものを試します。
@@ -92,9 +95,11 @@ md2pptx slide.md --theme theme.pptx --pdf-output out.pdf             # 出力先
   実 PowerPoint と一致しない（太字寄りになる・行送りが詰まる）ので**編集中の当たり確認**まで、
   PowerPoint 経路（macOS / Windows）は実 PowerPoint 自身の出力なので**見た目の最終確認**にも
   使えます。どちらが使われたかは PDF の Producer（`pdfinfo` 等）で分かります。
-- `--pdf` と `--pdf-output` を両方指定したときは `--pdf-output` のパスに作ります。
-  **`--pdf-converter` だけでは PDF は作られません**——「どう作るか」の指定なので、
-  `MD2PPTX_PDF_CONVERTER` を export しても毎回 PDF が増えることはありません。
+- `--pdf` と `--pdf-output` を両方指定したときは `--pdf-output` のパスに作ります。置き先の
+  ディレクトリは**あらかじめ用意しておいてください**（タイポで勝手にディレクトリを作らない
+  ため、無ければ PDF は作りません）。**`--pdf-converter` だけでは PDF は作られません**——
+  「どう作るか」の指定なので、`MD2PPTX_PDF_CONVERTER` を export しても毎回 PDF が増える
+  ことはありません。
 - 変換器には**任意のコマンド**も指定できます。プレースホルダ `{input}` / `{output}` / `{outdir}`
   を置換します（1 つも無ければ末尾に `{input}` を補い、ツールが入力の隣に書いた `.pdf` を
   目的地へ移します）。
