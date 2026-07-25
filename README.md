@@ -83,11 +83,8 @@ python3 -m md2pptx input.md
 Markdown を編集しながら PDF ビューアで結果を確認する、という使い方の土台です。
 
 ```bash
-# 出力 pptx に並べて PDF も作る
 md2pptx slide.md --pdf
-
-# PDF の名前や場所を変えるなら --pdf-output（--pdf は不要）→ slide.pptx と preview.pdf
-md2pptx slide.md -o slide.pptx --pdf-output preview.pdf
+md2pptx slide.md --pdf-output preview.pdf  # PDF の名前や場所を変える（--pdf は不要）
 ```
 
 - 既定の `auto` は**実 PowerPoint → LibreOffice** の順に、使えるものを試します。
