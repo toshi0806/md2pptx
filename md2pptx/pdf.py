@@ -27,10 +27,17 @@ PowerPoint.app があれば実 PowerPoint を優先し，無い／失敗した�
 
 **画面を乱さないための工夫（macOS）**：AppleScript に ``activate`` を入れず，文書を開く前に
 ``open -g -j -a`` で PowerPoint を非表示・非アクティブ起動しておく（``_macos_prelaunch_powerpoint_hidden``）。
-これで未起動からの変換は全工程を通してウィンドウが出ない．次の 2 つは仕様上避けられない：
-利用者が既に PowerPoint を表示して使っている場合（``-j`` は起動の瞬間にしか効かない）と，
-TCC 未承認のフォルダでの初回実行（powerbox の許可ダイアログは応答が要るので前面に出る）．
-なお ``save … as PDF`` は隠したアプリを自ら再表示するため，起動後に隠し直す方法では抑えられない．
+これで未起動からの変換は全工程を通してウィンドウが出ない．利用者が既に PowerPoint を表示して
+使っている場合だけはウィンドウが出る（``-j`` は起動の瞬間にしか効かない）．なお
+``save … as PDF`` は隠したアプリを自ら再表示するため，起動後に隠し直す方法では抑えられない．
+
+**承認ダイアログを出さない工夫（macOS）**：pptx を PowerPoint のサンドボックスコンテナ
+（``~/Library/Containers/com.microsoft.Powerpoint/Data/tmp``）へコピーし，そこで変換して
+PDF を目的地へ移す．コンテナはアプリ自身の領域なのでファイルアクセスの承認が要らず，
+入出力がどこにあっても動く（未承認の場所を直接開かせると powerbox のダイアログ待ちで
+止まる——隠して動かしている以上，これは利用者から見えない）．それでも残るオートメーション
+承認などで固まった場合に備え，``_MACOS_HINT_AFTER`` 秒で案内を stderr に出し PowerPoint を
+前面に出す（変換自体は中断しない）．
 
 このモジュールは cli 以外に依存しない（python-pptx 非依存）．外部プロセスの
 起動と，どのバイナリを使うかの解決だけを担う．
@@ -52,6 +59,10 @@ class PdfError(Exception):
 
 # 環境変数名（CLI 引数 --pdf-converter が優先）．
 ENV_CONVERTER = "MD2PPTX_PDF_CONVERTER"
+
+# macOS の PowerPoint 変換がこれだけ待っても終わらなければ，ダイアログ待ちを疑って
+# 案内を出す（変換は続ける）．コンテナ経由の変換は例で 1〜8 秒なので誤検知しない幅．
+_MACOS_HINT_AFTER = 30.0
 
 
 # macOS の実 PowerPoint で pptx → PDF にする AppleScript．osascript に stdin で渡し，
@@ -116,6 +127,52 @@ def _macos_prelaunch_powerpoint_hidden() -> None:
         pass
 
 
+def _macos_container_tmp() -> str | None:
+    """PowerPoint のサンドボックスコンテナ内の作業場所（無ければ None）．
+
+    ここに pptx を置いてから開かせると，**ファイルアクセスの承認ダイアログが出ない**．
+    コンテナはアプリ自身のサンドボックス領域なので承認の対象外だからで，これにより
+    どの場所の入出力でも（``/tmp`` でもネットワークボリュームでも）変換できる．
+    """
+    base = os.path.expanduser(
+        "~/Library/Containers/com.microsoft.Powerpoint/Data/tmp")
+    return base if os.path.isdir(base) else None
+
+
+def _macos_run_applescript(src: str, dst: str) -> None:
+    """AppleScript で src → dst を変換する．長引いたら理由を stderr に出す．
+
+    PowerPoint を隠して動かしているので，何かのダイアログ（オートメーションの承認
+    など）で止まると，利用者には Dock を見ない限り「無音で固まった」ようにしか見え
+    ない．そこで ``_MACOS_HINT_AFTER`` 秒たっても終わらなければ，何が起きている
+    可能性があるかを stderr に出し，PowerPoint を前面に出してダイアログを見せる．
+    **変換は中断しない**——単に遅いだけのときに壊さないため．
+    """
+    proc = subprocess.Popen(
+        ["osascript", "-", src, dst],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True)
+    try:
+        _, err = proc.communicate(input=_APPLESCRIPT_PPTX_TO_PDF,
+                                  timeout=_MACOS_HINT_AFTER)
+    except subprocess.TimeoutExpired:
+        sys.stderr.write(
+            "md2pptx: PowerPoint is taking longer than "
+            f"{_MACOS_HINT_AFTER:.0f}s — it may be waiting for a dialog "
+            "(e.g. the automation approval). Bringing it to the front; "
+            "answer the dialog to continue.\n")
+        try:
+            subprocess.run(["open", "-a", "Microsoft PowerPoint"],
+                           capture_output=True)
+        except OSError:
+            pass
+        _, err = proc.communicate()
+    if proc.returncode != 0:
+        detail = (err or "").strip().splitlines()
+        tail = detail[-1] if detail else f"exit {proc.returncode}"
+        raise PdfError(f"powerpoint failed: {tail}")
+
+
 def _run(cmd: list[str], what: str, input: str | None = None) -> None:
     """外部コマンドを実行し，失敗を PdfError に変換する．
 
@@ -165,13 +222,23 @@ def _convert_powerpoint(src: str, dst: str) -> None:
     dst_abs = os.path.abspath(dst)
     if sys.platform == "darwin":
         # macOS は osascript 経由で実 PowerPoint を叩く．
-        # スクリプト本体は stdin で，入出力パスは argv で渡す．TCC 承認（オート
-        # メーション＋ファイルアクセス）が済んでいれば安定して変換できる（未承認だと承認
-        # ダイアログの応答待ちでハングしたように見えるので注意）．
+        # スクリプト本体は stdin で，入出力パスは argv で渡す．
         # 文書を開く前に非表示で起動しておく——さもないと変換のたびにウィンドウが出る．
         _macos_prelaunch_powerpoint_hidden()
-        _run(["osascript", "-", src_abs, dst_abs], "powerpoint",
-             input=_APPLESCRIPT_PPTX_TO_PDF)
+        stage = _macos_container_tmp()
+        if stage is None:
+            # コンテナが見つからない（サンドボックス外のビルド等）．その場で変換する．
+            # この経路では未承認の場所を渡すとファイルアクセスの承認ダイアログが出る．
+            _macos_run_applescript(src_abs, dst_abs)
+        else:
+            # PowerPoint には**自分のコンテナの中だけ**を触らせる．承認ダイアログを
+            # 出さずに済み，入出力がどこにあっても（/tmp でも外部ボリュームでも）動く．
+            with tempfile.TemporaryDirectory(dir=stage, prefix="md2pptx-") as work:
+                staged_src = os.path.join(work, os.path.basename(src_abs))
+                staged_dst = os.path.join(work, "out.pdf")
+                shutil.copy2(src_abs, staged_src)
+                _macos_run_applescript(staged_src, staged_dst)
+                _finish(staged_dst, dst_abs, "powerpoint")
     elif sys.platform.startswith("win"):
         # PowerShell + COM．32 = ppSaveAsPDF．パスは単一引用符文字列に埋めるので，
         # パス内の ' は '' にエスケープする（O'Brien 等でコマンドが壊れるのを防ぐ）．
