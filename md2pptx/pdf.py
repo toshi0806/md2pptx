@@ -25,6 +25,13 @@ PowerPoint 経路は実 PowerPoint 自身の出力なので見た目の確認に
 PowerPoint.app があれば実 PowerPoint を優先し，無い／失敗した場合は LibreOffice へフォール
 バックする．Windows の PowerPoint は COM（``SaveAs`` format 32）で対応．
 
+**画面を乱さないための工夫（macOS）**：AppleScript に ``activate`` を入れず，文書を開く前に
+``open -g -j -a`` で PowerPoint を非表示・非アクティブ起動しておく（``_macos_prelaunch_powerpoint_hidden``）。
+これで未起動からの変換は全工程を通してウィンドウが出ない．次の 2 つは仕様上避けられない：
+利用者が既に PowerPoint を表示して使っている場合（``-j`` は起動の瞬間にしか効かない）と，
+TCC 未承認のフォルダでの初回実行（powerbox の許可ダイアログは応答が要るので前面に出る）．
+なお ``save … as PDF`` は隠したアプリを自ら再表示するため，起動後に隠し直す方法では抑えられない．
+
 このモジュールは cli 以外に依存しない（python-pptx 非依存）．外部プロセスの
 起動と，どのバイナリを使うかの解決だけを担う．
 """
@@ -51,11 +58,12 @@ ENV_CONVERTER = "MD2PPTX_PDF_CONVERTER"
 # 入出力パスは argv で渡す（パスを文字列リテラルに埋め込まないので，スペースや引用符を
 # 含むパスでも構文が壊れない）．``POSIX file`` への coerce は Sonoma 以降の alias 問題の
 # 回避に必須（素の POSIX パス文字列では保存先を解決できない）．
+# ``activate`` は入れない——変換のたびに PowerPoint が前面に出て作業画面を奪うため
+# （変換自体は activate 無しで成立する）．
 _APPLESCRIPT_PPTX_TO_PDF = '''on run argv
     set inPath to item 1 of argv
     set outPath to item 2 of argv
     tell application "Microsoft PowerPoint"
-        activate
         open (POSIX file inPath)
         set theDoc to active presentation
         save theDoc in (POSIX file outPath) as save as PDF
@@ -88,6 +96,24 @@ def _which_libreoffice() -> str | None:
 def _macos_powerpoint_installed() -> bool:
     """macOS に Microsoft PowerPoint が入っているか（app バンドルの有無で判定）．"""
     return os.path.isdir("/Applications/Microsoft PowerPoint.app")
+
+
+def _macos_prelaunch_powerpoint_hidden() -> None:
+    """PowerPoint を非表示（``-j``）・非アクティブ（``-g``）で先に起動しておく．
+
+    こうしてから AppleScript で文書を開くと，変換の全工程を通してウィンドウが画面に
+    出ず，フォアグラウンドも移らない．**``-j`` が効くのは起動の瞬間だけ**なので，
+    これで隠せるのは PowerPoint が未起動のときに限る．既に起動していれば何も起きない
+    （利用者が表示して使っているインスタンスを勝手に隠すことはない）．
+
+    失敗しても変換は AppleScript 側の暗黙起動で成立するので，ここでは握り潰す
+    （PowerPoint が無い場合の明示エラーは AppleScript の失敗として出る）．
+    """
+    try:
+        subprocess.run(["open", "-g", "-j", "-a", "Microsoft PowerPoint"],
+                       capture_output=True)
+    except OSError:
+        pass
 
 
 def _run(cmd: list[str], what: str, input: str | None = None) -> None:
@@ -142,6 +168,8 @@ def _convert_powerpoint(src: str, dst: str) -> None:
         # スクリプト本体は stdin で，入出力パスは argv で渡す．TCC 承認（オート
         # メーション＋ファイルアクセス）が済んでいれば安定して変換できる（未承認だと承認
         # ダイアログの応答待ちでハングしたように見えるので注意）．
+        # 文書を開く前に非表示で起動しておく——さもないと変換のたびにウィンドウが出る．
+        _macos_prelaunch_powerpoint_hidden()
         _run(["osascript", "-", src_abs, dst_abs], "powerpoint",
              input=_APPLESCRIPT_PPTX_TO_PDF)
     elif sys.platform.startswith("win"):
