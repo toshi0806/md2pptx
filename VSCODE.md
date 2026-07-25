@@ -151,9 +151,14 @@ PDF を見張ることになります。
 md2pptx: watching example.md — Ctrl-C to stop
 md2pptx: 14:03:21 rebuilding example.md
 saved: example.pptx slides: 14
+md2pptx: converting to PDF: example.pdf
 saved: example.pdf
 md2pptx: 14:03:23 watching for changes
 ```
+
+`saved:` の 2 行だけ `md2pptx:` が付いていませんが、書き間違いではありません。**成果物のパスは
+標準出力、進捗は標準エラー**という分け方で、`md2pptx … | grep '^saved:'` のように機械で拾えます。
+端末では両方が混ざって見えます。
 
 **4. PDF を横に開く**
 
@@ -214,13 +219,17 @@ example.md
 {
   "label": "md2pptx: watch",
   "args": ["${workspaceFolder}/slide.md", "--watch", "--pdf"],
+  "options": { "cwd": "${workspaceFolder}" },
   "runOptions": { "runOn": "folderOpen" },
-  // 以下は同じ
+  // presentation / problemMatcher は上の watch と同じ
 }
 ```
 
-`${file}` ではなく**固定パスにするのが要点**です。フォルダを開いた時点ではまだどのエディタも
-開かれていないので、`${file}` は当てになりません。
+**`${file}` 由来の変数を 1 つも残さないのが要点**です。フォルダを開いた時点ではまだどのエディタも
+開かれていないので、`${file}` も `${fileDirname}` も解決できません。上の watch から書き換えるとき
+**`args` だけ直して `"options": { "cwd": "${fileDirname}" }` を残すと動きません**——`cwd` も
+`${workspaceFolder}` にしてください（`cwd` はフロントマターの `output:` を相対パスで書いたときの
+基準になるので、外すのではなく置き換えます）。
 
 代償が 2 つあります。**既定にしていないのはこのため**です。
 
