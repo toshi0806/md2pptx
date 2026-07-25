@@ -88,10 +88,13 @@ md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf out.pdf  # 出力先を�
 
 - 変換器は `--pdf-converter` か環境変数 `MD2PPTX_PDF_CONVERTER` で選べます（CLI 引数が優先）。
   既定の `auto` は **native PowerPoint → LibreOffice** の順に、使えるものを試します。
-  ただし **macOS の native PowerPoint は非対応**です（AppleScript にヘッドレスで PDF を
-  書き出す確実な手段が無く、保存ダイアログでハングするため）。macOS では `auto` は
-  LibreOffice を使います。macOS で PowerPoint の忠実な出力が欲しい場合は、実 PowerPoint を
-  叩く外部ツールを `--pdf-converter 'yourtool -o {output} {input}'` のように指定してください。
+  macOS では PowerPoint.app があれば AppleScript（`osascript`）経由で実 PowerPoint に
+  変換させ、未インストールや失敗時に LibreOffice へフォールバックします。
+- **macOS では初回に TCC（プライバシーとセキュリティ）の承認が必要**です。PowerPoint を
+  操作する許可（オートメーション）とファイルアクセスのダイアログが出るので、GUI セッション
+  で一度許可してください。承認は**呼び出し元アプリごと**（Terminal / iTerm / VS Code など）
+  に別管理なので、実行元を変えると再度承認が要ります。ダイアログを出せない実行環境
+  （launchd / cron など）では、未承認だと応答待ちのまま止まって見えます。
 - 任意のツールも指定できます。プレースホルダ `{input}` / `{output}` / `{outdir}` を置換します
   （1 つも無ければ末尾に `{input}` を補い、ツールが入力の隣に書いた `.pdf` を目的地へ移します）。
 
@@ -100,10 +103,13 @@ md2pptx slide.md --theme theme.pptx -o slide.pptx --pdf out.pdf  # 出力先を�
   ```
 
 - **PDF 変換だけ失敗しても pptx は保存済みとして終了コードは 0**（警告を stderr に出すのみ）。
-  編集しながらのプレビュー運用を変換失敗で止めないためです。
-- **忠実度は保証しません。** とくに LibreOffice の出力はテーマフォントの解決差などで
-  実 PowerPoint と一致しません（太字寄りになる・行送りが詰まる等）。PDF プレビューは
-  **編集中の当たり確認**用で、見た目の最終確認は実 PowerPoint で行ってください。
+  編集しながらのプレビュー運用を変換失敗で止めないためです。ただし**変換前に既存の PDF は
+  消します**（失敗すると PDF は無くなります）。古い PDF が残っていると、それを新しい出力と
+  取り違えて見続けることになるためです。
+- **忠実度は変換器によります。** LibreOffice の出力はテーマフォントの解決差などで実 PowerPoint
+  と一致しません（太字寄りになる・行送りが詰まる等）ので、**編集中の当たり確認**用と考えて
+  ください。PowerPoint 経路（macOS / Windows）は実 PowerPoint 自身の出力なので、そのまま
+  見た目の確認に使えます。どちらを使ったかは PDF の Producer（`pdfinfo` 等）で分かります。
 
 ### 試す
 
