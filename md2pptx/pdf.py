@@ -57,6 +57,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 
 class PdfError(Exception):
@@ -115,7 +116,7 @@ end run'''
 def _resolve_timeout(explicit: float | None) -> float | None:
     """変換の待ち上限（秒）を決める．``None`` は無制限．
 
-    明示指定（``--pdf-timeout`` → ``MD2PPTX_PDF_TIMEOUT``）が最優先で，``0`` 以下は
+    明示指定（``--pdf-timeout`` → ``MD2PPTX_PDF_TIMEOUT``）が最優先で，``0`` は
     無制限の意味．無指定なら **stderr が tty か**で分ける（Issue #48）：
 
     - **tty**（人が端末を見ている）→ 無制限．止まる原因の多くは承認ダイアログのような
@@ -137,15 +138,16 @@ def _resolve_timeout(explicit: float | None) -> float | None:
 
 
 def _checked(value: float, source: str) -> float | None:
-    """秒数を検証する．``0`` 以下は無制限，``nan``/``inf`` は誤りとして弾く．
+    """秒数を検証する．``0`` は無制限，負値・``nan``・``inf`` は誤りとして弾く．
 
-    ``float("nan")`` は ``<= 0`` が偽なのでそのまま subprocess へ渡ってしまい，
-    「上限があるようで無い」不可解な状態になる．黙って無制限に読み替えるよりも，
-    書き間違いとして知らせる．
+    ``float("nan")`` はどんな比較も偽になるのでそのまま subprocess へ渡ってしまい，
+    「上限があるようで無い」不可解な状態になる．負値も同様に弾く——``-5``（``5`` の
+    打ち間違い）を無制限と解釈すると，**この機能が防ごうとしている「無人で永久に待つ」
+    状態を作ってしまう**．無制限にしたい人には ``0`` という明示の入口がある．
     """
-    if math.isnan(value) or math.isinf(value):
+    if math.isnan(value) or math.isinf(value) or value < 0:
         raise PdfError(f"invalid {source}: {value} (seconds, 0 = no limit)")
-    return None if value <= 0 else value
+    return None if value == 0 else value
 
 
 def _kill(proc: subprocess.Popen[str]) -> None:
@@ -268,6 +270,7 @@ def _macos_run_applescript(src: str, dst: str, timeout: float | None) -> None:
 
     その後の待ちは ``timeout``（``None`` で無制限）に従う．
     """
+    started = time.monotonic()
     proc = subprocess.Popen(
         ["osascript", "-", src, dst],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -297,9 +300,11 @@ def _macos_run_applescript(src: str, dst: str, timeout: float | None) -> None:
         if timeout is None:
             _, err = proc.communicate()     # 無制限：応答があるまで待つ
         else:
-            # ここに来た時点で timeout > _MACOS_HINT_AFTER（短い上限は上で打ち切り済み）．
+            # 残りは経過時間から引く．案内と前面化にも時間がかかるので，定数
+            # （_MACOS_HINT_AFTER）を引くと利用者の指定した上限を超えてしまう．
+            rest = timeout - (time.monotonic() - started)
             try:
-                _, err = proc.communicate(timeout=timeout - _MACOS_HINT_AFTER)
+                _, err = proc.communicate(timeout=max(rest, 0.0))
             except subprocess.TimeoutExpired:
                 _kill(proc)
                 raise _timed_out("powerpoint", timeout)
@@ -497,9 +502,9 @@ def convert(src: str, dst: str, converter: str | None,
         converter: 変換器の指定．None または "auto" で自動探索
             （PowerPoint → LibreOffice）．"powerpoint" / "libreoffice" で名指し．
             それ以外は任意のコマンド行として解釈する．
-        timeout: 待ちの上限（秒）．``0`` 以下で無制限．``None`` なら
-            ``MD2PPTX_PDF_TIMEOUT``，それも無ければ tty かどうかで決める
-            （``_resolve_timeout``）．
+        timeout: 待ちの上限（秒）．``0`` で無制限，``None`` で「指定なし」．
+            指定なしのときは ``MD2PPTX_PDF_TIMEOUT``，それも無ければ tty かどうかで
+            決まる（``_resolve_timeout``）．
 
     Raises:
         PdfError: 変換に失敗したとき（cli が警告に整形する）．``auto`` でも，
