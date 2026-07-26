@@ -156,14 +156,14 @@ PDF 側は加えて、**「変換前に既存 PDF を
 - **監視対象に自分の出力（pptx / PDF）を入れない**。theme に出力 pptx を指されると「作る → 変わった
   → また作る」の無限ループになる。
 - **`rebuilding` / `watching for changes` の 2 行は VS Code 側との契約**（`problemMatcher.background`
-  が走行中の判定に使う）。変えるなら `.vscode/tasks.json` と README も一緒に直す。
+  が走行中の判定に使う）。変えるなら `.vscode/tasks.json` と VSCODE.md も一緒に直す。
   `failed to parse|render <md>: <理由>` も同様に problemMatcher が読む（Problems パネルの診断）。
 - **SIGTERM を `KeyboardInterrupt` へ寄せるのは watch のときだけ**。既定の即死だと `finally` が
   走らず、エディタの「タスクの終了」で PDF 変換の作業ディレクトリが残る。一発実行には入れない。
 
 画像パスの解決規則は `render.resolve_image_path` に集約してある（描画側と監視側で二重管理しない）。
 
-`.vscode/tasks.json` は **README の「VS Code で編集しながらプレビューする」節と同じ内容**を
+`.vscode/tasks.json` は **VSCODE.md に載せているものと同じ内容**を
 置いている（ここでは `example.md` で実際に動かして確かめるため）。**片方だけ直さないこと。**
 `.vscode/settings.json` の `editorAssociations` は LaTeX Workshop の内蔵ビューア（自動リロード
 対応）へ PDF を向けるもので、これが無いと保存しても画面が変わらない。
