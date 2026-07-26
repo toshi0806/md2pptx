@@ -22,5 +22,7 @@ base.pptx
 # Office lock/temp files
 ~$*
 
-# Markdown プレビューアの書き出し（Emacs など。THEME.html のように .md の隣にできる）
-*.html
+# Markdown プレビューアの書き出し（Emacs など。THEME.html のように .md の隣にできる）。
+# .md はすべてルート直下にあるので、出力もそこにしか落ちない。将来サブディレクトリで
+# HTML を管理したくなったときに黙って弾かないよう、ルートだけに限定する。
+/*.html
