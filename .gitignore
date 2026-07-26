@@ -21,3 +21,6 @@ base.pptx
 
 # Office lock/temp files
 ~$*
+
+# Markdown プレビューアの書き出し（Emacs など。THEME.html のように .md の隣にできる）
+*.html
