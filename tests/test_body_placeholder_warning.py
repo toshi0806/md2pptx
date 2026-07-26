@@ -34,6 +34,10 @@ def _theme(tmp_path, body_idx=1):
 
     ``body_idx`` を 1 以外にしたものが，このテストで再現したい「枠を作り直した
     テーマ」に相当する（PowerPoint 上での見た目は変わらない）．
+
+    ``idx`` を書き換える公開 API は python-pptx に無い（``placeholder_format.idx``
+    は読み取り専用）ので，XML を直接触る．壊れるとすればここで，そのときは
+    ``<p:ph idx="…">`` を書ければ手段は問わない——本番のコードはこの経路を通らない．
     """
     prs = Presentation()
     for ph in prs.slide_layouts[1].placeholders:      # Title and Content

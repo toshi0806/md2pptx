@@ -273,6 +273,8 @@ class Renderer:
         """
         if not lines:
             return
+        # 先頭 30 字は「自分のどの文章か」を思い出すための手掛かりで，全文ではない
+        # （全部出すと 1 行に収まらず，警告としてかえって読みにくい）．
         head = lines[0].text.strip().replace("\n", " ")[:30]
         sys.stderr.write(
             f"md2pptx: warning: no body placeholder (idx 1) on this layout; "
