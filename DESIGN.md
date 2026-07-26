@@ -893,7 +893,7 @@ md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
 タイトルスライドの副題位置・著者枠幅、
 (2/3) 系タイトルの改行位置は対応済み（副題はタイトル枠内に少し小さめ＋著者枠を右へ拡張、
 タイトルは `<br>` で明示改行）。上記の副題ダッシュ字形以外は，
-表・採番・enum・チェーン・図（ブロック矢印）・autofit・ no_bullet・タイトル改行を含め実
+表・採番・enum・チェーン・図（ブロック矢印）・autofit・no_bullet・タイトル改行を含め実
 PowerPoint 上でほぼ同一に再現できることを確認した（`→` は本文に保持，丸数字は
 `buAutoNum` 変換）。
 
