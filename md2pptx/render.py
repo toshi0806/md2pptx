@@ -259,6 +259,26 @@ class Renderer:
                 return ph
         return None
 
+    def _warn_no_body(self, lines):
+        """地の文の置き場所が無いことを知らせる（Issue #67）．
+
+        本文プレースホルダは ``idx==1`` で探すが，その番号は PowerPoint が内部で
+        振るもので画面に出ない．標準レイアウトを動かす分には変わらないものの，
+        枠を消して作り直すと別の番号になりうる——テーマを自作する人が普通にやる
+        操作で，そうなると**地の文がどこにも入らない**．
+
+        止めはしない（表・図とタイトルは出せるし，pptx の保存自体は成功する）が，
+        **黙るのが最悪**なので何を落としたかを言う．消えたのが自分の書いた文章だと
+        気づけなければ，テーマを直しようがない．
+        """
+        if not lines:
+            return
+        head = lines[0].text.strip().replace("\n", " ")[:30]
+        sys.stderr.write(
+            f"md2pptx: warning: no body placeholder (idx 1) on this layout; "
+            f"dropped {len(lines)} line(s) of body text starting {head!r}\n"
+        )
+
     def _body_font_levels(self):
         """本文スタイルのレベル別フォントサイズ（pt）のリストを返す（lvl1 始まり）．
 
@@ -966,7 +986,9 @@ class Renderer:
         else:
             line_blocks = [b for b in blocks if isinstance(b, Line)]
             body = self._body_placeholder(s)
-            if body is not None and line_blocks:
+            if body is None:
+                self._warn_no_body(line_blocks)
+            elif line_blocks:
                 tf = body.text_frame
                 self._fill_lines(tf, line_blocks, default_num_color,
                                  default_size_delta)
@@ -1438,7 +1460,9 @@ class Renderer:
         band_top = top + nb * line_h + inset
         blanks = max(1, int(band_h / line_h))   # 帯を埋める空行数（超過しない）
 
-        if body is not None:
+        if body is None:
+            self._warn_no_body(prose_before + prose_after)
+        else:
             tf = body.text_frame
             first = self._append_lines(tf, prose_before, True, default_num_color,
                                        default_size_delta)
