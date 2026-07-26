@@ -322,9 +322,14 @@ Markdown 標準のテーブル記法。1 行目をヘッダとしてアクセン
 ## 生成パイプライン
 
 ```flow
-direction: lr note(top): テーマと Markdown を入力に pptx を生成 [theme.thmx | テーマ] -変換->
-[base.pptx | 土台] -描画-> [out.pptx | スライド] -> [… | ] caption: 配色・フォントはテーマ、
-内容は Markdown note(bottom): → テーマを差し替えるだけで見た目が一新できる
+direction: lr
+note(top): テーマと Markdown を入力に pptx を生成
+[theme.thmx | テーマ]
+-変換-> [base.pptx | 土台]
+-描画-> [out.pptx | スライド]
+-> [… | ]
+caption: 配色・フォントはテーマ、内容は Markdown
+note(bottom): → テーマを差し替えるだけで見た目が一新できる
 ```
 ````
 
@@ -358,7 +363,11 @@ direction: lr note(top): テーマと Markdown を入力に pptx を生成 [them
 
 ````markdown
 ```image
-src: results.png width: 70% crop: 100,50,800,400 align: center caption: 実験結果の比較
+src: results.png
+width: 70%
+crop: 100,50,800,400
+align: center
+caption: 実験結果の比較
 ```
 ````
 

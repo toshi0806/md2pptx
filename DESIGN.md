@@ -402,11 +402,14 @@ box / arrow による横並びフロー図を簡潔に書く独自 DSL。`参照
 
 ````markdown
 ```flow
-direction: lr            # lr(左→右、
-既定) / tb(上→下) [theme.thmx | テーマ] -変換-> [base.pptx | 土台] -描画-> [out.pptx |
-スライド] -> [… | ]                # "…" 単独は省略記号ノード（box ではなく note）
-caption: 配色・フォントはテーマ、内容は Markdown note(top): テーマと Markdown を入力に
-pptx を生成 note(bottom): → テーマを差し替えるだけで見た目が一新できる
+direction: lr            # lr(左→右、既定) / tb(上→下)
+[theme.thmx | テーマ]
+-変換-> [base.pptx | 土台]
+-描画-> [out.pptx | スライド]
+-> [… | ]                # "…" 単独は省略記号ノード（box ではなく note）
+caption: 配色・フォントはテーマ、内容は Markdown
+note(top): テーマと Markdown を入力に pptx を生成
+note(bottom): → テーマを差し替えるだけで見た目が一新できる
 ```
 ````
 
@@ -582,7 +585,11 @@ pptx を生成 note(bottom): → テーマを差し替えるだけで見た目�
 
 ````markdown
 ```image
-src: results.png width: 70% crop: 100,50,800,400 align: center caption: 実験結果の比較
+src: results.png
+width: 70%
+crop: 100,50,800,400
+align: center
+caption: 実験結果の比較
 ```
 ````
 
