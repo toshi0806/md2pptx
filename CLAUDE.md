@@ -94,12 +94,13 @@ magick montage ref.png md.png -tile 2x1 -geometry +4+4 -background '#888' /tmp/c
 
 `md2pptx` 自身にも `--pdf` がある（Issue #39）。生成後に PDF を作る土台機能で、既定
 `auto` は native PowerPoint → LibreOffice の順に**使えるものを選ぶ**（無い物は飛ばすが、
-**在る物の失敗は握らない**——Issue #46。落とすと忠実度の違う PDF を黙って掴むことになる）。
-**macOS では PowerPoint.app があれば `auto` が osascript 経由で実 PowerPoint を使う**ので、
-`md2pptx … --pdf --pdf-converter powerpoint` の出力はそのまま最終確認に使える（LibreOffice
-経路は当たり確認どまり）。初回はオートメーションの
-TCC 承認が要る（呼び出し元アプリごとに別管理・README 参照）。`--pdf-converter` に外部の実
-PowerPoint 変換ツールを指定することもできる。忠実度は保証しない（README 参照）。
+**在る物の失敗は握らない**——Issue #46。落とすと忠実度の違う
+PDF を黙って掴むことになる）。**macOS では PowerPoint.app があれば `auto` が
+osascript 経由で実 PowerPoint を使う**ので、`md2pptx … --pdf --pdf-converter powerpoint`
+の出力はそのまま最終確認に使える（LibreOffice 経路は当たり確認どまり）。
+初回はオートメーションの TCC 承認が要る（呼び出し元アプリごとに別管理・README 参照）。
+`--pdf-converter` に外部の実 PowerPoint 変換ツールを指定することもできる。
+忠実度は保証しない（README 参照）。
 
 macOS 経路は **PowerPoint を目立たせずに使う**（Issue #44）。何度変換しても画面が乱れないので、
 検証で繰り返し叩いてよい。仕組みは2つで、どちらも消すと運用が壊れる:
@@ -111,8 +112,8 @@ macOS 経路は **PowerPoint を目立たせずに使う**（Issue #44）。何�
 - 変換は **PowerPoint のサンドボックスコンテナ内**で行う（`~/Library/Containers/com.microsoft.Powerpoint/Data/tmp`）。
   pptx をそこへコピーして変換し、PDF を目的地へ移す。
   未承認の場所を直接開かせるとファイルアクセスの許可ダイアログ待ちで止まるが、
-  隠していると利用者にはそれが見えないため（実測: 未承認フォルダ25秒でタイムアウト／コンテナ内
-  1.1 秒で成功）。
+  隠していると利用者にはそれが見えないため（実測:
+  未承認フォルダ25秒でタイムアウト／コンテナ内 1.1 秒で成功）。
 
 隠したことで気づけない停止（オートメーション承認など）に備え、30秒で
 stderr に案内を出す（前面化は tty のときだけ）。
@@ -120,8 +121,8 @@ stderr に案内を出す（前面化は tty のときだけ）。
 **待ちの上限は tty かどうかで分ける**（Issue #48）。
 tty なら打ち切らない——止まる原因の多くは承認ダイアログのような「人が今すぐ直せるもの」で、
 30秒の案内はそれを直してもらう仕掛けだから、上から
-kill を被せると自分で用意した解決手段を潰すことになる。非
-tty（cron / CI / エディタ拡張）は180秒で打ち切る。`--pdf-timeout` / `MD2PPTX_PDF_TIMEOUT`
+kill を被せると自分で用意した解決手段を潰すことになる。
+非 tty（cron / CI / エディタ拡張）は180秒で打ち切る。`--pdf-timeout` / `MD2PPTX_PDF_TIMEOUT`
 で上書き（`0` は無制限）。打ち切り時は自分で起こした子プロセスだけを
 kill し、書きかけの PDF を消す。`convert(..., unattended=True)` はこの
 tty からの推測を呼び出し側が明示的に打ち消す入口（上限と前面化の両方に効く）。
@@ -149,10 +150,9 @@ PDF 側は加えて、**「変換前に既存
 PDF を消す」実装に戻してはいけない**——PDF ビューアはフォルダを監視していて、
 削除を確定するとそのファイルを監視から外す（LaTeX Workshop は 250ms で確定し、
 集合が空になるとフォルダごと破棄）。変換には1〜数秒かかるので必ず確定してしまい、
-**編集しながらのプレビューが最初のリビルドで死ぬ**（実測: 修正前はリビルド1回あたり約1秒
-PDF が不在／修正後は0）。作業場所がファイルではなくディレクトリなのは、
-LibreOffice が `--outdir` に `<入力 basename>.pdf`
-を書くため（`slide.pptx` → `slide.pdf` では出力 PDF を直接書いてしまう）。
+**編集しながらのプレビューが最初のリビルドで死ぬ**（実測: 修正前はリビルド1回あたり約1秒 PDF
+が不在／修正後は0）。作業場所がファイルではなくディレクトリなのは、LibreOffice が `--outdir` に
+`<入力 basename>.pdf` を書くため（`slide.pptx` → `slide.pdf` では出力 PDF を直接書いてしまう）。
 無音失敗の検出（存在＋非空）は削除ではなく「毎回まっさらな別名へ書かせる」ことで担保している。
 固定しているのは `tests/test_pdf_replace.py`。
 
