@@ -46,7 +46,7 @@ class ThmxError(Exception):
     """thmx 変換時のエラー．"""
 
 
-def _count_layouts(extract_dir):
+def _count_layouts(extract_dir: str) -> int:
     """展開済みディレクトリ内の slideLayout 数を数える（テーマ差し替えに追従）．"""
     layout_dir = os.path.join(extract_dir, "theme", "slideLayouts")
     if not os.path.isdir(layout_dir):
@@ -57,7 +57,7 @@ def _count_layouts(extract_dir):
     ])
 
 
-def _check_full_theme(extract_dir):
+def _check_full_theme(extract_dir: str) -> int:
     """フルテーマ型（マスター＋レイアウト同梱）であることを検証する．
 
     色・フォントのみの簡易テーマはレイアウトを持たず，スライドの土台にできない．
@@ -74,7 +74,7 @@ def _check_full_theme(extract_dir):
     return n
 
 
-def _rewrite_content_types(extract_dir, nlayout):
+def _rewrite_content_types(extract_dir: str, nlayout: int) -> None:
     """[Content_Types].xml を pptx 向けに書き換える（DESIGN.md §3.2 の 3 点）．"""
     path = os.path.join(extract_dir, "[Content_Types].xml")
     ct = open(path, encoding="utf-8").read()
@@ -110,7 +110,7 @@ def _rewrite_content_types(extract_dir, nlayout):
     open(path, "w", encoding="utf-8").write(ct)
 
 
-def _rewrite_root_rels(extract_dir):
+def _rewrite_root_rels(extract_dir: str) -> None:
     """_rels/.rels の officeDocument リレーションシップを presentation 本体へ向ける．
 
     標準的な thmx では officeDocument は ``theme/theme/themeManager.xml`` を指す
@@ -121,7 +121,7 @@ def _rewrite_root_rels(extract_dir):
     path = os.path.join(extract_dir, "_rels", ".rels")
     s = open(path, encoding="utf-8").read()
 
-    def _retarget(m):
+    def _retarget(m: re.Match[str]) -> str:
         return re.sub(r'Target="[^"]*"', 'Target="ppt/presentation.xml"', m.group(0))
 
     s = re.sub(
@@ -135,7 +135,7 @@ def _rewrite_root_rels(extract_dir):
     open(path, "w", encoding="utf-8").write(s)
 
 
-def _repack(extract_dir, out_path):
+def _repack(extract_dir: str, out_path: str) -> None:
     """展開ディレクトリを pptx（ZIP）として書き出す．[Content_Types].xml を先頭に置く．"""
     if os.path.exists(out_path):
         os.remove(out_path)
@@ -150,7 +150,7 @@ def _repack(extract_dir, out_path):
                 z.write(full, arc)
 
 
-def thmx_to_pptx(thmx_path, out_path=None):
+def thmx_to_pptx(thmx_path: str, out_path: str | None = None) -> str:
     """thmx を base pptx に変換し，出力先パスを返す．
 
     out_path 省略時は一時ファイル（``*.pptx``）に書き出す（呼び出し側で破棄する）．
@@ -159,8 +159,14 @@ def thmx_to_pptx(thmx_path, out_path=None):
         raise ThmxError(f"thmx not found: {thmx_path}")
 
     # out_path を内部で用意した場合のみ，失敗時に後始末する（呼び出し側指定は触らない）．
+    # created_out はそのための記録で，**下の except まで生き残る**——そこでは
+    # out_path はどちらの経路でも None ではないので，「自分で作ったのか」は
+    # out_path からは復元できない．
+    # 一方，直下の分岐は out_path 自身を条件にする．「ここから先は None ではない」
+    # をコードの形で示すためで，created_out を条件にすると読む側も型チェッカも
+    # 2 つの変数を突き合わせないと分からない（mypy が 4 箇所で落ちた）．
     created_out = out_path is None
-    if created_out:
+    if out_path is None:
         fd, out_path = tempfile.mkstemp(suffix=".pptx", prefix="md2pptx-base-")
         os.close(fd)
 
@@ -191,7 +197,7 @@ def thmx_to_pptx(thmx_path, out_path=None):
     return out_path
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
     import argparse
 
     ap = argparse.ArgumentParser(

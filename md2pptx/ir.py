@@ -260,7 +260,7 @@ class TitleSlide:
     affiliation_deltas: list[int | None] = field(default_factory=list)
     notes: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # 不変条件：affiliation_deltas は affiliation と同じ長さ（各行 1 対 1）．
         # 直接構築（テスト等）で長さがずれても None 詰め／切り詰めで揃え，
         # render 側が添字で安全に対応付けられるようにする．

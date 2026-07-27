@@ -35,7 +35,7 @@ from . import parser as md_parser  # 標準ライブラリ parser とは別物
 from . import pdf as pdf_backend
 from . import render
 from . import watch
-from .ir import Image
+from .ir import Deck, Image
 from .pdf import ENV_CONVERTER, ENV_TIMEOUT
 from .thmx2pptx import ThmxError, thmx_to_pptx
 
@@ -73,7 +73,7 @@ class BuildResult:
     sources: frozenset[str]
 
 
-def load_base(theme_path, keep_base=None):
+def load_base(theme_path: str, keep_base: str | None = None) -> tuple[str, bool]:
     """テーマ（.thmx / .pptx）を base pptx のパスへ収束させる（DESIGN.md §3.5）．
 
     Args:
@@ -113,7 +113,7 @@ def _as_path(value: object, key: str) -> str | None:
     )
 
 
-def _image_sources(deck, base_dir: str) -> list[str]:
+def _image_sources(deck: Deck, base_dir: str) -> list[str]:
     """Deck が参照する画像ファイルを列挙する（``--watch`` の監視対象）．
 
     単一カラム（``blocks``）と多カラム（``columns``）の両方を見る．解決規則は
@@ -136,7 +136,7 @@ def _image_sources(deck, base_dir: str) -> list[str]:
     return found
 
 
-def _parse_args(argv):
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         prog="md2pptx",
         description="Convert a Markdown deck into a themed .pptx (Phase 1).",
@@ -195,7 +195,7 @@ def _parse_args(argv):
     return ap.parse_args(argv)
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     """CLI のエントリポイント．成功時は終了コード 0 を返し，失敗は SystemExit で終える．
 
     想定内の失敗（thmx 変換失敗・入力ファイルの不在／権限）は
@@ -211,7 +211,7 @@ def main(argv=None):
         raise SystemExit(f"md2pptx: {e}")
 
 
-def _run(args):
+def _run(args: argparse.Namespace) -> int:
     _check_invocation(args)
     if args.watch:
         return _run_watch(args)
@@ -222,7 +222,7 @@ def _run(args):
     return 0
 
 
-def _check_invocation(args) -> None:
+def _check_invocation(args: argparse.Namespace) -> None:
     """起動時に一度だけ行う引数の検査．
 
     **watch でもここは即座に失敗させる**（打ち間違いを見張り続けても仕方がない）．
@@ -237,7 +237,7 @@ def _check_invocation(args) -> None:
         raise SystemExit("md2pptx: --pdf-output requires a path")
 
 
-def _run_watch(args) -> int:
+def _run_watch(args: argparse.Namespace) -> int:
     """`--watch`：入力とその依存を見張り，変わるたびに作り直す（止まらない）．"""
     previous: frozenset[str] = frozenset()
 
@@ -268,7 +268,8 @@ def _run_watch(args) -> int:
                      seed=[os.path.abspath(args.input)])
 
 
-def build_once(args, *, unattended: bool = False) -> BuildResult:
+def build_once(args: argparse.Namespace, *,
+               unattended: bool = False) -> BuildResult:
     """引数 1 セットぶんを 1 回ビルドする（parse → 解決 → render → 任意で PDF）．
 
     一発実行と ``--watch`` の共通部分．``saved:`` 等の表示もここで行う——標準出力と
@@ -293,7 +294,8 @@ def build_once(args, *, unattended: bool = False) -> BuildResult:
         raise BuildError(str(e), sources)
 
 
-def _build(args, sources: set[str], unattended: bool) -> BuildResult:
+def _build(args: argparse.Namespace, sources: set[str],
+           unattended: bool) -> BuildResult:
     """``build_once`` の本体．``sources`` に読んだファイルを足しながら進む．"""
     # 1) Markdown -> IR（Deck）
     try:

@@ -20,12 +20,13 @@ python-pptx には依存しない（描画は render.py の責務）．
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 
 from .ir import (
-    Align, Crop, Deck, Flow, Image, Length, Line, Slide, Table, TitleSlide,
+    Align, Block, Crop, Deck, Flow, Image, Length, Line, Slide, Table,
+    TitleSlide,
 )
 from .flow import parse_flow as _parse_flow
 
@@ -216,7 +217,7 @@ def _build_title_slide(meta: dict) -> TitleSlide | None:
     )
 
 
-def _split_size_opt(value) -> tuple[int | None, str | None]:
+def _split_size_opt(value: object) -> tuple[int | None, str | None]:
     """front matter 値（None 可）の先頭相対サイズトークンを剥がして (段数, 文字列) を返す．
 
     None はそのまま (None, None)．トークン判定は文字列のみ対象とし，数値等
@@ -254,7 +255,7 @@ def _parse_body(body: str, body_offset: int = 0,
             current = Slide()
         return current
 
-    def add_block(b) -> None:
+    def add_block(b: Block) -> None:
         """ブロックを現在のカラム（多カラム時）または blocks へ追加する．"""
         s = ensure_slide()
         (s.columns[-1] if s.columns else s.blocks).append(b)
@@ -642,7 +643,7 @@ def _parse_content_line(raw: str) -> Line | None:
     if not s:
         return None
 
-    def _mk(text, **kw):
+    def _mk(text: str, **kw: Any) -> Line | None:
         """本文が空（マーカー／サイズトークンだけの行）なら Line を作らず None．
         マーカー除去後に空の行を IR に入れない（先頭の空行チェックと整合）．
 
@@ -748,7 +749,7 @@ affiliation:
 → 表・フロー図が Line 決め打ちで落ちないことの確認を兼ねる
 """
 
-    def _dump_block(b) -> str:
+    def _dump_block(b: Block) -> str:
         """ブロックを 1 行で表す．blocks は Line 以外も持つので型で分岐する．"""
         if isinstance(b, Line):
             return (f"Line(kind={b.kind!r} level={b.level} "
