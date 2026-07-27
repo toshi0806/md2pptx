@@ -34,7 +34,7 @@ _DIRECTIONS: tuple[Literal["lr", "tb"], ...] = ("lr", "tb")
 _NODE_KINDS: tuple[Literal["box", "ellipsis"], ...] = ("box", "ellipsis")
 
 
-def _emu(inch):
+def _emu(inch: float) -> int:
     return int(inch * EMU)
 
 
@@ -294,8 +294,8 @@ def plan_flow(flow: Flow, left: int, top: int, width: int,
     return plan
 
 
-def _plan_horizontal(plan: FlowPlan, flow, left, top, width, height,
-                     cap_reserve) -> int:
+def _plan_horizontal(plan: FlowPlan, flow: Flow, left: int, top: int,
+                     width: int, height: int, cap_reserve: int) -> int:
     """横並び（lr）に配置し，box 帯の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
@@ -345,8 +345,8 @@ def _plan_horizontal(plan: FlowPlan, flow, left, top, width, height,
     return by + bh
 
 
-def _plan_vertical(plan: FlowPlan, flow, left, top, width, height,
-                   cap_reserve) -> int:
+def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
+                   width: int, height: int, cap_reserve: int) -> int:
     """縦並び（tb）に配置し，box 列の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
