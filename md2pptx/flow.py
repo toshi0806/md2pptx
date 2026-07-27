@@ -20,6 +20,7 @@ DSL 例::
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Literal
 
 from .ir import Flow, FlowNode, FlowEdge
@@ -46,6 +47,32 @@ _RE_SETTING = re.compile(r"^(direction|caption|note\(top\)|note\(bottom\))\s*:\s
 _RE_NODE = re.compile(r"\[([^\]]*)\](?:\{([\w-]+)\})?")
 # エッジ "->" / "-PR->"．先頭の '-' から '->' まで．
 _RE_EDGE = re.compile(r"-(?:([^>]+?)-)?>")
+
+
+# ---------------------------------------------------------------- トークン
+
+# 字句解析の途中結果．**ir.FlowNode / FlowEdge とは別物**で，こちらは構文解析の
+# 作業用（``_make_node`` がこれを IR へ変換する）．混同を避けるため私有名にしてある．
+#
+# 種類ごとに別の型にしているのは，持っている情報が違うから．ノードは色を持ち，
+# エッジは持たない——これを 1 つのタプルに詰めると，読む側が「今どちらなのか」を
+# 憶えていないと添字を間違える（それを型で言えないのが Issue #34）．
+
+@dataclass(frozen=True)
+class _NodeTok:
+    """``[ラベル | サブ]`` ／ ``[…]{色}``．``label`` は ``|`` で割る前の生の中身．"""
+    label: str
+    color: str | None = None
+
+
+@dataclass(frozen=True)
+class _EdgeTok:
+    """``->`` ／ ``-ラベル->``．``label`` が None なら文字の無い矢印．"""
+    label: str | None = None
+
+
+# requires-python が 3.11 なので実行時に評価される ``|`` を使える．
+_Token = _NodeTok | _EdgeTok
 
 
 # ---------------------------------------------------------------- パース
@@ -82,14 +109,13 @@ def parse_flow(text: str) -> Flow:
     return flow
 
 
-def _tokenize(s: str):
+def _tokenize(s: str) -> list[_Token]:
     """ノード／エッジのトークン列を返す（出現順）．
 
     ノード "[…]"／エッジ "->" 以外の文字列はタイポの可能性が高いので
     黙殺せずエラーにする（設定行は parse_flow が先に取り除いている）．
     """
-    # ("node", label, color) と ("edge", label) が混在するので要素長は一定でない．
-    tokens: list[tuple] = []
+    tokens: list[_Token] = []
     i, n = 0, len(s)
     while i < n:
         c = s[i]
@@ -103,7 +129,7 @@ def _tokenize(s: str):
                     f"unclosed flow node (missing ']'): {s[i:i + 30]!r}")
             inner = s[i + 1:j]
             i = j + 1
-            color = None
+            color: str | None = None
             if i < n and s[i] == "{":
                 k = s.find("}", i)
                 if k < 0:
@@ -112,12 +138,12 @@ def _tokenize(s: str):
                         f"{s[i:i + 30]!r}")
                 color = s[i + 1:k]
                 i = k + 1
-            tokens.append(("node", inner, color))
+            tokens.append(_NodeTok(inner, color))
             continue
         if c == "-":
             m = _RE_EDGE.match(s, i)
             if m:
-                tokens.append(("edge", (m.group(1) or "").strip() or None))
+                tokens.append(_EdgeTok((m.group(1) or "").strip() or None))
                 i = m.end()
                 continue
         raise ValueError(
@@ -126,28 +152,32 @@ def _tokenize(s: str):
     return tokens
 
 
-def _build(flow: Flow, tokens) -> None:
-    """トークン列（node / edge の交互）から nodes / edges を構築する．"""
-    pending_label = None
-    have_pending_edge = False
-    prev_idx = None
+def _build(flow: Flow, tokens: list[_Token]) -> None:
+    """トークン列（node / edge の交互）から nodes / edges を構築する．
+
+    エッジは 2 つのノードに挟まれて初めて線になるので，``->`` を読んだ時点では
+    まだ引けない——次のノードが来るまで「保留中の矢印」として持ち越す．
+    相手が現れないまま終われば（``-> [A]`` の先頭や ``[A] ->`` の末尾），
+    その矢印は捨てる．
+    """
+    pending: _EdgeTok | None = None
+    prev_idx: int | None = None
 
     for tok in tokens:
-        if tok[0] == "node":
-            node = _make_node(tok[1], tok[2])
-            flow.nodes.append(node)
+        if isinstance(tok, _NodeTok):
+            flow.nodes.append(_make_node(tok.label, tok.color))
             idx = len(flow.nodes) - 1
-            if have_pending_edge and prev_idx is not None:
-                flow.edges.append(FlowEdge(src=prev_idx, dst=idx, label=pending_label))
+            if pending is not None and prev_idx is not None:
+                flow.edges.append(
+                    FlowEdge(src=prev_idx, dst=idx, label=pending.label))
             prev_idx = idx
-            have_pending_edge = False
-            pending_label = None
-        else:  # edge
-            have_pending_edge = True
-            pending_label = tok[1]
+            pending = None
+        else:
+            # ``->`` が続いた場合は上書き（覚えておけるのは直前の 1 本だけ）．
+            pending = tok
 
 
-def _make_node(inner: str, color) -> FlowNode:
+def _make_node(inner: str, color: str | None) -> FlowNode:
     parts = inner.split("|", 1)
     label = parts[0].strip()
     sublabel = parts[1].strip() if len(parts) > 1 else None
