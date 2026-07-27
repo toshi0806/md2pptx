@@ -159,10 +159,12 @@ def thmx_to_pptx(thmx_path: str, out_path: str | None = None) -> str:
         raise ThmxError(f"thmx not found: {thmx_path}")
 
     # out_path を内部で用意した場合のみ，失敗時に後始末する（呼び出し側指定は触らない）．
-    # 分岐の条件を created_out ではなく out_path そのものにしているのは，
-    # 「ここから先は None ではない」を変数ではなくコードの形で示すため
-    # （created_out を条件にすると，読む側も型チェッカも 2 つの変数を
-    # 突き合わせないと分からない）．
+    # created_out はそのための記録で，**下の except まで生き残る**——そこでは
+    # out_path はどちらの経路でも None ではないので，「自分で作ったのか」は
+    # out_path からは復元できない．
+    # 一方，直下の分岐は out_path 自身を条件にする．「ここから先は None ではない」
+    # をコードの形で示すためで，created_out を条件にすると読む側も型チェッカも
+    # 2 つの変数を突き合わせないと分からない（mypy が 4 箇所で落ちた）．
     created_out = out_path is None
     if out_path is None:
         fd, out_path = tempfile.mkstemp(suffix=".pptx", prefix="md2pptx-base-")

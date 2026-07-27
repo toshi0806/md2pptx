@@ -17,13 +17,22 @@
 """
 from __future__ import annotations
 
-import glob
-import os
 import tempfile
 
 import pytest
 
 from md2pptx.thmx2pptx import ThmxError, thmx_to_pptx
+
+
+@pytest.fixture(autouse=True)
+def own_tempdir(tmp_path, monkeypatch):
+    """一時ファイルの行き先を，このテスト専用の空ディレクトリへ向ける．
+
+    共有の ``/tmp`` を見ると，**他のプロセスが作った同名のファイルを数えてしまう**
+    ——並行実行やビルドの同時進行で、残っていないのに残ったと言う（逆もある）．
+    行き先ごと閉じ込めれば、「このディレクトリが空か」を見るだけで済む．
+    """
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
 
 
 @pytest.fixture
@@ -34,19 +43,16 @@ def broken_thmx(tmp_path):
     return str(path)
 
 
-def _stray_temps():
-    return set(glob.glob(os.path.join(tempfile.gettempdir(),
-                                      "md2pptx-base-*.pptx")))
+def _temps(tmp_path):
+    return sorted(p.name for p in tmp_path.glob("md2pptx-base-*.pptx"))
 
 
-def test_it_cleans_up_the_temp_file_it_made_itself(broken_thmx):
+def test_it_cleans_up_the_temp_file_it_made_itself(broken_thmx, tmp_path):
     """出力先を省略した場合，失敗しても一時ファイルを残さない．"""
-    before = _stray_temps()
-
     with pytest.raises(ThmxError, match="not a valid thmx"):
         thmx_to_pptx(broken_thmx)
 
-    assert _stray_temps() - before == set()
+    assert _temps(tmp_path) == []
 
 
 def test_it_does_not_touch_a_file_the_caller_named(broken_thmx, tmp_path):
@@ -65,9 +71,7 @@ def test_it_does_not_touch_a_file_the_caller_named(broken_thmx, tmp_path):
 
 def test_a_missing_input_fails_before_making_anything(tmp_path):
     """入力が無ければ一時ファイルを作る前に返る（作ってから消すより素直）．"""
-    before = _stray_temps()
-
     with pytest.raises(ThmxError, match="thmx not found"):
         thmx_to_pptx(str(tmp_path / "nope.thmx"))
 
-    assert _stray_temps() - before == set()
+    assert _temps(tmp_path) == []
