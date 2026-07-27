@@ -28,7 +28,7 @@ import math
 import os
 import struct
 import sys
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from pptx import Presentation
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
@@ -48,7 +48,7 @@ from pptx.shapes.graphfrm import GraphicFrame
 from pptx.shapes.picture import Picture
 from pptx.shapes.placeholder import SlidePlaceholder
 from pptx.slide import Slide as PptxSlide
-from pptx.text.text import TextFrame, _Paragraph
+from pptx.text.text import TextFrame
 
 from .ir import (
     Block, Crop, Deck, Flow, Image, Length, Line, ObjectBlock, Slide, Table,
@@ -56,6 +56,14 @@ from .ir import (
 )
 from .flow import FlowNode, plan_flow
 from . import workdir
+
+if TYPE_CHECKING:
+    # ``_Paragraph`` は python-pptx の**私有クラス**（段落に公開の別名が無い）．
+    # 実行時に import しないのは，改名・削除されたときに**注釈のためだけの
+    # 名前で起動ごと落とさない**ため——``from __future__ import annotations``
+    # により注釈は文字列のままなので、実行には要らない．CI の typecheck が
+    # 気づかせてくれる．
+    from pptx.text.text import _Paragraph
 
 
 # Table.aligns の寄せ名 → PowerPoint の段落水平アラインメント．
@@ -511,9 +519,10 @@ class Renderer:
         0 枚の base から描画する（_clear_slides）ため，ここで消える既存ノートはない．
         """
         if notes:
-            # ノート用のテキスト枠を持たないレイアウトがありうる（その場合は
-            # 書き込む先が無いので黙って諦める——ノートは補助情報で，
-            # ここで止めるとスライド自体が出せなくなる）．
+            # ``notes_text_frame`` は**ノート用プレースホルダが無いとき** None を
+            # 返す（python-pptx は ``notes_placeholder is None`` でそう決めている）．
+            # 書き込む先が無いので黙って諦める——ノートは補助情報で，ここで
+            # 止めるとスライド自体が出せなくなる．
             tf = slide.notes_slide.notes_text_frame
             if tf is not None:
                 tf.text = notes
