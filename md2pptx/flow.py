@@ -251,6 +251,10 @@ class FlowPlan:
 
     ``note_top`` / ``note_bottom`` はここに入らない——地の文なので本文
     プレースホルダへ入れるのが render の仕事で，図の座標を持たない．
+
+    **ここだけ ``frozen`` にしていない．** 中の要素（``Rect`` や ``Placed*``）は
+    作ったら変わらないが，この入れ物は ``_plan_horizontal`` / ``_plan_vertical``
+    が置きながら追記していくため．
     """
     boxes: list[PlacedNode] = field(default_factory=list)
     ellipses: list[PlacedText] = field(default_factory=list)

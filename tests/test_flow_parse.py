@@ -263,8 +263,11 @@ def test_an_arrow_runs_between_the_two_nodes(direction):
                        0, 0, F.EMU * 8, F.EMU * 4)
     (a, b), (arrow,) = [x.rect for x in plan.boxes], plan.arrows
 
-    # 期待値は Rect の端・中心の属性を使わずに組む（属性が壊れたとき、
-    # 期待値まで一緒に壊れて一致してしまうのを避ける）．
+    # 期待値は ``right`` / ``center_y`` といった**導出プロパティを経由せず**，
+    # 素の値（left / top / width / height）の算術で組む．プロパティを使うと，
+    # それが壊れたとき期待値まで同じように壊れて一致してしまう（実際そうなった）．
+    # 素の値そのものは test_a_rect_knows_its_own_edges_and_centre が実測値で
+    # 押さえているので，ここはその上に乗る．
     if direction == "lr":
         assert (arrow.x1, arrow.x2) == (a.left + a.width, b.left)
         assert arrow.y1 == arrow.y2 == a.top + a.height // 2
