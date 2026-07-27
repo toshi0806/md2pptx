@@ -20,7 +20,7 @@ DSL 例::
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from .ir import Flow, FlowNode, FlowEdge
@@ -188,23 +188,83 @@ def _make_node(inner: str, color: str | None) -> FlowNode:
     return FlowNode(label=label, sublabel=sublabel, kind=kind, color=color)
 
 
+# ---------------------------------------------------------------- 配置プラン
+
+# 描画指示（座標はすべて EMU 整数）．render はこれを読んで図形を置くだけで，
+# 位置の計算はここで終わっている．
+#
+# 名前で持つのは，位置で持つと**取り違えても誰も気づかない**から．幅と高さを
+# 入れ替えても，右端と下端を取り違えても，型としては同じ整数で通ってしまい，
+# 図が歪んで出てくるまで分からない（Issue #71）．
+
+@dataclass(frozen=True)
+class Rect:
+    """矩形．端や中心は毎回足し算で出さず，ここから読む．"""
+    left: int
+    top: int
+    width: int
+    height: int
+
+    @property
+    def right(self) -> int:
+        return self.left + self.width
+
+    @property
+    def bottom(self) -> int:
+        return self.top + self.height
+
+    @property
+    def center_x(self) -> int:
+        return self.left + self.width // 2
+
+    @property
+    def center_y(self) -> int:
+        return self.top + self.height // 2
+
+
+@dataclass(frozen=True)
+class PlacedNode:
+    """角丸四角ノード．色・サブラベルを持つので ``node`` ごと渡す．"""
+    node: FlowNode
+    rect: Rect
+
+
+@dataclass(frozen=True)
+class PlacedText:
+    """文字だけの要素（省略記号・矢印ラベル・キャプション）．"""
+    text: str
+    rect: Rect
+
+
+@dataclass(frozen=True)
+class PlacedArrow:
+    """ノード間の矢印．始点から終点への線分で，太さは render が決める．"""
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+
+
+@dataclass
+class FlowPlan:
+    """図ひとつぶんの配置．
+
+    ``note_top`` / ``note_bottom`` はここに入らない——地の文なので本文
+    プレースホルダへ入れるのが render の仕事で，図の座標を持たない．
+    """
+    boxes: list[PlacedNode] = field(default_factory=list)
+    ellipses: list[PlacedText] = field(default_factory=list)
+    arrows: list[PlacedArrow] = field(default_factory=list)
+    labels: list[PlacedText] = field(default_factory=list)
+    captions: list[PlacedText] = field(default_factory=list)
+
+
 # ---------------------------------------------------------------- レイアウト
 
-def plan_flow(flow: Flow, left, top, width, height):
-    """Flow を矩形領域 (left, top, width, height) に配置する座標プランを返す．
-
-    戻り値は描画指示の dict（座標はすべて EMU 整数）::
-
-        {
-          "boxes":  [(FlowNode, l, t, w, h), ...],   # 角丸四角ノード
-          "ellipses": [(label, l, t, w, h), ...],    # "…" ノード
-          "arrows": [(x1, y1, x2, y2), ...],         # 矢印
-          "labels": [(text, l, t, w, h), ...],       # 矢印ラベル
-          "captions": [(text, l, t, w, h, role), ...],  # note_top/caption/note_bottom
-        }
-    """
-    plan: dict[str, list] = {
-        "boxes": [], "ellipses": [], "arrows": [], "labels": [], "captions": []}
+def plan_flow(flow: Flow, left: int, top: int, width: int,
+              height: int) -> FlowPlan:
+    """Flow を矩形領域 (left, top, width, height) に配置する．"""
+    plan = FlowPlan()
     nodes = flow.nodes
     if not nodes:
         return plan
@@ -225,11 +285,13 @@ def plan_flow(flow: Flow, left, top, width, height):
 
     if flow.caption:
         cy = bottom + cap_gap
-        plan["captions"].append((flow.caption, left, cy, width, cap_h, "caption"))
+        plan.captions.append(
+            PlacedText(flow.caption, Rect(left, cy, width, cap_h)))
     return plan
 
 
-def _plan_horizontal(plan, flow, left, top, width, height, cap_reserve):
+def _plan_horizontal(plan: FlowPlan, flow, left, top, width, height,
+                     cap_reserve) -> int:
     """横並び（lr）に配置し，box 帯の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
@@ -252,31 +314,35 @@ def _plan_horizontal(plan, flow, left, top, width, height, cap_reserve):
     group_h = bh + cap_reserve
     by = top + max(0, (height - group_h) // 2)
 
-    centers = []
+    # 置いた矩形はエッジを引くときに端と中心が要るので，そのまま取っておく
+    # （ノードの並び順で引ける）．
+    rects = []
     bl = startx
     for node in nodes:
         w = ew if node.kind == "ellipsis" else bw
+        rect = Rect(bl, by, w, bh)
         if node.kind == "ellipsis":
-            plan["ellipses"].append((node.label or "…", bl, by, w, bh))
+            plan.ellipses.append(PlacedText(node.label or "…", rect))
         else:
-            plan["boxes"].append((node, bl, by, w, bh))
-        centers.append((bl, bl + w // 2, bl + w, by + bh // 2))
+            plan.boxes.append(PlacedNode(node, rect))
+        rects.append(rect)
         bl += w + gx
 
     for e in flow.edges:
         if not (0 <= e.src < n and 0 <= e.dst < n):
             continue
-        a, b = centers[e.src], centers[e.dst]
-        ay = a[3]
-        plan["arrows"].append((a[2], ay, b[0], ay))
+        a, b = rects[e.src], rects[e.dst]
+        ay = a.center_y
+        plan.arrows.append(PlacedArrow(a.right, ay, b.left, ay))
         if e.label:
-            mx = (a[2] + b[0]) // 2
-            plan["labels"].append(
-                (e.label, mx - _emu(0.5), by - _emu(0.5), _emu(1.0), _emu(0.45)))
+            mx = (a.right + b.left) // 2
+            plan.labels.append(PlacedText(e.label, Rect(
+                mx - _emu(0.5), by - _emu(0.5), _emu(1.0), _emu(0.45))))
     return by + bh
 
 
-def _plan_vertical(plan, flow, left, top, width, height, cap_reserve):
+def _plan_vertical(plan: FlowPlan, flow, left, top, width, height,
+                   cap_reserve) -> int:
     """縦並び（tb）に配置し，box 列の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
@@ -296,25 +362,26 @@ def _plan_vertical(plan, flow, left, top, width, height, cap_reserve):
     total = nb * bh + ne * eh + (n - 1) * gy
     starty = top + max(0, (avail - total) // 2)
 
-    centers = []
+    rects = []
     bt = starty
     for node in nodes:
         h = eh if node.kind == "ellipsis" else bh
+        rect = Rect(bx, bt, bw, h)
         if node.kind == "ellipsis":
-            plan["ellipses"].append((node.label or "…", bx, bt, bw, h))
+            plan.ellipses.append(PlacedText(node.label or "…", rect))
         else:
-            plan["boxes"].append((node, bx, bt, bw, h))
-        centers.append((bx + bw // 2, bt, bt + h))
+            plan.boxes.append(PlacedNode(node, rect))
+        rects.append(rect)
         bt += h + gy
 
     for e in flow.edges:
         if not (0 <= e.src < n and 0 <= e.dst < n):
             continue
-        a, b = centers[e.src], centers[e.dst]
-        cx = a[0]
-        plan["arrows"].append((cx, a[2], cx, b[1]))
+        a, b = rects[e.src], rects[e.dst]
+        cx = a.center_x
+        plan.arrows.append(PlacedArrow(cx, a.bottom, cx, b.top))
         if e.label:
-            my = (a[2] + b[1]) // 2
-            plan["labels"].append(
-                (e.label, cx + _emu(0.2), my - _emu(0.22), _emu(1.2), _emu(0.45)))
+            my = (a.bottom + b.top) // 2
+            plan.labels.append(PlacedText(e.label, Rect(
+                cx + _emu(0.2), my - _emu(0.22), _emu(1.2), _emu(0.45))))
     return starty + total

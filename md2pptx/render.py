@@ -640,38 +640,43 @@ class Renderer:
         """
         plan = plan_flow(flow, left, top, width, height)
         # box が標準サイズで収まらなければ，全 box 一律で下位レベルへ切り替える．
-        boxes = plan["boxes"]
+        boxes = plan.boxes
         if boxes:
             bsz = self._fit_font(
-                lambda sz: all(self._box_fits(node, bw, bh, sz)
-                               for node, _, _, bw, bh in boxes))
+                lambda sz: all(
+                    self._box_fits(b.node, b.rect.width, b.rect.height, sz)
+                    for b in boxes))
         else:
             bsz = self._body_font_size()
-        bi = 0
-        for node, bl, bt, bw, bh in plan["boxes"]:
-            tc = self._theme_color(node.color) or \
+        for bi, box in enumerate(boxes):
+            r = box.rect
+            tc = self._theme_color(box.node.color) or \
                 self._box_palette[bi % len(self._box_palette)]
-            bi += 1
-            self.box(slide, bl, bt, bw, bh, node.label, tc,
-                     sub=node.sublabel or None, fsize=bsz, ssize=bsz)
-        for label, bl, bt, bw, bh in plan["ellipses"]:
+            self.box(slide, r.left, r.top, r.width, r.height, box.node.label,
+                     tc, sub=box.node.sublabel or None, fsize=bsz, ssize=bsz)
+        for ell in plan.ellipses:
             # 省略記号スロットは固定幅／固定高（flow.py）なので上下中央に置き，
             # 隣接する矢印との重なりを避ける．
-            self.note(slide, bl, bt, bw, bh, label, bsz, tc=self.T2, bold=True,
-                      align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+            r = ell.rect
+            self.note(slide, r.left, r.top, r.width, r.height, ell.text, bsz,
+                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER,
+                      anchor=MSO_ANCHOR.MIDDLE)
         # ノード間のすき間に塗りつぶしのブロック矢印を置く（太さは box 高に比例）．
-        box_h_emu = boxes[0][4] if boxes else Inches(1.0)
+        box_h_emu = boxes[0].rect.height if boxes else Inches(1.0)
         thick = int(box_h_emu * 0.34)
-        for x1, y1, x2, y2 in plan["arrows"]:
-            self.block_arrow(slide, x1, y1, x2, y2, thick)
-        for text, bl, bt, bw, bh in plan["labels"]:
-            self.note(slide, bl, bt, bw, bh, text, bsz, tc=self.T2, bold=True,
-                      align=PP_ALIGN.CENTER)
-        for text, bl, bt, bw, bh, role in plan["captions"]:
-            # caption のみ図に付随（note_top / note_bottom はプレースホルダ側で描く）．
-            if role == "caption":
-                self.note(slide, bl, bt, bw, bh, text, bsz, tc=self.T2,
-                          align=PP_ALIGN.CENTER)
+        for arrow in plan.arrows:
+            self.block_arrow(slide, arrow.x1, arrow.y1, arrow.x2, arrow.y2,
+                             thick)
+        for lab in plan.labels:
+            r = lab.rect
+            self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
+                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER)
+        for cap in plan.captions:
+            # 図に付くのは caption だけ（note_top / note_bottom は地の文なので
+            # 本文プレースホルダ側で描く——plan にも入っていない）．
+            r = cap.rect
+            self.note(slide, r.left, r.top, r.width, r.height, cap.text, bsz,
+                      tc=self.T2, align=PP_ALIGN.CENTER)
 
     def _table_col_widths(self, ncols, width, col_ratios):
         """表の列幅（EMU）リストを返す（均等 or 比率指定）．"""

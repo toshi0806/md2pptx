@@ -187,20 +187,33 @@ def test_the_error_shows_where_it_gave_up():
         F.parse_flow("[A] ~ここ~ [B]")
 
 
+# --------------------------------------------------------- 矩形（#71）
+
+def test_a_rect_knows_its_own_edges_and_centre():
+    """``Rect`` の端と中心．**実測値を直に書く**．
+
+    他のテストが ``a.right`` のような属性で期待値を組み立てているので，
+    ここだけは属性を使わずに数で押さえる——さもないと実装が壊れたとき
+    期待値も同じように壊れて，両辺が一致してしまう（実際にそうなった）．
+    """
+    r = F.Rect(left=100, top=200, width=30, height=41)
+
+    assert (r.left, r.top, r.width, r.height) == (100, 200, 30, 41)
+    assert (r.right, r.bottom) == (130, 241)
+    assert (r.center_x, r.center_y) == (115, 220)   # 端数は切り捨て
+
+
 # --------------------------------------------------------- 配置（#26）
-
-# 主軸方向の大きさを取り出す添字．boxes / ellipses はどちらも
-# (中身, l, t, w, h) の並びで，lr なら w，tb なら h を見る．
-_MAIN_AXIS = {"lr": 3, "tb": 4}
-
 
 def _slots(plan, direction):
     """箱と省略記号を並び順に戻し，(省略記号か, 主軸方向の大きさ) の列を返す．"""
-    axis = _MAIN_AXIS[direction]
-    pos = 1 if direction == "lr" else 2              # l / t
-    items = ([(b[pos], False, b[axis]) for b in plan["boxes"]]
-             + [(e[pos], True, e[axis]) for e in plan["ellipses"]])
-    return [(is_ellipsis, size) for _, is_ellipsis, size in sorted(items)]
+    rects = ([(b.rect, False) for b in plan.boxes]
+             + [(e.rect, True) for e in plan.ellipses])
+    if direction == "lr":
+        rects.sort(key=lambda r: r[0].left)
+        return [(is_ellipsis, r.width) for r, is_ellipsis in rects]
+    rects.sort(key=lambda r: r[0].top)
+    return [(is_ellipsis, r.height) for r, is_ellipsis in rects]
 
 
 @pytest.mark.parametrize("direction", ["lr", "tb"])
@@ -235,8 +248,29 @@ def test_it_draws_one_arrow_per_edge(direction):
         F.parse_flow(f"direction: {direction}\n[A] -> [B] -付き-> [C]"),
         0, 0, F.EMU * 8, F.EMU * 4)
 
-    assert len(plan["arrows"]) == 2
-    assert [lb[0] for lb in plan["labels"]] == ["付き"]
+    assert len(plan.arrows) == 2
+    assert [lb.text for lb in plan.labels] == ["付き"]
+
+
+@pytest.mark.parametrize("direction", ["lr", "tb"])
+def test_an_arrow_runs_between_the_two_nodes(direction):
+    """矢印は前のノードの端から次のノードの端まで（中を突き抜けない）．
+
+    lr なら右端→左端で高さは中心，tb なら下端→上端で左右は中心．
+    ここを取り違えても座標は同じ整数なので，出力を見るまで分からない．
+    """
+    plan = F.plan_flow(F.parse_flow(f"direction: {direction}\n[A] -> [B]"),
+                       0, 0, F.EMU * 8, F.EMU * 4)
+    (a, b), (arrow,) = [x.rect for x in plan.boxes], plan.arrows
+
+    # 期待値は Rect の端・中心の属性を使わずに組む（属性が壊れたとき、
+    # 期待値まで一緒に壊れて一致してしまうのを避ける）．
+    if direction == "lr":
+        assert (arrow.x1, arrow.x2) == (a.left + a.width, b.left)
+        assert arrow.y1 == arrow.y2 == a.top + a.height // 2
+    else:
+        assert (arrow.y1, arrow.y2) == (a.top + a.height, b.top)
+        assert arrow.x1 == arrow.x2 == a.left + a.width // 2
 
 
 def test_a_caption_sits_below_the_boxes():
@@ -244,11 +278,11 @@ def test_a_caption_sits_below_the_boxes():
     plan = F.plan_flow(F.parse_flow("[A] -> [B]\ncaption: 説明"),
                        0, 0, F.EMU * 8, F.EMU * 4)
 
-    (text, _left, top, _w, _h, role), = plan["captions"]
-    box_bottom = max(b[2] + b[4] for b in plan["boxes"])
+    (caption,) = plan.captions
+    box_bottom = max(b.rect.bottom for b in plan.boxes)
 
-    assert (text, role) == ("説明", "caption")
-    assert top >= box_bottom
+    assert caption.text == "説明"
+    assert caption.rect.top >= box_bottom
 
 
 def test_notes_are_not_drawn_here():
@@ -261,11 +295,11 @@ def test_notes_are_not_drawn_here():
         F.parse_flow("[A]\nnote(top): 上\nnote(bottom): 下\ncaption: 中"),
         0, 0, F.EMU * 8, F.EMU * 4)
 
-    assert [c[0] for c in plan["captions"]] == ["中"]
+    assert [c.text for c in plan.captions] == ["中"]
 
 
 def test_an_empty_flow_plans_nothing():
     """ノードが無ければ何も置かない（空の枠だけが残らないように）．"""
     plan = F.plan_flow(F.parse_flow(""), 0, 0, F.EMU * 8, F.EMU * 4)
 
-    assert all(v == [] for v in plan.values())
+    assert plan == F.FlowPlan()
