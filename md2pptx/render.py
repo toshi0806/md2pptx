@@ -521,11 +521,19 @@ class Renderer:
         if notes:
             # ``notes_text_frame`` は**ノート用プレースホルダが無いとき** None を
             # 返す（python-pptx は ``notes_placeholder is None`` でそう決めている）．
-            # 書き込む先が無いので黙って諦める——ノートは補助情報で，ここで
-            # 止めるとスライド自体が出せなくなる．
+            # 止めはしない——ノートは補助情報で，ここで落とすとスライド自体が
+            # 出せなくなる．ただし**黙らない**（Issue #67 と同じ扱い）．書いた
+            # ノートが出ないことは pptx を開くまで分からず，開いても原因が
+            # テーマ側だとは思い当たらない．
             tf = slide.notes_slide.notes_text_frame
-            if tf is not None:
-                tf.text = notes
+            if tf is None:
+                head = notes.strip().replace("\n", " ")[:30]
+                sys.stderr.write(
+                    "md2pptx: warning: this theme's notes master has no "
+                    "placeholder for notes text; dropped the speaker notes "
+                    f"starting {head!r}\n")
+                return
+            tf.text = notes
 
     def _effective_geom(self, ph: SlidePlaceholder, slide: PptxSlide) -> tuple[
             int | None, int | None, int | None, int | None]:
