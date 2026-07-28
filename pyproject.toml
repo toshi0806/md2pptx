@@ -50,23 +50,6 @@ warn_redundant_casts = true
 # 未注釈の関数の中身も見る（描画ヘルパーは注釈が薄いので取りこぼしを減らす）．
 check_untyped_defs = true
 
-# シグネチャの注釈は、済んだモジュールから順に強制していく（Issue #35）。
-# 全モジュールが並んだら、この overrides を消して上の [tool.mypy] に
-# disallow_untyped_defs = true を 1 行置いて終わり。
-#
-# 残りは render.py の 65 関数。うち 31 が python-pptx のオブジェクトを受け取り、
-# **render.py は ir から Slide / Line / Table を import している**——python-pptx にも
-# 同名の型があるので、別名の付け方を決めてからでないと `slide: Slide` が
-# IR のほうに解決される。ここだけ別の判断が要るので分けてある。
-[[tool.mypy.overrides]]
-module = [
-    "md2pptx.cli",
-    "md2pptx.flow",
-    "md2pptx.ir",
-    "md2pptx.parser",
-    "md2pptx.pdf",
-    "md2pptx.thmx2pptx",
-    "md2pptx.watch",
-    "md2pptx.workdir",
-]
+# シグネチャの注釈を全モジュールで強制する（Issue #35）。
+# 注釈が無い関数は引数・戻り値が Any になり、呼び出し側の誤りを検出できない。
 disallow_untyped_defs = true

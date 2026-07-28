@@ -28,26 +28,49 @@ import math
 import os
 import struct
 import sys
+from typing import TYPE_CHECKING, Any, Callable
 
 from pptx import Presentation
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
 from pptx.enum.dml import MSO_THEME_COLOR
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.oxml.ns import qn
-from pptx.util import Inches, Pt
+from pptx.util import Emu, Inches, Pt
+# python-pptx の Slide は ir.Slide と名前がぶつかる．**外来のほうに印を付ける**
+# ——``Slide`` は parser / cli でも ir の意味で使っており，この 1 ファイルのために
+# 反転させると同じ識別子がファイルごとに別の型を指すことになる（Issue #35）．
+# ``pptx.Presentation`` は**関数**（ファイルを開くファクトリ）で型ではない．
+# 注釈にはクラスのほうが要る．
+from pptx.presentation import Presentation as PptxPresentation
+from pptx.shapes.autoshape import Shape
+from pptx.shapes.connector import Connector
+from pptx.shapes.graphfrm import GraphicFrame
+from pptx.shapes.picture import Picture
+from pptx.shapes.placeholder import SlidePlaceholder
+from pptx.slide import Slide as PptxSlide
+from pptx.text.text import TextFrame
 
 from .ir import (
-    Block, Deck, Flow, Image, Line, ObjectBlock, Slide, Table, TitleSlide,
+    Block, Crop, Deck, Flow, Image, Length, Line, ObjectBlock, Slide, Table,
+    TitleSlide,
 )
-from .flow import plan_flow
+from .flow import FlowNode, plan_flow
 from . import workdir
+
+if TYPE_CHECKING:
+    # ``_Paragraph`` は python-pptx の**私有クラス**（段落に公開の別名が無い）．
+    # 実行時に import しないのは，改名・削除されたときに**注釈のためだけの
+    # 名前で起動ごと落とさない**ため——``from __future__ import annotations``
+    # により注釈は文字列のままなので、実行には要らない．CI の typecheck が
+    # 気づかせてくれる．
+    from pptx.text.text import _Paragraph
 
 
 # Table.aligns の寄せ名 → PowerPoint の段落水平アラインメント．
 _TABLE_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
 
 
-def resolve_image_path(src, base_dir):
+def resolve_image_path(src: str, base_dir: str | None) -> str:
     """``Image.src`` の宣言パスを実際のファイルパスへ解決する．
 
     絶対パスはそのまま，相対パスは ``base_dir``（Markdown の置き場）基準．
@@ -58,7 +81,7 @@ def resolve_image_path(src, base_dir):
     return src if os.path.isabs(src) else os.path.join(base_dir or ".", src)
 
 
-def _read_image_size(path):
+def _read_image_size(path: str) -> tuple[int, int]:
     """画像（png / jpg）のピクセル寸法 (width, height) をヘッダ解析で取得する．
 
     python-pptx の内部クラスや Pillow に依存せず，標準ライブラリだけでファイル
@@ -117,7 +140,7 @@ class Renderer:
     _SIZE_MIN_PT = 8.0
     _SIZE_MAX_PT = 96.0
 
-    def __init__(self, base_pptx_path, base_dir=None):
+    def __init__(self, base_pptx_path: str, base_dir: str | None = None) -> None:
         self.prs = Presentation(base_pptx_path)
         # 画像などの相対パスを解決する基準ディレクトリ（既定は Markdown ファイルの
         # 置き場．cli が渡す）．None なら実行時のカレントを基準にする．
@@ -152,7 +175,7 @@ class Renderer:
             "bg1": MSO_THEME_COLOR.BACKGROUND_1, "bg2": MSO_THEME_COLOR.BACKGROUND_2,
         }
         # 本文スタイルのレベル別フォントサイズ（pt）のキャッシュ（None=未取得）．
-        self._body_levels = None
+        self._body_levels: list[float] | None = None
 
         # レイアウト解決．title=0 / content=1 / section=2．
         layouts = self.prs.slide_layouts
@@ -162,7 +185,7 @@ class Renderer:
         self.section_layout = layouts[2] if len(layouts) > 2 else self.L1
 
     # ------------------------------------------------------------ helpers
-    def _clear_slides(self):
+    def _clear_slides(self) -> None:
         """base pptx に既存のスライドがあれば取り除く（0 枚から描画するため）．"""
         sldIdLst = self.prs.slides._sldIdLst
         for sldId in list(sldIdLst):
@@ -174,7 +197,7 @@ class Renderer:
                     pass
             sldIdLst.remove(sldId)
 
-    def no_bullet(self, para):
+    def no_bullet(self, para: _Paragraph) -> None:
         """段落の行頭記号を消す（結論行など）．"""
         pPr = para._p.get_or_add_pPr()
         for tag in ("a:buChar", "a:buAutoNum"):
@@ -184,18 +207,19 @@ class Renderer:
         if pPr.find(qn("a:buNone")) is None:
             pPr.append(pPr.makeelement(qn("a:buNone"), {}))
 
-    def add_slide_number(self, slide):
+    def add_slide_number(self, slide: PptxSlide) -> None:
         """スライド自身のレイアウトの番号プレースホルダ（idx==12）を複製して有効化．
 
         セクションスライド（レイアウト2）など L1 以外の上でも，そのスライドの
         実レイアウトから番号プレースホルダを取得する．
         """
-        for lph in slide.slide_layout.placeholders:
+        for lph in slide.slide_layout.placeholders:  # type: ignore[misc]
             if lph.placeholder_format.idx == 12:
                 slide.shapes._spTree.append(copy.deepcopy(lph._element))
                 return
 
-    def add_bullets(self, tf, items):
+    def add_bullets(self, tf: TextFrame,
+                    items: list[tuple[int, str]]) -> None:
         """(level, text) の列を本文 text_frame に箇条書きとして流し込む．"""
         first = True
         for lvl, txt in items:
@@ -204,7 +228,8 @@ class Renderer:
             p.level = lvl
             p.text = txt
 
-    def set_autonum(self, p, fmt="arabicPeriod", color=None):
+    def set_autonum(self, p: _Paragraph, fmt: str = "arabicPeriod",
+                    color: str | None = None) -> None:
         """段落の行頭記号を自動採番（1. 2. 3. …）に切り替える（enumerate 相当）．
            color にテーマ色名（例 "tx1"）を渡すと採番記号の色を指定する．"""
         pPr = p._p.get_or_add_pPr()
@@ -225,7 +250,8 @@ class Renderer:
         else:
             pPr.append(bu)
 
-    def enum_items(self, tf, items):
+    def enum_items(self, tf: TextFrame,
+                   items: list[tuple[str, str]]) -> None:
         """(見出し, 説明) を，見出し=自動採番(level0)・説明=通常箇条書き(level1) で並べる．"""
         first = True
         for head, desc in items:
@@ -238,7 +264,7 @@ class Renderer:
             d.level = 1
             d.text = desc
 
-    def fit_body(self, tf, scale=None):
+    def fit_body(self, tf: TextFrame, scale: float | None = None) -> None:
         """本文プレースホルダに自動調整（normAutofit）を設定する．
         scale を与えると縮小率（%）を明示的に焼き込む．"""
         tf.word_wrap = True
@@ -252,14 +278,14 @@ class Renderer:
                 bodyPr.append(na)
             na.set("fontScale", str(int(scale * 1000)))
 
-    def _body_placeholder(self, slide):
+    def _body_placeholder(self, slide: PptxSlide) -> SlidePlaceholder | None:
         """本文プレースホルダ（idx==1）を返す．無ければ None．"""
         for ph in slide.placeholders:
             if ph.placeholder_format.idx == 1:
                 return ph
         return None
 
-    def _warn_no_body(self, lines):
+    def _warn_no_body(self, lines: list[Line]) -> None:
         """地の文の置き場所が無いことを知らせる（Issue #67）．
 
         本文プレースホルダは ``idx==1`` で探すが，その番号は PowerPoint が内部で
@@ -281,7 +307,7 @@ class Renderer:
             f"dropped {len(lines)} line(s) of body text starting {head!r}\n"
         )
 
-    def _body_font_levels(self):
+    def _body_font_levels(self) -> list[float]:
         """本文スタイルのレベル別フォントサイズ（pt）のリストを返す（lvl1 始まり）．
 
         スライドマスターの ``p:txStyles/p:bodyStyle/a:lvl{n}pPr/a:defRPr@sz``
@@ -308,11 +334,12 @@ class Renderer:
         self._body_levels = levels
         return levels
 
-    def _body_font_size(self):
+    def _body_font_size(self) -> float:
         """本文プレースホルダの標準フォントサイズ（pt．lvl1）を返す．"""
         return self._body_font_levels()[0]
 
-    def _apply_size_delta(self, p, level, delta):
+    def _apply_size_delta(self, p: _Paragraph, level: int,
+                          delta: int | None) -> None:
         """段落 p に相対フォントサイズ（delta 段）を適用する．
 
         基点はその段落の level に対応するテーマ既定サイズ（_body_font_levels）．
@@ -332,11 +359,11 @@ class Renderer:
             return
         levels = self._body_font_levels()
         base = levels[min(level, len(levels) - 1)]
-        size = round(base * self._SIZE_STEP_RATIO ** delta)
+        size: float = round(base * self._SIZE_STEP_RATIO ** delta)
         size = min(self._SIZE_MAX_PT, max(self._SIZE_MIN_PT, size))
         p.font.size = Pt(size)
 
-    def _title_font_size(self):
+    def _title_font_size(self) -> float:
         """タイトルプレースホルダの既定フォントサイズ（pt．lvl1）を返す（既定 42）．"""
         try:
             master = self.prs.slide_masters[0]
@@ -349,7 +376,7 @@ class Renderer:
             pass
         return 42.0
 
-    def _subtitle_font_size(self):
+    def _subtitle_font_size(self) -> float:
         """副題プレースホルダ（idx 1）の既定フォントサイズ（pt．lvl1）を返す（既定 28）．
 
         著者・所属欄はこのプレースホルダに入るため，相対サイズ段数（{-1} 等）の基点にする．
@@ -370,7 +397,7 @@ class Renderer:
             pass
         return 28.0
 
-    def _size_from_delta(self, base_pt, delta):
+    def _size_from_delta(self, base_pt: float, delta: int | None) -> float:
         """基点サイズ base_pt（pt）に相対段数 delta を適用した pt 値を返す（範囲クランプ）．
 
         本文の _apply_size_delta と同じ 1.125 倍/段の比率．delta が None なら base をそのまま返す．
@@ -381,14 +408,14 @@ class Renderer:
         return min(self._SIZE_MAX_PT, max(self._SIZE_MIN_PT, size))
 
     @staticmethod
-    def _text_width_pt(text, font_pt):
+    def _text_width_pt(text: str | None, font_pt: float) -> float:
         """テキストの概算表示幅（pt）．全角は font_pt，半角は約 0.55×で見積もる．"""
         w = 0.0
         for ch in text or "":
             w += font_pt if ord(ch) > 0x2E80 else font_pt * 0.55
         return w
 
-    def _fit_font(self, fits_at):
+    def _fit_font(self, fits_at: Callable[[float], bool]) -> float:
         """レベル別サイズを大きい順に試し，``fits_at(size)`` が真の最大サイズを返す．
 
         どのレベルでも収まらなければ最小レベル（最後）のサイズを返す（ベストエフォート）．
@@ -399,18 +426,24 @@ class Renderer:
                 return sz
         return levels[-1]
 
-    def content_slide(self, title, items):
+    def content_slide(self, title: str,
+                      items: list[tuple[int, str]]) -> PptxSlide:
         """タイトル＋箇条書きの基本スライドを 1 枚追加して返す．"""
         s = self.prs.slides.add_slide(self.L1)
         s.shapes.title.text = title
         body = self._body_placeholder(s)
+        if body is None:
+            # 本文枠が無いテーマ．止めずに捨てたものを言う（Issue #67 と同じ扱い）．
+            self._warn_no_body([Line(text=txt) for _lvl, txt in items])
+            self.add_slide_number(s)
+            return s
         self.add_bullets(body.text_frame, items)
         self.fit_body(body.text_frame)
         self.add_slide_number(s)
         return s
 
     # --------------------------------------------------------- title slide
-    def render_title_slide(self, ts: TitleSlide):
+    def render_title_slide(self, ts: TitleSlide) -> PptxSlide:
         """タイトルスライドを 1 枚目として追加する（番号は付けない）．
 
         base は 0 枚構成のため，タイトルレイアウト上に新規スライドを追加し，
@@ -476,7 +509,7 @@ class Renderer:
         self._set_notes(s, ts.notes)
         return s
 
-    def _set_notes(self, slide, notes):
+    def _set_notes(self, slide: PptxSlide, notes: str | None) -> None:
         """発表者ノート（```note 由来）を notes slide へ書き込む（§5.10）．
 
         notes_slide への初回アクセスで python-pptx がノートスライドを生成する．
@@ -486,9 +519,24 @@ class Renderer:
         0 枚の base から描画する（_clear_slides）ため，ここで消える既存ノートはない．
         """
         if notes:
-            slide.notes_slide.notes_text_frame.text = notes
+            # ``notes_text_frame`` は**ノート用プレースホルダが無いとき** None を
+            # 返す（python-pptx は ``notes_placeholder is None`` でそう決めている）．
+            # 止めはしない——ノートは補助情報で，ここで落とすとスライド自体が
+            # 出せなくなる．ただし**黙らない**（Issue #67 と同じ扱い）．書いた
+            # ノートが出ないことは pptx を開くまで分からず，開いても原因が
+            # テーマ側だとは思い当たらない．
+            tf = slide.notes_slide.notes_text_frame
+            if tf is None:
+                head = notes.strip().replace("\n", " ")[:30]
+                sys.stderr.write(
+                    "md2pptx: warning: this theme's notes master has no "
+                    "placeholder for notes text; dropped the speaker notes "
+                    f"starting {head!r}\n")
+                return
+            tf.text = notes
 
-    def _effective_geom(self, ph, slide):
+    def _effective_geom(self, ph: SlidePlaceholder, slide: PptxSlide) -> tuple[
+            int | None, int | None, int | None, int | None]:
         """プレースホルダの実効ジオメトリ (left, top, width, height) を返す．
 
         スライド上で未指定（継承）の値はレイアウトの同 idx プレースホルダで補う．
@@ -497,7 +545,7 @@ class Renderer:
         if None in (left, top, width, height):
             idx = ph.placeholder_format.idx
             try:
-                for lph in slide.slide_layout.placeholders:
+                for lph in slide.slide_layout.placeholders:  # type: ignore[misc]
                     if lph.placeholder_format.idx == idx:
                         left = left if left is not None else lph.left
                         top = top if top is not None else lph.top
@@ -508,19 +556,23 @@ class Renderer:
                 pass
         return left, top, width, height
 
-    def _find_placeholder(self, slide, idx):
+    def _find_placeholder(self, slide: PptxSlide,
+                          idx: int) -> SlidePlaceholder | None:
         for ph in slide.placeholders:
             if ph.placeholder_format.idx == idx:
                 return ph
         return None
 
     # ----------------------------------------------------------- 図形（flow）
-    def box(self, slide, l, t, w, h, text, tc, sub=None, fsize=None, ssize=None):
+    def box(self, slide: PptxSlide, l: int, t: int, w: int, h: int, text: str,
+            tc: MSO_THEME_COLOR, sub: str | None = None,
+            fsize: float | None = None, ssize: float | None = None) -> Shape:
         """角丸四角ノードを描く（塗りはテーマ色 tc，文字は背景色 BG）．
 
         fsize / ssize（pt）を省略するとテーマ既定のフォントサイズを継承する．
         """
-        shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, l, t, w, h)
+        shp = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Emu(l), Emu(t), Emu(w), Emu(h))
         shp.fill.solid()
         shp.fill.fore_color.theme_color = tc
         shp.line.color.theme_color = self.TX
@@ -550,9 +602,15 @@ class Renderer:
                     r.font.size = Pt(ssize)
         return shp
 
-    def arrow(self, slide, x1, y1, x2, y2, w=2.0):
+    def arrow(self, slide: PptxSlide, x1: int, y1: int, x2: int, y2: int,
+              w: float = 2.0) -> Connector:
         """矢印（直線コネクタ＋三角の矢じり）を描く．"""
-        cn = slide.shapes.add_connector(2, x1, y1, x2, y2)
+        # 渡していた 2 は **ELBOW（かぎ線）** で、docstring の「直線」と食い違う．
+        # このメソッドは現在どこからも呼ばれておらず（図の矢印は block_arrow が
+        # 描く）、どちらが意図だったか確かめる手段がないので，注釈を入れるにあたり
+        # **動きを変えないほう**を採った．直すなら別途（Issue #35 の作業中に発見）．
+        cn = slide.shapes.add_connector(
+            MSO_CONNECTOR.ELBOW, Emu(x1), Emu(y1), Emu(x2), Emu(y2))
         cn.line.color.theme_color = self.TX
         cn.line.width = Pt(w)
         le = cn.line._get_or_add_ln()
@@ -560,7 +618,9 @@ class Renderer:
             qn("a:tailEnd"), {"type": "triangle", "w": "med", "len": "med"}))
         return cn
 
-    def block_arrow(self, slide, x1, y1, x2, y2, thickness, color=None):
+    def block_arrow(self, slide: PptxSlide, x1: int, y1: int, x2: int, y2: int,
+                    thickness: int,
+                    color: MSO_THEME_COLOR | None = None) -> Shape:
         """ノード間のすき間に塗りつぶしのブロック矢印を置く．
 
         太い直線＋三角矢じりは box に食い込み見栄えが悪いため，すき間に収まる
@@ -583,17 +643,19 @@ class Renderer:
             width = thickness
             left = x1 - width // 2
             shape = MSO_SHAPE.DOWN_ARROW if y2 >= y1 else MSO_SHAPE.UP_ARROW
-        shp = slide.shapes.add_shape(shape, int(left), int(top),
-                                     int(width), int(height))
+        shp = slide.shapes.add_shape(shape, Emu(int(left)), Emu(int(top)),
+                                     Emu(int(width)), Emu(int(height)))
         shp.fill.solid()
         shp.fill.fore_color.theme_color = color or self.TX
         shp.line.fill.background()
         return shp
 
-    def note(self, slide, l, t, w, h, text, size, tc=None, bold=False,
-             align=PP_ALIGN.LEFT, anchor=None):
+    def note(self, slide: PptxSlide, l: int, t: int, w: int, h: int, text: str,
+             size: float, tc: MSO_THEME_COLOR | None = None, bold: bool = False,
+             align: PP_ALIGN = PP_ALIGN.LEFT,
+             anchor: MSO_ANCHOR | None = None) -> Shape:
         """注記用テキストボックスを描く（キャプション・矢印ラベル・省略記号）．"""
-        tb = slide.shapes.add_textbox(l, t, w, h)
+        tb = slide.shapes.add_textbox(Emu(l), Emu(t), Emu(w), Emu(h))
         tf = tb.text_frame
         tf.word_wrap = True
         if anchor is not None:
@@ -610,13 +672,14 @@ class Renderer:
                 r.font.bold = True
         return tb
 
-    def _theme_color(self, name):
+    def _theme_color(self, name: object) -> MSO_THEME_COLOR | None:
         """テーマ色名を MSO_THEME_COLOR へ解決する（未知なら None）．"""
         if not name:
             return None
         return self._theme_map.get(str(name).lower())
 
-    def _box_fits(self, node, bw, bh, font_pt):
+    def _box_fits(self, node: FlowNode, bw: int, bh: int,
+                  font_pt: float) -> bool:
         """box（主ラベル＋副ラベル）が指定フォントサイズで収まるか概算判定する．
 
         幅見積もりは安全係数 ``_BOX_W_SAFETY`` を掛けて保守的に評価する（``theme.thmx``
@@ -633,7 +696,8 @@ class Renderer:
                 safe * self._text_width_pt(node.sublabel, font_pt) / inner_w))
         return lines * line_h <= inner_h
 
-    def render_flow(self, slide, flow, left, top, width, height):
+    def render_flow(self, slide: PptxSlide, flow: Flow, left: int, top: int,
+                    width: int, height: int) -> None:
         """Flow ブロックを矩形領域へ描画する（flow.plan_flow の座標プランを使用）．
 
         図中の文字サイズは本文プレースホルダの標準サイズに揃える．
@@ -678,7 +742,8 @@ class Renderer:
             self.note(slide, r.left, r.top, r.width, r.height, cap.text, bsz,
                       tc=self.T2, align=PP_ALIGN.CENTER)
 
-    def _table_col_widths(self, ncols, width, col_ratios):
+    def _table_col_widths(self, ncols: int, width: int,
+                          col_ratios: list[float] | None) -> list[int]:
         """表の列幅（EMU）リストを返す（均等 or 比率指定）．"""
         if col_ratios and len(col_ratios) == ncols and sum(col_ratios) > 0:
             tot = float(sum(col_ratios))
@@ -686,7 +751,8 @@ class Renderer:
         cw = int(width / ncols)
         return [cw] * ncols
 
-    def _table_height_emu(self, data, col_w, font_pt):
+    def _table_height_emu(self, data: list[list[str]], col_w: list[int],
+                          font_pt: float) -> int:
         """指定フォントサイズでの表の概算総高（EMU）を見積もる（折り返し考慮）．
 
         実際の PowerPoint レンダリングは行間・最小行高などで見積りより伸びがち
@@ -707,8 +773,11 @@ class Renderer:
             total_pt += row_h
         return int(total_pt * safety * 12700)
 
-    def render_table(self, slide, table, left, top, width, height, col_ratios=None,
-                     overflow=False, has_prose_after=False):
+    def render_table(self, slide: PptxSlide, table: Table, left: int, top: int,
+                     width: int, height: int,
+                     col_ratios: list[float] | None = None,
+                     overflow: bool = False,
+                     has_prose_after: bool = False) -> GraphicFrame | None:
         """Table ブロックを座標指定で 1 つ描画する（ヘッダ行をアクセント色で着色）．
 
         ``参照スクリプト`` の表描画を移植・一般化したもの．列幅は既定で均等，
@@ -759,7 +828,8 @@ class Renderer:
                     "smallest body font size and may overlap following content "
                     "(consider '<!-- @overflow: true -->')\n")
 
-        gf = slide.shapes.add_table(nrows, ncols, left, top, width, height)
+        gf = slide.shapes.add_table(
+            nrows, ncols, Emu(left), Emu(top), Emu(width), Emu(height))
         tbl = gf.table
 
         for ci, cw in enumerate(col_w):
@@ -791,7 +861,7 @@ class Renderer:
                     cell.fill.fore_color.theme_color = self.A2
         return gf
 
-    def _resolve_image_path(self, src):
+    def _resolve_image_path(self, src: str) -> str:
         """画像パスを base_dir 基準で解決し，存在しなければ fail fast する．"""
         path = resolve_image_path(src, self.base_dir)
         if not os.path.isfile(path):
@@ -799,7 +869,8 @@ class Renderer:
         return path
 
     @staticmethod
-    def _crop_fractions(crop, W, H):
+    def _crop_fractions(crop: Crop | None, W: int, H: int) -> tuple[
+            float, float, float, float, float, float]:
         """Crop（残す矩形）を PowerPoint のクロップ割合と可視画素サイズへ換算する．
 
         戻り値 (cl, ct, cr, cb, vis_w_px, vis_h_px)．cl 等は各辺で削る割合（0..1）．
@@ -825,7 +896,7 @@ class Renderer:
         return clamp(cl), clamp(ct), clamp(cr), clamp(cb), w, h
 
     @staticmethod
-    def _resolve_len(length, base_emu):
+    def _resolve_len(length: Length | None, base_emu: float) -> float | None:
         """Length を EMU（float）へ解決する．割合は base_emu 比，絶対はそのまま．None は None．"""
         if length is None:
             return None
@@ -833,8 +904,9 @@ class Renderer:
             return length.value / 100.0 * base_emu
         return float(length.value)
 
-    def render_image(self, slide, img, left, top, width, seg_h,
-                     overflow=None, has_prose_after=False):
+    def render_image(self, slide: PptxSlide, img: Image, left: int, top: int,
+                     width: int, seg_h: int, overflow: bool | None = None,
+                     has_prose_after: bool = False) -> Picture:
         """Image ブロックをセグメント矩形 (left, top, width, seg_h) 内に配置する．
 
         ソース画像のピクセル寸法を読み，crop（残す矩形）を PowerPoint のクロップ割合へ
@@ -860,12 +932,16 @@ class Renderer:
         # width/height を EMU へ解決（未指定は None）．
         w = self._resolve_len(img.width, avail_w)
         h = self._resolve_len(img.height, avail_h)
-        if w is None and h is None:                     # 両省略：領域に内接
-            w, h = self._fit_within(avail_w, avail_h, aspect)
+        # 入れ子にしているのは，「片方が None なら他方は None でない」が
+        # ``w is None and h is None`` の否定からは出てこないため——読む側も
+        # 型チェッカも，条件の形になっていない不変条件は追えない（Issue #35）．
+        if w is None:
+            if h is None:                               # 両省略：領域に内接
+                w, h = self._fit_within(avail_w, avail_h, aspect)
+            else:                                       # 高さのみ：幅は比で
+                w = h * aspect
         elif h is None:                                 # 幅のみ：高さは比で
             h = w / aspect
-        elif w is None:                                 # 高さのみ：幅は比で
-            w = h * aspect
         elif img.fit != "fill":                         # 両指定・contain：比維持で内接
             w, h = self._fit_within(w, h, aspect)
         # 極端な指定（0% 等）でも非正にならないよう下限を張る（ゼロ除算・負サイズ回避）．
@@ -876,6 +952,7 @@ class Renderer:
             w, h = self._fit_within(min(w, avail_w), min(h, avail_h), w / h)
 
         # 水平寄せ（align）と縦中央でセグメント内へ配置．
+        x: float
         if img.align == "left":
             x = left
         elif img.align == "right":
@@ -888,7 +965,8 @@ class Renderer:
             # タイトル・導入文には重ねない（top も y も同じ EMU 数値）．
             y = max(y, top)
 
-        pic = slide.shapes.add_picture(path, int(x), int(y), int(w), int(h))
+        pic = slide.shapes.add_picture(
+            path, Emu(int(x)), Emu(int(y)), Emu(int(w)), Emu(int(h)))
         if img.crop is not None:
             pic.crop_left, pic.crop_top = cl, ct
             pic.crop_right, pic.crop_bottom = cr, cb
@@ -916,7 +994,8 @@ class Renderer:
         return pic
 
     @staticmethod
-    def _fit_within(box_w, box_h, aspect):
+    def _fit_within(box_w: float, box_h: float,
+                    aspect: float) -> tuple[float, float]:
         """アスペクト比 aspect の矩形を (box_w, box_h) に内接させた (w, h) を返す．
 
         box_w / box_h / aspect が非正のときは安全側（最低 1 EMU）に倒し，ゼロ除算や
@@ -928,9 +1007,11 @@ class Renderer:
             return box_w, box_w / aspect
         return box_h * aspect, box_h    # 高さが制約：高さいっぱい
 
-    def _draw_caption(self, slide, text, left, top, width, height):
+    def _draw_caption(self, slide: PptxSlide, text: str, left: int, top: int,
+                      width: int, height: int) -> None:
         """図下キャプションを中央寄せの小さめ本文サイズで描く．"""
-        tb = slide.shapes.add_textbox(left, top, width, max(height, Pt(12)))
+        tb = slide.shapes.add_textbox(
+            Emu(left), Emu(top), Emu(width), Emu(max(height, Pt(12))))
         tf = tb.text_frame
         tf.word_wrap = True
         # キャプションは短文前提（1 行分の高さを確保）．枠を内容で伸ばさない
@@ -946,7 +1027,8 @@ class Renderer:
             r.font.size = Pt(size)
 
     # ------------------------------------------------------- content slide
-    def render_slide(self, slide: Slide, slide_number=True, default_autofit=True):
+    def render_slide(self, slide: Slide, slide_number: bool = True,
+                     default_autofit: bool = True) -> PptxSlide:
         """コンテンツスライドを 1 枚追加して返す．
 
         ``slide.blocks`` を出現順に処理する．表を含まないスライドは Phase 1 と
@@ -973,7 +1055,9 @@ class Renderer:
                                        is_columns=bool(slide.columns))
 
         # スライド既定の採番色（@autonum-color）．Line.num_color が優先．
-        default_num_color = directives.get("autonum_color")
+        raw_num_color = directives.get("autonum_color")
+        default_num_color = (raw_num_color if isinstance(raw_num_color, str)
+                             else None)
         # スライド既定の相対サイズ段数（@body-size）．Line.size_delta が優先．
         default_size_delta = self._body_size_delta(directives)
         scale = self._autofit_scale(directives)
@@ -1006,7 +1090,7 @@ class Renderer:
         self._set_notes(s, slide.notes)
         return s
 
-    def _body_size_delta(self, directives):
+    def _body_size_delta(self, directives: dict[str, Any]) -> int | None:
         """@body-size ディレクティブをスライド既定の相対サイズ段数へ解釈する．
 
         未指定・非整数値はいずれも None（＝スライド既定なし）を返す．None は
@@ -1037,9 +1121,12 @@ class Renderer:
             return None
         return iv if iv != 0 else None
 
-    def _render_columns(self, slide, columns, default_num_color, scale,
-                        default_autofit, default_size_delta=None,
-                        col_ratios=None, slide_overflow=False):
+    def _render_columns(self, slide: PptxSlide, columns: list[list[Block]],
+                        default_num_color: str | None, scale: float | None,
+                        default_autofit: bool,
+                        default_size_delta: int | None = None,
+                        col_ratios: list[float] | None = None,
+                        slide_overflow: bool = False) -> None:
         """多カラム（「2つのコンテンツ」）：各カラムを idx 1, 2 … へ流す．
 
         columns[i] を プレースホルダ idx=i+1 へ描画する（idx 0 はタイトル）．
@@ -1057,14 +1144,16 @@ class Renderer:
                 # 異常時のみ．その場合は本文領域へフォールバックする（表が消えるより，
                 # 見えて重なる方が原因に気づきやすい）が，複数カラムが重なりうるので警告
                 # を出す．
-                left, top, width, height = self._effective_geom(ph, slide)
-                if None in (left, top, width, height):
+                gl, gt, gw, gh = self._effective_geom(ph, slide)
+                if gl is None or gt is None or gw is None or gh is None:
                     sys.stderr.write(
                         f"md2pptx: warning: could not resolve geometry for "
                         f"column {ci}; falling back to the body area "
                         f"(columns may overlap)\n"
                     )
                     left, top, width, height = self._content_rect(slide)
+                else:
+                    left, top, width, height = gl, gt, gw, gh
                 # @table-widths はスライド共通で全カラムの表に適用する．列数が比率の
                 # 要素数と一致しない表は _table_col_widths が等幅へフォールバックする．
                 self._render_stacked_into(slide, col_blocks, ph, left, top,
@@ -1082,8 +1171,9 @@ class Renderer:
                 self._apply_autofit(tf, scale, default_autofit)
 
     # ----------------------------------------------------- 描画ユーティリティ
-    def _append_lines(self, tf, line_blocks: list[Line], first, default_num_color,
-                      default_size_delta=None):
+    def _append_lines(self, tf: TextFrame, line_blocks: list[Line], first: bool,
+                      default_num_color: str | None,
+                      default_size_delta: int | None = None) -> bool:
         """Line 列を text_frame に段落として追記する（採番／no_bullet を適用）．
 
         first=True なら最初の 1 行は既存の paragraphs[0] を使う．残りの行を
@@ -1113,13 +1203,14 @@ class Renderer:
             self._apply_size_delta(p, blk.level, delta)
         return first
 
-    def _fill_lines(self, tf, line_blocks: list[Line], default_num_color,
-                    default_size_delta=None):
+    def _fill_lines(self, tf: TextFrame, line_blocks: list[Line],
+                    default_num_color: str | None,
+                    default_size_delta: int | None = None) -> None:
         """Line 列を text_frame の段落として流し込む（先頭から）．"""
         self._append_lines(tf, line_blocks, True, default_num_color,
                            default_size_delta)
 
-    def _autofit_scale(self, directives):
+    def _autofit_scale(self, directives: dict[str, Any]) -> float | None:
         """@autofit ディレクティブを縮小率へ解釈する（非数値は警告して None）．"""
         autofit = directives.get("autofit")
         if autofit is None:
@@ -1133,14 +1224,15 @@ class Renderer:
             )
             return None
 
-    def _apply_autofit(self, tf, scale, default_autofit):
+    def _apply_autofit(self, tf: TextFrame, scale: float | None,
+                       default_autofit: bool) -> None:
         """縮小率指定があれば焼き込み，無ければ既定の自動調整を設定する．"""
         if scale is not None:
             self.fit_body(tf, scale=scale)
         elif default_autofit:
             self.fit_body(tf)
 
-    def _col_ratios(self, directives):
+    def _col_ratios(self, directives: dict[str, Any]) -> list[float] | None:
         """@table-widths ディレクティブ（"45,55" 等）を表の列幅比リストへ解釈する．"""
         v = directives.get("table_widths")
         if not v:
@@ -1150,14 +1242,14 @@ class Renderer:
         except ValueError:
             return None
 
-    def _split_allow_left(self, value):
+    def _split_allow_left(self, value: object) -> tuple[str | None, bool]:
         """値末尾の ``!``（左余白の使用許可）を分離して (本体文字列, フラグ) を返す．"""
         v = str(value).strip()
         if v.endswith(("!", "！")):
             return v[:-1].strip(), True
         return v, False
 
-    def _parse_pct_list(self, value):
+    def _parse_pct_list(self, value: object) -> list[float] | None:
         """百分率リスト（例: "55,45"，"55%,45%"）を float の list へ解釈する．
 
         全角の区切り（，／％）も受理する．不正値は None を返す．
@@ -1168,7 +1260,8 @@ class Renderer:
         except ValueError:
             return None
 
-    def _override_geom(self, ph, left, top, width, height):
+    def _override_geom(self, ph: SlidePlaceholder, left: float, top: float,
+                       width: float, height: float) -> None:
         """スライド側へ明示ジオメトリを書き，レイアウト継承を上書きする．
 
         4 値すべて設定するのは，一部のみ明示すると xfrm が不完全になり
@@ -1179,7 +1272,9 @@ class Renderer:
 
     _PH_MARGIN = Inches(0.1)   # プレースホルダ拡幅時にスライド端へ残す余白
 
-    def _apply_placeholder_widths(self, slide, directives, is_columns):
+    def _apply_placeholder_widths(self, slide: PptxSlide,
+                                  directives: dict[str, Any],
+                                  is_columns: bool) -> None:
         """@widths をスライド種別（単カラム／多カラム）に応じて適用する．
 
         いずれも「標準の使用可能幅に対する百分率」で解釈する（詳細は各メソッド）．
@@ -1200,7 +1295,7 @@ class Renderer:
         else:
             self._apply_body_width(slide, val)
 
-    def _apply_ph_widths(self, slide, val):
+    def _apply_ph_widths(self, slide: PptxSlide, val: object) -> None:
         """@widths: "55,45" — 多カラムのプレースホルダ幅を再指定する．
 
         カラム群の合計スパンからカラム間ギャップを除いた幅を 100% とし，
@@ -1228,13 +1323,13 @@ class Renderer:
                     f"md2pptx: warning: @widths has {len(pcts)} values but "
                     f"column placeholder {i + 1} does not exist; ignoring\n")
                 return
-            geom = self._effective_geom(ph, slide)
-            if None in geom:
+            gl, gt, gw, gh = self._effective_geom(ph, slide)
+            if gl is None or gt is None or gw is None or gh is None:
                 sys.stderr.write(
                     "md2pptx: warning: @widths skipped "
                     "(could not resolve column geometry)\n")
                 return
-            phs.append((ph, geom))
+            phs.append((ph, (gl, gt, gw, gh)))
         lefts = [g[0] for _, g in phs]
         rights = [g[0] + g[2] for _, g in phs]
         gaps = [lefts[i + 1] - rights[i] for i in range(len(phs) - 1)]
@@ -1265,12 +1360,13 @@ class Renderer:
             if overflow > 0:
                 new_left -= overflow
             new_left = max(new_left, self._PH_MARGIN)
-        x = new_left
+        # 幅は百分率から出るので実数．書き込む直前に _override_geom が int 化する．
+        x: float = new_left
         for i, ((ph, (_l, t, _w, h)), nw) in enumerate(zip(phs, widths)):
             self._override_geom(ph, x, t, nw, h)
             x += nw + (gaps[i] if i < len(gaps) else 0)
 
-    def _apply_body_width(self, slide, val):
+    def _apply_body_width(self, slide: PptxSlide, val: object) -> None:
         """@widths: "105" — 単カラム本文プレースホルダ幅を再指定する．
 
         継承した本文プレースホルダ幅に対する百分率（% 付き可）．値は 1 個のみ
@@ -1296,7 +1392,7 @@ class Renderer:
         if ph is None:
             return
         left, top, width, height = self._effective_geom(ph, slide)
-        if None in (left, top, width, height):
+        if left is None or top is None or width is None or height is None:
             return
         new_w = width * pct / 100.0
         # 既定は左端固定（右余白のみ使用）．"...!" で左余白の使用を許可する．
@@ -1316,13 +1412,13 @@ class Renderer:
             new_l = max(new_l, self._PH_MARGIN)
         self._override_geom(ph, new_l, top, new_w, height)
 
-    def _content_rect(self, slide):
+    def _content_rect(self, slide: PptxSlide) -> tuple[int, int, int, int]:
         """本文領域の矩形 (left, top, width, height) を返す（座標配置の基準）．"""
         ph = self._body_placeholder(slide)
         if ph is not None and None not in (ph.left, ph.top, ph.width, ph.height):
             return (ph.left, ph.top, ph.width, ph.height)
         try:
-            for lph in slide.slide_layout.placeholders:
+            for lph in slide.slide_layout.placeholders:  # type: ignore[misc]
                 if lph.placeholder_format.idx == 1 and None not in (
                     lph.left, lph.top, lph.width, lph.height
                 ):
@@ -1333,7 +1429,7 @@ class Renderer:
         return (Inches(0.6), Inches(1.7), self.SW - Inches(1.2),
                 self.SH - Inches(2.3))
 
-    def _note_to_line(self, text):
+    def _note_to_line(self, text: str) -> Line:
         """Flow の note 文字列を本文プレースホルダ用の Line へ変換する．
 
         行頭マーカー（→ は no_bullet）の最小限の解釈だけ行う．
@@ -1343,7 +1439,7 @@ class Renderer:
             return Line(text=t, kind="plain")
         return Line(text=t, kind="bullet")
 
-    def _obj_weight(self, obj: ObjectBlock):
+    def _obj_weight(self, obj: ObjectBlock) -> int:
         """オブジェクト（Table / Flow / Image）の縦方向の重み（高さ配分用）．"""
         if isinstance(obj, Flow):
             return max(4, len(obj.nodes) + 2)
@@ -1353,9 +1449,11 @@ class Renderer:
             return 8 + (1 if obj.caption else 0)
         return max(2, len(obj.rows) + (1 if obj.header else 0))
 
-    def _stack_objects(self, slide, objects: list[ObjectBlock], left, top, width,
-                       height, col_ratios,
-                       slide_overflow=False, has_prose_after=False):
+    def _stack_objects(self, slide: PptxSlide, objects: list[ObjectBlock],
+                       left: int, top: int, width: int, height: int,
+                       col_ratios: list[float] | None,
+                       slide_overflow: bool = False,
+                       has_prose_after: bool = False) -> None:
         """Table / Flow / Image を矩形領域内に重みづけで縦に積んで座標配置する．
 
         slide_overflow（@overflow）は表・画像に共通で効く．画像はブロックの
@@ -1381,9 +1479,12 @@ class Renderer:
                                   has_prose_after=has_prose_after)
             y += seg_h + gap
 
-    def _render_stacked(self, slide, blocks: list[Block], default_num_color, scale,
-                        default_autofit, col_ratios, default_size_delta=None,
-                        slide_overflow=False):
+    def _render_stacked(self, slide: PptxSlide, blocks: list[Block],
+                        default_num_color: str | None, scale: float | None,
+                        default_autofit: bool,
+                        col_ratios: list[float] | None,
+                        default_size_delta: int | None = None,
+                        slide_overflow: bool = False) -> None:
         """表／図を含むスライドを描画する．
 
         地の文（Line）は **標準の本文プレースホルダ**へ流し込み，表・図だけを
@@ -1397,10 +1498,14 @@ class Renderer:
                                   default_num_color, scale, default_autofit,
                                   col_ratios, default_size_delta, slide_overflow)
 
-    def _render_stacked_into(self, slide, blocks: list[Block], body, left, top,
-                             width, height,
-                             default_num_color, scale, default_autofit, col_ratios,
-                             default_size_delta=None, slide_overflow=False):
+    def _render_stacked_into(self, slide: PptxSlide, blocks: list[Block],
+                             body: SlidePlaceholder | None, left: int, top: int,
+                             width: int, height: int,
+                             default_num_color: str | None,
+                             scale: float | None, default_autofit: bool,
+                             col_ratios: list[float] | None,
+                             default_size_delta: int | None = None,
+                             slide_overflow: bool = False) -> None:
         """``blocks`` を矩形 (left, top, width, height) 内へスタック描画する．
 
         地の文（Line）は ``body`` プレースホルダへ流し込み，表・図は矩形内に
@@ -1433,7 +1538,7 @@ class Renderer:
         # 判定は _append_lines と同じ実効デルタ（行トークン優先，無ければスライド既定
         # @body-size）で行う．行 size_delta=None でも @body-size 由来で拡縮する場合を
         # 取りこぼさないため．0／None（変化なし）は対象外．
-        def _eff_delta(ln):
+        def _eff_delta(ln: Line) -> int | None:
             return ln.size_delta if ln.size_delta is not None else default_size_delta
         # 0／None は「サイズ変化なし」＝帯高（本文標準サイズ前提）と食い違わないので
         # 対象外．{0} はテーマ既定＝標準サイズそのものなので警告不要．
@@ -1486,11 +1591,13 @@ class Renderer:
                             slide_overflow, has_prose_after=bool(prose_after))
 
     # ------------------------------------------------------------- deck
-    def render(self, deck: Deck):
+    def render(self, deck: Deck) -> PptxPresentation:
         """Deck 全体を描画し，Presentation を返す．"""
         meta = deck.meta or {}
-        slide_number = meta.get("slide_number", True)
-        default_autofit = meta.get("default_autofit", True)
+        # meta の値は object．どちらも描画側では真偽値としてしか使わないので、
+        # ここで bool にする（if での評価と同じ結果になる）．
+        slide_number = bool(meta.get("slide_number", True))
+        default_autofit = bool(meta.get("default_autofit", True))
 
         if deck.title_slide is not None:
             self.render_title_slide(deck.title_slide)
@@ -1503,7 +1610,7 @@ class Renderer:
             )
         return self.prs
 
-    def save(self, path):
+    def save(self, path: str) -> str:
         """現在の Presentation を保存する（差し替えは**アトミック**）．
 
         出力先へ直接は書かない．同じディレクトリに使い捨ての作業ディレクトリを作って
@@ -1541,7 +1648,8 @@ class Renderer:
         return path
 
 
-def build(deck, base_pptx_path, out_path, base_dir=None):
+def build(deck: Deck, base_pptx_path: str, out_path: str,
+          base_dir: str | None = None) -> str:
     """Deck を base pptx 上に描画して out_path に保存する（CLI 用エントリ）．
 
     Args:
