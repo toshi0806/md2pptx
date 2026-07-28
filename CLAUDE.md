@@ -226,7 +226,7 @@ PDF を向けるもので、これが無いと保存しても画面が変わら�
   GitHub が実際に生成した id と突き合わせて確かめられる:
 
   ```bash
-  gh api "repos/toshi0806/md2pptx/contents/SYNTAX.md?ref=<branch>" \
+  gh api "repos/{owner}/{repo}/contents/SYNTAX.md?ref=<branch>" \
       -H 'Accept: application/vnd.github.html' |
     grep -o 'id="user-content-[^"]*"'
   ```
