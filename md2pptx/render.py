@@ -8,9 +8,10 @@
 テーマのアクセント色を参照する）．
 
 ``参照スクリプト`` のモジュール大域に依存したヘルパ群（no_bullet /
-add_slide_number / add_bullets / set_autonum / enum_items / fit_body /
-content_slide）を Renderer のメソッドへ移植し，self.prs / self.layouts /
-テーマ色エイリアスから状態を解決する（DESIGN.md §6）．
+add_slide_number / set_autonum / fit_body / box / note / block_arrow 等）を
+Renderer のメソッドへ移植し，self.prs / self.layouts / テーマ色エイリアスから
+状態を解決する（DESIGN.md §6）．移植したうちパイプラインが通らなくなった
+4 つ（arrow / add_bullets / enum_items / content_slide）は削除した（Issue #75）．
 
 使い方::
 
@@ -33,7 +34,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from pptx import Presentation
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
 from pptx.enum.dml import MSO_THEME_COLOR
-from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 # python-pptx の Slide は ir.Slide と名前がぶつかる．**外来のほうに印を付ける**
@@ -43,7 +44,6 @@ from pptx.util import Emu, Inches, Pt
 # 注釈にはクラスのほうが要る．
 from pptx.presentation import Presentation as PptxPresentation
 from pptx.shapes.autoshape import Shape
-from pptx.shapes.connector import Connector
 from pptx.shapes.graphfrm import GraphicFrame
 from pptx.shapes.picture import Picture
 from pptx.shapes.placeholder import SlidePlaceholder
@@ -156,7 +156,7 @@ class Renderer:
         self.SH = self.prs.slide_height
 
         # テーマのアクセント色（図形用）．テキスト色・フォントはテーマ任せ．
-        # Phase 1 では box/arrow/note/table（Phase 2/3）が使うため保持のみ．
+        # Phase 1 では box/block_arrow/note/table（Phase 2/3）が使うため保持のみ．
         self.A2 = MSO_THEME_COLOR.ACCENT_2       # 緑
         self.A6 = MSO_THEME_COLOR.ACCENT_6       # 緑（濃）
         self.T2 = MSO_THEME_COLOR.TEXT_2         # 緑系テキスト
@@ -218,16 +218,6 @@ class Renderer:
                 slide.shapes._spTree.append(copy.deepcopy(lph._element))
                 return
 
-    def add_bullets(self, tf: TextFrame,
-                    items: list[tuple[int, str]]) -> None:
-        """(level, text) の列を本文 text_frame に箇条書きとして流し込む．"""
-        first = True
-        for lvl, txt in items:
-            p = tf.paragraphs[0] if first else tf.add_paragraph()
-            first = False
-            p.level = lvl
-            p.text = txt
-
     def set_autonum(self, p: _Paragraph, fmt: str = "arabicPeriod",
                     color: str | None = None) -> None:
         """段落の行頭記号を自動採番（1. 2. 3. …）に切り替える（enumerate 相当）．
@@ -249,20 +239,6 @@ class Renderer:
                 break
         else:
             pPr.append(bu)
-
-    def enum_items(self, tf: TextFrame,
-                   items: list[tuple[str, str]]) -> None:
-        """(見出し, 説明) を，見出し=自動採番(level0)・説明=通常箇条書き(level1) で並べる．"""
-        first = True
-        for head, desc in items:
-            p = tf.paragraphs[0] if first else tf.add_paragraph()
-            first = False
-            p.level = 0
-            p.text = head
-            self.set_autonum(p)
-            d = tf.add_paragraph()
-            d.level = 1
-            d.text = desc
 
     def fit_body(self, tf: TextFrame, scale: float | None = None) -> None:
         """本文プレースホルダに自動調整（normAutofit）を設定する．
@@ -426,22 +402,6 @@ class Renderer:
                 return sz
         return levels[-1]
 
-    def content_slide(self, title: str,
-                      items: list[tuple[int, str]]) -> PptxSlide:
-        """タイトル＋箇条書きの基本スライドを 1 枚追加して返す．"""
-        s = self.prs.slides.add_slide(self.L1)
-        s.shapes.title.text = title
-        body = self._body_placeholder(s)
-        if body is None:
-            # 本文枠が無いテーマ．止めずに捨てたものを言う（Issue #67 と同じ扱い）．
-            self._warn_no_body([Line(text=txt) for _lvl, txt in items])
-            self.add_slide_number(s)
-            return s
-        self.add_bullets(body.text_frame, items)
-        self.fit_body(body.text_frame)
-        self.add_slide_number(s)
-        return s
-
     # --------------------------------------------------------- title slide
     def render_title_slide(self, ts: TitleSlide) -> PptxSlide:
         """タイトルスライドを 1 枚目として追加する（番号は付けない）．
@@ -601,22 +561,6 @@ class Renderer:
                 if ssize is not None:
                     r.font.size = Pt(ssize)
         return shp
-
-    def arrow(self, slide: PptxSlide, x1: int, y1: int, x2: int, y2: int,
-              w: float = 2.0) -> Connector:
-        """矢印（直線コネクタ＋三角の矢じり）を描く．"""
-        # 渡していた 2 は **ELBOW（かぎ線）** で、docstring の「直線」と食い違う．
-        # このメソッドは現在どこからも呼ばれておらず（図の矢印は block_arrow が
-        # 描く）、どちらが意図だったか確かめる手段がないので，注釈を入れるにあたり
-        # **動きを変えないほう**を採った．直すなら別途（Issue #35 の作業中に発見）．
-        cn = slide.shapes.add_connector(
-            MSO_CONNECTOR.ELBOW, Emu(x1), Emu(y1), Emu(x2), Emu(y2))
-        cn.line.color.theme_color = self.TX
-        cn.line.width = Pt(w)
-        le = cn.line._get_or_add_ln()
-        le.append(le.makeelement(
-            qn("a:tailEnd"), {"type": "triangle", "w": "med", "len": "med"}))
-        return cn
 
     def block_arrow(self, slide: PptxSlide, x1: int, y1: int, x2: int, y2: int,
                     thickness: int,

@@ -18,9 +18,15 @@ md2pptx — Markdown と PowerPoint テーマ（thmx / pptx）から発表スラ
 render の責務）。`ir.py` がパーサとレンダラの契約。新しい記法を足すときは「parser が
 IR を作る／render が IR を描く」の分離を保つ。
 
-描画ヘルパー（`box`/`arrow`/`set_autonum`/`no_bullet`/`fit_body` 等）は、
+描画ヘルパー（`box`/`block_arrow`/`set_autonum`/`no_bullet`/`fit_body` 等）は、
 本ツールの土台になった手書きスクリプト（個人デッキ生成用、リポジトリには含めない）から
-`render.py` へ移植したもの。
+`render.py` へ移植したもの。**移植しても IR 経由の描画では通らないものがある。**
+`arrow`/`add_bullets`/`enum_items`/`content_slide` は呼び出し元が無いまま残り、
+Issue #75 で削除した。そのうち `arrow` は、
+docstring が「直線コネクタ」と書きながら実際には ELBOW（かぎ線）を渡していた。
+**呼ばれないコードは誤りを抱えたまま検証されない**——直すも消すも、
+出力を見て判断できないからそのままになる。移植したものを足すときは、
+呼び出し元まで繋いでから入れる。
 
 ## コマンド
 
