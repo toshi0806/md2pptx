@@ -76,9 +76,10 @@ pptx」をメモリ上または一時ファイルに用意する。ステージ3
 `[project.scripts]` が `md2pptx = "md2pptx.cli:main"` としてコンソールスクリプトを生成する。
 モジュール間は相対 import（`from .ir import …`）で結線する。
 
-`参照スクリプト` のヘルパー（`content_slide`, `box`, `arrow`, `note`, `set_autonum`,
-`no_bullet`, `fit_body`, `enum_items`, `add_slide_number` 等）は **`render.py` へ移植**し、
-IR を受け取って描画する純粋関数群として整理する。
+`参照スクリプト` のヘルパー（`box`, `note`, `set_autonum`, `no_bullet`, `fit_body`,
+`add_slide_number` 等）は **`render.py` へ移植**し、IR を受け取って描画する純粋関数群
+として整理する。移植したうち IR 経由の描画では通らなくなった 4 つ
+（`arrow` / `add_bullets` / `enum_items` / `content_slide`）は削除した（Issue #75）。
 
 ## 3. thmx → base pptx 変換（ステージ0）
 
@@ -338,7 +339,7 @@ affiliation:
 
 | 書き方 | 解釈 | 対応する現行処理 |
 |---|---|---|
-| `- テキスト` / `* テキスト` | 通常箇条書き（テーマ既定の bullet） | `add_bullets` |
+| `- テキスト` / `* テキスト` | 通常箇条書き（テーマ既定の bullet） | `_fill_lines`（テーマ既定のまま） |
 | `1. テキスト`（連番） | 自動採番 `arabicPeriod`（1. 2. 3.） | `set_autonum("arabicPeriod")` |
 | `①` `②` … で始まる行 | 自動採番 `circleNumDbPlain`（丸数字）。番号文字は除去 | `set_autonum("circleNumDbPlain")` |
 | `(1)` `(2)` … で始まる行 | 自動採番 `arabicParenBoth`（丸括弧 (1) (2)） | `set_autonum` 派生 |
@@ -354,7 +355,7 @@ affiliation:
 各行はマーカー直後・本文直前に相対サイズトークン `{+1}` / `{-2}` を置ける（5.8）。
 例: `- {+1} 強調`、`① {+1} 大きい採番`、`→ {-1} 小さい結論`。
 
-#### 「見出し＋説明」（`enum_items` 相当）
+#### 「見出し＋説明」（採番＋ネスト bullet）
 
 採番行の直下に通常箇条書きをネストすると、見出し=採番
 level0／説明=bullet level1 として描画する。
@@ -403,7 +404,7 @@ Markdown 標準のテーブル記法。1行目をヘッダとしてアクセン�
 ### 5.5 図 DSL（` ```flow ` ブロック）
 
 box / arrow による横並びフロー図を簡潔に書く独自 DSL。`参照スクリプト` の
-`box` / `arrow` / `note` の組合せを宣言的に表現する。
+`box` / 矢印 / `note` の組合せを宣言的に表現する。
 
 ````markdown
 ```flow
@@ -440,7 +441,7 @@ note(bottom): → テーマを差し替えるだけで見た目が一新でき�
 - `flow.py` は python-pptx 非依存の純モジュール：`parse_flow(text)→ir.Flow`（`direction`/
   ノード/エッジ/`caption`/`note_top`/`note_bottom`）と、座標プランを返す
   `plan_flow(flow, left, top, width, height)`（EMU 計算のみ）の2段に分離。
-- 描画は `render.py` の `box`/`arrow`/`note`（`参照スクリプト` から移植）が担い、
+- 描画は `render.py` の `box`/`block_arrow`/`note`（`参照スクリプト` から移植）が担い、
   `render_flow` が `plan_flow` のプランを描く。配色は `T2→A6→A6→GOLD→A2` を順に自動割当、
   `{accent6}` 等で個別上書き。
 - フロー図は **Phase 2の座標スタックに `flow` セグメントとして統合**。
@@ -669,11 +670,11 @@ notes slide（発表者ビュー・ノート印刷で見えるテキスト）に
 - ステージ0の base pptx を開き、
   `SW/SH`・レイアウト・テーマ色エイリアス（`A2/A6/T2/GOLD/BG/TX`）を初期化。
 - IR の各 `Slide` を走査し、`blocks` の型に応じて描画:
-  - `Line` 列 → `content_slide` 系（`add_bullets` + マーカーに応じた
-    `set_autonum`/`no_bullet`）。
+  - `Line` 列 → 本文プレースホルダへ `_fill_lines`／`_append_lines` で流し込み、
+    マーカーに応じて `set_autonum`/`no_bullet` を適用（`bullet` はテーマ既定のまま）。
   - `Table` → `add_table`（ヘッダ着色）。テキストと共存する場合は本文に導入・結論、
     表は座標配置。
-  - `Flow` → `flow.py` のレイアウタで `box`/`arrow`/`note` を配置。
+  - `Flow` → `flow.py` のレイアウタで `box`/`block_arrow`/`note` を配置。
 - `default_autofit` が真なら本文プレースホルダに `fit_body`。`@autofit:` 指定があれば
   scale 焼き込み。
 - タイトル以外のスライドに `add_slide_number`。
@@ -883,10 +884,10 @@ md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
 | 導入文＋表＋結論 | 段落＋表＋`→` | ◎ |
 | 丸数字採番（色 tx1） | `①`＋`@autonum-color: tx1` | ◎ |
 | 一部行のみ丸数字採番（黒） | `①` 混在＋`@autonum-color: tx1` | ◎ |
-| enum_items（見出し＋説明） | `1.`＋ネスト `-` | ◎ |
+| 見出し＋説明 | `1.`＋ネスト `-` | ◎ |
 | 全行採番＋結論 no_bullet | `1.` 連番＋`→` | ◎ |
 | 本文縮小 | `@autofit: 90` | ◎ |
-| box/arrow/note 図 | ` ```flow ` | ◎（矢印は box 高に比例した太さ） |
+| box/矢印/note 図 | ` ```flow ` | ◎（矢印は box 高に比例した太さ） |
 | 結論行 no_bullet | `→`（記号なし行） | ◎ |
 | 多段タイトルの明示改行 | `<br>` | ◎ |
 

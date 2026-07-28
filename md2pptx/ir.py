@@ -29,7 +29,7 @@ class Line:
         text: 段落の表示テキスト（行頭マーカー記号は除去済み）．
         level: 箇条書きの深さ．0 が最上位，2 スペースのインデントごとに +1．
         kind: 段落種別．
-            - "bullet"  : テーマ既定の箇条書き記号（add_bullets 相当）．
+            - "bullet"  : テーマ既定の箇条書き記号（記号は指定せず任せる）．
             - "autonum" : 自動採番（set_autonum 相当）．num_style で形式を指定．
             - "plain"   : 行頭記号なし（no_bullet 相当．結論・補足行など）．
             取りうる値は注釈（Literal）が正．
