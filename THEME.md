@@ -294,7 +294,7 @@ md2pptx example.md --theme corporate.thmx -o example.pptx
 **原稿で色名を名指ししている箇所は、テーマの配色より優先されます。**
 書いていないか確認してください。
 
-- 図の箱: `[ラベル]{accent6}`（記法は [README のフロー図](README.md#フロー図)）
+- 図の箱: `[ラベル]{accent6}`（記法は [SYNTAX.md のフロー図](SYNTAX.md#フロー図)）
 - 採番記号: `<!-- @autonum-color: tx1 -->`
 
 **文字サイズを変えたのに効かない**

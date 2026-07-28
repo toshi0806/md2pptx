@@ -3,7 +3,8 @@
 md2pptx — Markdown と PowerPoint テーマ（thmx / pptx）から発表スライド（pptx）を生成するツール。
 配色・フォントはテーマに委ね、内容は行頭マーカー記法の Markdown で記述する。
 
-ユーザー向けの使い方は [README.md](README.md)、設計の詳細は [DESIGN.md](DESIGN.md) を参照。
+ユーザー向けの使い方は [README.md](README.md)、Markdown 記法は [SYNTAX.md](SYNTAX.md)、
+設計の詳細は [DESIGN.md](DESIGN.md) を参照。
 本ファイルはこのリポジトリで作業する際の運用メモ。
 
 ## アーキテクチャ
