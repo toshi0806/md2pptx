@@ -128,8 +128,10 @@ def test_every_run_gets_a_language(tmp_path):
     for expected in ("表題", "著者", "所属", "見出し",
                      "コンテンツ配信のためのネットワーク", "→ 結論行",
                      "表の中", "ノートの本文"):
+        # 同じ本文が複数の run に現れても（表のセルと本文が同じ文字列など）
+        # 落ちないよう，個数ではなく全要素を見る．空でないことは直前の in が担保する．
         assert expected in by_text, f"{expected!r} を通る経路が見えていない"
-        assert by_text[expected] == ["ja-JP"], \
+        assert all(lang == "ja-JP" for lang in by_text[expected]), \
             f"{expected!r} の run の言語: {by_text[expected]}"
 
 
