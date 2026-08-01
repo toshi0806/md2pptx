@@ -141,6 +141,8 @@ class Renderer:
     _SIZE_MAX_PT = 96.0
 
     # run に付ける言語（_apply_text_language）．PowerPoint はこれで禁則処理を選ぶ．
+    # 2 つは**対で意味を持つ**（lang が主たる言語，altLang がもう一方の字種の言語）．
+    # 日本語版 PowerPoint も ja-JP／en-US の組で書き出す．片方だけ変えないこと．
     _LANG = "ja-JP"
     _ALT_LANG = "en-US"
 

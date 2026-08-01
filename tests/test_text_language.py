@@ -89,6 +89,9 @@ def _runs(path, attr="lang"):
     ``r.prs`` を直接見ずに**保存した pptx を読み直す**のは意図的．利用者が開くのは
     ファイルであって，メモリ上のツリーではない．保存の往復で落ちる属性があれば
     禁則も効かないので，そこまで含めて固定する．
+
+    ``a:rPr`` ごと無い run は ``None`` を返す——**それも「言語が決まっていない」**で，
+    呼び出し側は属性が空の場合と区別しなくてよい（どちらでも禁則は効かない）．
     """
     found = []
     for slide in Presentation(str(path)).slides:
@@ -172,6 +175,10 @@ def test_it_does_not_overwrite_a_language_already_set(tmp_path):
     assert set(a for text, a in alt if text == "/ ") == {"ko-KR"}, \
         "テーマの決めた altLang を書き換えた"
     assert next(a for text, a in alt if text == "見出し") == "en-US"
+
+    # altLang だけ持つ run にも lang は付く．**これが狙いどおり**——禁則を選ぶのは
+    # lang で，altLang がいくら決まっていても lang が空なら行分割の規則が決まらない．
+    assert set(lang for text, lang in runs if text == "/ ") == {"ja-JP"}
 
 
 def test_br_in_front_matter_becomes_a_line_break(tmp_path):
