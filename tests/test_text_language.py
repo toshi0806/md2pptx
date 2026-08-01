@@ -81,9 +81,11 @@ def test_every_run_gets_a_language(tmp_path):
     runs = _runs(_build(tmp_path, DECK))
 
     assert runs, "前提: run が 1 つも無ければこのテストは何も見ていない"
-    missing = [text for text, lang in runs if lang is None]
-    assert missing == [], f"言語の付いていない run が残っている: {missing}"
-    assert all(lang == "ja-JP" for _, lang in runs)
+    # 「付いていない（None）」と「別の言語が付いた」を 1 つの条件で見る．
+    # このテーマ（python-pptx 既定テンプレート）は言語付きの run を持たないので，
+    # 出力に ja-JP 以外があれば md2pptx 側の取りこぼしか付け間違いに限られる．
+    wrong = [(text, lang) for text, lang in runs if lang != "ja-JP"]
+    assert wrong == [], f"ja-JP が付いていない run が残っている: {wrong}"
 
     texts = [text for text, _ in runs]
     for expected in ("表題", "著者", "所属", "見出し",
@@ -108,7 +110,9 @@ def test_it_does_not_overwrite_a_language_already_set(tmp_path):
 
     out = tmp_path / "out.pptx"
     r.save(str(out))
-    assert dict(_runs(out))["表題"] == "en-US"
+    # dict 化すると同じ本文の run が複数あったとき後勝ちで別の run を見てしまう．
+    # 見たいのは「先に言語を決めた run」なので，最初の一致を明示して取る．
+    assert next(lang for text, lang in _runs(out) if text == "表題") == "en-US"
 
 
 def test_br_in_front_matter_becomes_a_line_break(tmp_path):
