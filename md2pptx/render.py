@@ -1579,7 +1579,8 @@ class Renderer:
 
         テーマ側の既存 run（スライド番号フィールド等）は ``lang`` を持っているので
         触らない．**上書きせず未設定のものだけ埋める**——何度通しても結果が変わらず，
-        将来 run 単位で言語を決める余地も残る．
+        将来 run 単位で言語を決める余地も残る．``altLang``（もう一方の字種の言語）も
+        同じ規則で，既に決まっていればそのまま残す．
 
         レイアウト・マスターは書き換えない（テーマの所有物で，md2pptx が描くのは
         スライドとノートだけ）．ノートも通すのは，発表者ノートが折り返す先も
@@ -1592,8 +1593,13 @@ class Renderer:
             for part in parts:
                 for r in part.iter(qn("a:r")):
                     rPr = r.get_or_add_rPr()
-                    if rPr.get("lang") is None:
-                        rPr.set("lang", self._LANG)
+                    if rPr.get("lang") is not None:
+                        continue            # 言語の決まっている run は触らない
+                    rPr.set("lang", self._LANG)
+                    # altLang も**未設定のときだけ**付ける．lang と対で書くのが
+                    # 普通だが，片方だけ持つ run が無いとは言えない——その 1 つを
+                    # 上書きすると「決まっているものは触らない」が崩れる．
+                    if rPr.get("altLang") is None:
                         rPr.set("altLang", self._ALT_LANG)
 
     def save(self, path: str) -> str:

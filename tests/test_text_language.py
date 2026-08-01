@@ -59,12 +59,17 @@ def _theme_with_its_own_run(tmp_path):
                 # 置く位置が決まらない．黙って素通りしてよい——run が 1 つも
                 # 入らなければテスト側の「前提」アサーションが落ちて気づける．
                 continue
-            run = p_el.makeelement(f"{_A}r", {})
-            run.append(run.makeelement(f"{_A}rPr", {"lang": "en-US"}))
-            t = run.makeelement(f"{_A}t", {})
-            t.text = "Page "
-            run.append(t)
-            p_el.insert(list(p_el).index(fld), run)
+            # lang を持つ run と，altLang だけを持つ run の 2 つを入れる．
+            # 後者は珍しいが，「決まっているものは触らない」を altLang についても
+            # 効かせているかを見るために要る．
+            for text, attrs in (("Page ", {"lang": "en-US"}),
+                                ("/ ", {"altLang": "ko-KR"})):
+                run = p_el.makeelement(f"{_A}r", {})
+                run.append(run.makeelement(f"{_A}rPr", attrs))
+                t = run.makeelement(f"{_A}t", {})
+                t.text = text
+                run.append(t)
+                p_el.insert(list(p_el).index(fld), run)
     path = tmp_path / "theme-with-run.pptx"
     prs.save(str(path))
     return str(path)
@@ -78,8 +83,13 @@ def _build(tmp_path, deck, name="out.pptx", theme=None):
     return out
 
 
-def _runs(path):
-    """出力の全 run を (本文, lang) で返す（ノートスライドも含む）．"""
+def _runs(path, attr="lang"):
+    """出力の全 run を (本文, その属性値) で返す（ノートスライドも含む）．
+
+    ``r.prs`` を直接見ずに**保存した pptx を読み直す**のは意図的．利用者が開くのは
+    ファイルであって，メモリ上のツリーではない．保存の往復で落ちる属性があれば
+    禁則も効かないので，そこまで含めて固定する．
+    """
     found = []
     for slide in Presentation(str(path)).slides:
         parts = [slide.element]
@@ -90,7 +100,7 @@ def _runs(path):
                 t = r.find(f"{_A}t")
                 rPr = r.find(f"{_A}rPr")
                 found.append((t.text if t is not None else "",
-                              rPr.get("lang") if rPr is not None else None))
+                              rPr.get(attr) if rPr is not None else None))
     return found
 
 
@@ -156,6 +166,12 @@ def test_it_does_not_overwrite_a_language_already_set(tmp_path):
 
     # 同じ出力の中で，md2pptx が描いた run にはちゃんと ja-JP が付いている．
     assert next(lang for text, lang in runs if text == "見出し") == "ja-JP"
+
+    # altLang も同じ規則．テーマが決めていれば残し，決めていなければ埋める．
+    alt = _runs(out, attr="altLang")
+    assert set(a for text, a in alt if text == "/ ") == {"ko-KR"}, \
+        "テーマの決めた altLang を書き換えた"
+    assert next(a for text, a in alt if text == "見出し") == "en-US"
 
 
 def test_br_in_front_matter_becomes_a_line_break(tmp_path):
