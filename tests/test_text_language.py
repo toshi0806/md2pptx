@@ -54,6 +54,11 @@ def _theme_with_its_own_run(tmp_path):
                 continue
             p_el = ph.text_frame.paragraphs[0]._p
             fld = p_el.find(f"{_A}fld")
+            if fld is None:
+                # 番号フィールドが無い形の既定テンプレートに変わったら，run を
+                # 置く位置が決まらない．黙って素通りしてよい——run が 1 つも
+                # 入らなければテスト側の「前提」アサーションが落ちて気づける．
+                continue
             run = p_el.makeelement(f"{_A}r", {})
             run.append(run.makeelement(f"{_A}rPr", {"lang": "en-US"}))
             t = run.makeelement(f"{_A}t", {})
@@ -108,17 +113,24 @@ def test_every_run_gets_a_language(tmp_path):
     runs = _runs(_build(tmp_path, DECK))
 
     assert runs, "前提: run が 1 つも無ければこのテストは何も見ていない"
-    # 「付いていない（None）」と「別の言語が付いた」を 1 つの条件で見る．
-    # このテーマ（python-pptx 既定テンプレート）は言語付きの run を持たないので，
-    # 出力に ja-JP 以外があれば md2pptx 側の取りこぼしか付け間違いに限られる．
-    wrong = [(text, lang) for text, lang in runs if lang != "ja-JP"]
-    assert wrong == [], f"ja-JP が付いていない run が残っている: {wrong}"
 
-    texts = [text for text, _ in runs]
+    # 網羅：言語の決まらない run を 1 つも残さない．テーマが何を持ち込んでも
+    # 誤検知しない——テーマ由来の run も，言語を持たなければここで ja-JP が付く．
+    # 残った None は md2pptx の取りこぼしに限られる．
+    missing = [text for text, lang in runs if lang is None]
+    assert missing == [], f"言語の付いていない run が残っている: {missing}"
+
+    # 個別：描画経路ごとに名指しで ja-JP を確かめる．こちらもテーマ由来 run の
+    # 有無に左右されない（既定テンプレートが将来 run を持っても影響しない）．
+    by_text = {}
+    for text, lang in runs:
+        by_text.setdefault(text, []).append(lang)
     for expected in ("表題", "著者", "所属", "見出し",
                      "コンテンツ配信のためのネットワーク", "→ 結論行",
                      "表の中", "ノートの本文"):
-        assert expected in texts, f"{expected!r} を通る経路が見えていない"
+        assert expected in by_text, f"{expected!r} を通る経路が見えていない"
+        assert by_text[expected] == ["ja-JP"], \
+            f"{expected!r} の run の言語: {by_text[expected]}"
 
 
 def test_it_does_not_overwrite_a_language_already_set(tmp_path):
