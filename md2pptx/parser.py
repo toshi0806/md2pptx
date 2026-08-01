@@ -183,6 +183,9 @@ def _build_title_slide(meta: dict) -> TitleSlide | None:
     if isinstance(title, str):
         # 複数行タイトル（YAML ブロックスカラー）の末尾改行を落とす．
         title = title.rstrip("\n")
+        # <br> は見出し・本文と同じ規則で行内改行（\v）へ．front matter だけ
+        # 素通しにすると "<br>" がそのまま画面に出る（Issue #79）．
+        title = _RE_BR.sub("\v", title)
 
     # 副題・著者・所属も本文行と同じ相対サイズトークン "{-1}"/"{+1}" を先頭に置ける．
     # トークンは本文から剥がし，段数を IR の *_delta へ格納する（render が換算）．
@@ -222,12 +225,14 @@ def _split_size_opt(value: object) -> tuple[int | None, str | None]:
 
     None はそのまま (None, None)．トークン判定は文字列のみ対象とし，数値等
     （YAML が int/float で読んだ値）は素直に文字列化して段数なしで返す．
+    副題・著者・所属もタイトル同様 <br> を行内改行（\\v）へ変換する（Issue #79）．
     """
     if value is None:
         return None, None
     if not isinstance(value, str):
         return None, str(value)
-    return _split_size(value)
+    delta, text = _split_size(value)
+    return delta, _RE_BR.sub("\v", text)
 
 
 # ---------------------------------------------------------------- 本文

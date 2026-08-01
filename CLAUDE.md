@@ -182,8 +182,20 @@ PDF を向けるもので、これが無いと保存しても画面が変わら�
 - **Bash の stdout 表示が乱れる**ことがある。Python の検証結果はファイルに書き出して
   `Read` で確認すると確実。
 - python-pptx の `text_frame.text = "...\v..."` は `\v`(0x0B) を
-  `a:br`（行内改行）に展開する。タイトル内 `<br>` は parser で `\v` に変換している。
-  `\n` は段落区切り。
+  `a:br`（行内改行）に展開する。`\n` は段落区切り。
+  `<br>` は parser で `\v` に変換している。
+  通す場所は見出し・本文行・front matter の4項目
+  （`title` / `subtitle` / `author` / `affiliation`）で、**全部に掛けること**。
+  Issue #79 まで front matter だけ素通しで、`<br>` の4文字が画面に出ていた。
+- **python-pptx は `a:rPr` を書かない**ので、
+  放っておくと run の言語が決まらず**日本語の禁則処理が効かない**
+  （行頭に「ー」や句読点が来る）。
+  `_apply_text_language` が `render` の最後に `lang="ja-JP"` を付けて回る。
+  効くのは `lang` だけで、`kumimoji` も `presentation.xml` の `<p:kinsoku>` も
+  **効かない**（実 PowerPoint で確認）。固定しているのは `tests/test_text_language.py`。
+  なお**タイトルは枠幅に対して自動縮小しない**。
+  枠に入らなければ語の途中で折り返すが、これは禁則とは別問題で、
+  折る位置は `<br>` で著者が決める。
 - thmx 由来 base はスライド0枚。pptx テーマは既存スライドを持ちうるので、`Renderer.__init__` で
   `_clear_slides()` して常に0枚から描画する（先頭の空きスライド対策）。
 - 各サブプロセス/Bash 間で `/tmp` の状態が保持されないことがある。

@@ -140,6 +140,12 @@ class Renderer:
     _SIZE_MIN_PT = 8.0
     _SIZE_MAX_PT = 96.0
 
+    # run に付ける言語（_apply_text_language）．PowerPoint はこれで禁則処理を選ぶ．
+    # 2 つは**対で意味を持つ**（lang が主たる言語，altLang がもう一方の字種の言語）．
+    # 日本語版 PowerPoint も ja-JP／en-US の組で書き出す．片方だけ変えないこと．
+    _LANG = "ja-JP"
+    _ALT_LANG = "en-US"
+
     def __init__(self, base_pptx_path: str, base_dir: str | None = None) -> None:
         self.prs = Presentation(base_pptx_path)
         # 画像などの相対パスを解決する基準ディレクトリ（既定は Markdown ファイルの
@@ -1552,7 +1558,51 @@ class Renderer:
                 slide_number=slide_number,
                 default_autofit=default_autofit,
             )
+        # 言語の付与は描画の最後に一度だけ通す（run を作る経路は本文・タイトル・表・
+        # フロー図・ノートと多く，作る側それぞれに足すと必ずどこかが漏れる）．
+        self._apply_text_language()
         return self.prs
+
+    def _apply_text_language(self) -> None:
+        """描画した全 run に言語（``a:rPr/@lang``）を付ける．**禁則処理の要**（Issue #79）．
+
+        PowerPoint は**行分割の規則を run の言語で選ぶ**．python-pptx は
+        ``paragraph.text = …`` で ``<a:r><a:t>…</a:t></a:r>`` を作り ``a:rPr`` を
+        **一切書かない**ので，何もしないと言語不明のまま出力される．そうなると
+        日本語の禁則処理が適用されず，**行頭に「ー」や句読点が来る**——文字列は
+        正しいので pptx を開くまで気づけず，開いても原因が md2pptx だとは思い当たらない．
+
+        効くのは ``lang`` だけで，紛らわしい近縁の属性・要素は**効かない**（実 PowerPoint
+        変換で確認済み．固定しているのは ``tests/test_text_language.py``）:
+
+        - ``kumimoji="1"`` のみ付けても禁則は効かない（これは縦書き中の数字の扱い）．
+        - ``presentation.xml`` の ``<p:kinsoku>``（禁則文字の定義）を足しても効かない．
+          run が何語か決まらないうちは，禁則文字表を引く段階に来ない．
+
+        テーマ側の既存 run（スライド番号フィールド等）は ``lang`` を持っているので
+        触らない．**上書きせず未設定のものだけ埋める**——何度通しても結果が変わらず，
+        将来 run 単位で言語を決める余地も残る．``altLang``（もう一方の字種の言語）も
+        同じ規則で，既に決まっていればそのまま残す．
+
+        レイアウト・マスターは書き換えない（テーマの所有物で，md2pptx が描くのは
+        スライドとノートだけ）．ノートも通すのは，発表者ノートが折り返す先も
+        同じ理由で崩れるため．
+        """
+        for slide in self.prs.slides:
+            parts = [slide.element]
+            if slide.has_notes_slide:
+                parts.append(slide.notes_slide.element)
+            for part in parts:
+                for r in part.iter(qn("a:r")):
+                    rPr = r.get_or_add_rPr()
+                    if rPr.get("lang") is not None:
+                        continue            # 言語の決まっている run は触らない
+                    rPr.set("lang", self._LANG)
+                    # altLang も**未設定のときだけ**付ける．lang と対で書くのが
+                    # 普通だが，片方だけ持つ run が無いとは言えない——その 1 つを
+                    # 上書きすると「決まっているものは触らない」が崩れる．
+                    if rPr.get("altLang") is None:
+                        rPr.set("altLang", self._ALT_LANG)
 
     def save(self, path: str) -> str:
         """現在の Presentation を保存する（差し替えは**アトミック**）．
