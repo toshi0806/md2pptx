@@ -38,9 +38,36 @@ def _theme(tmp_path):
     return str(path)
 
 
-def _build(tmp_path, deck, name="out.pptx"):
+def _theme_with_its_own_run(tmp_path):
+    """番号プレースホルダに**言語付きの run** を持つテーマを作って返す．
+
+    これが「テーマ由来の run」がスライドへ入る実際の経路．``add_slide_number`` は
+    レイアウトの番号プレースホルダ（``idx == 12``）を ``deepcopy`` してスライドへ
+    足すので，レイアウト側の run がそのまま出力に現れる．既定テンプレートの番号枠は
+    ``a:fld``（番号フィールド）だけだが，「Page 3」のように語を添えるテーマでは
+    ``a:r`` が並ぶ——そこに ``lang`` が付いていることも普通にある．
+    """
+    prs = Presentation()
+    for lay in prs.slide_layouts:
+        for ph in lay.placeholders:
+            if ph.placeholder_format.idx != 12:
+                continue
+            p_el = ph.text_frame.paragraphs[0]._p
+            fld = p_el.find(f"{_A}fld")
+            run = p_el.makeelement(f"{_A}r", {})
+            run.append(run.makeelement(f"{_A}rPr", {"lang": "en-US"}))
+            t = run.makeelement(f"{_A}t", {})
+            t.text = "Page "
+            run.append(t)
+            p_el.insert(list(p_el).index(fld), run)
+    path = tmp_path / "theme-with-run.pptx"
+    prs.save(str(path))
+    return str(path)
+
+
+def _build(tmp_path, deck, name="out.pptx", theme=None):
     out = tmp_path / name
-    r = render.Renderer(_theme(tmp_path))
+    r = render.Renderer(theme or _theme(tmp_path))
     r.render(deck)
     r.save(str(out))
     return out
@@ -95,24 +122,26 @@ def test_every_run_gets_a_language(tmp_path):
 
 
 def test_it_does_not_overwrite_a_language_already_set(tmp_path):
-    """既に言語の決まっている run は書き換えない（テーマ由来の run を壊さない）．
+    """テーマが自分で持ってきた run の言語は書き換えない．
 
     未設定のものだけ埋めるので**何度通しても結果が変わらない**．run 単位で言語を
     決めるようになったときも，後から通るこの処理が決定を上書きしない．
+
+    テーマの決めた言語を ja-JP で塗り潰すと，そのテーマだけ番号や見出しの語が
+    別の言語として扱われる——**テーマに委ねる**という本ツールの方針にも反する．
     """
-    r = render.Renderer(_theme(tmp_path))
-    r.render(DECK)
+    out = _build(tmp_path, DECK, name="theme-run.pptx",
+                 theme=_theme_with_its_own_run(tmp_path))
+    runs = _runs(out)
 
-    # 描画済みの run を 1 つ「言語が決まっているもの」に見立てて，もう一度通す．
-    first = next(r.prs.slides[0].element.iter(f"{_A}r"))
-    first.get_or_add_rPr().set("lang", "en-US")
-    r._apply_text_language()
-
-    out = tmp_path / "out.pptx"
-    r.save(str(out))
     # dict 化すると同じ本文の run が複数あったとき後勝ちで別の run を見てしまう．
-    # 見たいのは「先に言語を決めた run」なので，最初の一致を明示して取る．
-    assert next(lang for text, lang in _runs(out) if text == "表題") == "en-US"
+    # テーマ由来の run だけを名指しで取る．
+    theirs = [lang for text, lang in runs if text == "Page "]
+    assert theirs, "前提: テーマ由来の run が出力に入っていない"
+    assert set(theirs) == {"en-US"}, f"テーマの決めた言語を書き換えた: {theirs}"
+
+    # 同じ出力の中で，md2pptx が描いた run にはちゃんと ja-JP が付いている．
+    assert next(lang for text, lang in runs if text == "見出し") == "ja-JP"
 
 
 def test_br_in_front_matter_becomes_a_line_break(tmp_path):
