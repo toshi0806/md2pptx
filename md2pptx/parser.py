@@ -678,11 +678,16 @@ def _parse_content_line(raw: str) -> Line | None:
         return Line(text=_RE_BR.sub("\v", text), level=level,
                     kind="bullet", size_delta=size_delta)
 
-    # 通常箇条書き："- " / "* "．マーカーだけの行（"-" / "*"）も空の項目として受ける．
-    # **末尾に空白が無い形を必ず拾うこと**——多くのエディタは保存時に行末空白を
-    # 除去するので，"- " しか受けないと空行スペーサが保存した瞬間に壊れる
-    # （既定の箇条書きへ落ちて**文字の "-"** が出る．Issue #82）．
-    if s in ("-", "*") or s.startswith("- ") or s.startswith("* "):
+    # マーカーだけの行 → 空行（Issue #82）．**末尾に空白が無い形を必ず拾うこと**
+    # ——多くのエディタは保存時に行末空白を除去するので，"- " しか受けないと空行
+    # スペーサが保存した瞬間に壊れる（既定の箇条書きへ落ちて**文字の "-"** が出る）．
+    # 下の "- " 判定と分けてあるのは s[2:] の意味を保つため．あちらは「マーカーと
+    # 続く空白の 2 文字を除く」意図で，1 文字しかない行を同じ式に通すと意図が濁る．
+    if s in ("-", "*"):
+        return _mk_bullet("", None)
+
+    # 通常箇条書き："- " / "* "
+    if s.startswith("- ") or s.startswith("* "):
         delta, text = _split_size(s[2:].strip())
         return _mk_bullet(text, delta)
 

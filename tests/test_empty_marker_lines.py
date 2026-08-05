@@ -51,6 +51,13 @@ def _paragraphs(tmp_path, src, name="out.pptx", ph_idx=1):
     保存した pptx を読み直すのは，利用者が開くのがファイルのほうだから
     （test_text_language.py と同じ理由）．空段落は run を持たないので，
     ``run 数 == 0`` が「本当に空の段落」であることの確認になる．
+
+    ``ph_idx=1`` は本文（タイトルレイアウトでは著者・所属）の枠．python-pptx
+    同梱の既定テンプレートはレイアウト 0「Title Slide」もレイアウト 1
+    「Title and Content」も idx 0（表題）と idx 1 を持つので，このテストが使う
+    どちらのレイアウトでも解決できる．テンプレートが変わって見つからなくなったら
+    ``assert`` で止まる——**その枠が無ければテストの前提が崩れている**ので，
+    静かに読み飛ばすのではなく落ちるのが正しい．
     """
     out = tmp_path / name
     r = render.Renderer(_theme(tmp_path))
@@ -102,7 +109,13 @@ def test_blank_source_line_is_still_a_separator():
 
 
 def test_empty_line_is_rendered_as_a_runless_paragraph(tmp_path):
-    """空行は run を持たない段落として出る（``- <br>`` の 2 行分にならない）．"""
+    """空行は run を持たない段落として出る（``- <br>`` の 2 行分にならない）．
+
+    サイズは実装の式を写さず**数値で書く**．既定テンプレートの本文 lvl1 は 32pt で，
+    1 段 ÷1.125 の 2 段下は 25pt（32 ÷ 1.125² = 25.28）．比率は DESIGN.md §5.8 で
+    決めた仕様なので，変わればこのテストが落ちるのが正しい——実装から計算すると
+    式を写すだけになり，比率が変わってもテストは通ってしまう．
+    """
     got = _paragraphs(tmp_path, """---
 theme: t.pptx
 ---
@@ -114,7 +127,7 @@ theme: t.pptx
 - B
 """)
     assert got == [("A", None, 1, 0),
-                   ("", round(32.0 / render.Renderer._SIZE_STEP_RATIO ** 2), 0, 0),
+                   ("", 25.0, 0, 0),
                    ("B", None, 1, 0)]
 
 
