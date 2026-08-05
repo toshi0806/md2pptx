@@ -69,6 +69,9 @@ class Line:
         d = list(self.seg_deltas[:n])
         d += [None] * (n - len(d))
         if d:
+            # [0] は捨てる．先頭セグメントの段数は size_delta が持つ——**Slide と
+            # 非対称なのは書き込む先が違うから**で，こちらは段落の既定文字書式へ
+            # 書かないとビュレット・採番記号のサイズが本文とずれる．
             d[0] = None
         self.seg_deltas = d
 
@@ -258,6 +261,8 @@ class Slide:
 
     def __post_init__(self) -> None:
         # 不変条件：title_deltas は title のセグメント数と同じ長さ（Line と同じ理由）．
+        # **[0] は Line と違い捨てない**——タイトルにはビュレットも採番記号も無く，
+        # 段落側へ書き分ける理由がないので，先頭セグメントも run へ書けば足りる．
         n = len(self.title.split("\v")) if self.title else 0
         d = list(self.title_deltas[:n])
         self.title_deltas = d + [None] * (n - len(d))

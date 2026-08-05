@@ -442,10 +442,13 @@ class Renderer:
         **一部だけサイズを変えられる**のはこの経路だけ——タイトル枠に副題を収める
         （Issue #82）ような使い方がこれに当たる．
 
-        deltas は IR 側で run 数と同じ長さに正規化されている（``__post_init__``）が，
-        ここでも短いほうに合わせて回す．**長さがずれたときに別のセグメントへ
-        サイズを付けるより，付けないほうが害が小さい**（見た目の崩れは目に付くが，
-        1 つずれたサイズは正しく見えてしまう）．
+        deltas は IR 側で**セグメント数と同じ長さに正規化済み**（``__post_init__``）で，
+        run 数もセグメント数に一致するので，``zip`` は常に全要素を回る．
+        短いほうで止まるのは，万一ずれたときに**別のセグメントへサイズを付けない**
+        ための安全側の性質——見た目の崩れは目に付くが，1 つずれたサイズは
+        正しく見えてしまうので，付けないほうが害が小さい．
+
+        本文が空の段落（``- `` 由来）は run が 0 個で，このループは回らない．
         """
         for run, delta in zip(p.runs, deltas):
             if delta is None:
@@ -1101,6 +1104,9 @@ class Renderer:
         if slide.title is not None and s.shapes.title is not None:
             tf = s.shapes.title.text_frame
             tf.text = slide.title
+            # 基点は lvl1 固定．本文行と違いタイトルには**ネストの概念が無く**，
+            # p.level を設定しないので常に lvl1 で描かれる（本文行が
+            # levels[blk.level] を引くのはインデントで段が変わるから）．
             self._apply_segment_deltas(tf.paragraphs[0], slide.title_deltas,
                                        self._frame_font_levels(tf)[0])
 

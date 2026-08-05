@@ -98,6 +98,24 @@ def test_plain_br_keeps_meaning_nothing():
     assert deck.slides[0].blocks[0].seg_deltas == [None, None]
 
 
+def test_whitespace_around_br_is_eaten():
+    """``<br>`` の前後の空白は従来どおり消える（この PR で変えていない）．
+
+    ``_RE_BR`` は ``\\s*<br\\s*/?>\\s*`` で前後の空白ごと置換するので，
+    先頭セグメントの**末尾**空白も落ちる．トークンを剥がすようになっても
+    そこは変わらない——``A <br>{-2} B`` は ``"A\\vB"`` であって ``"A \\vB"`` ではない．
+    行末に空白を残すエディタ設定でも表示がずれない，という既存の性質に乗っている．
+    """
+    for src in ("A <br>{-2} B", "A<br> {-2} B", "A  <br>  {-2}  B"):
+        deck = parse(f"---\ntheme: t.pptx\n---\n\n## 見出し\n- {src}\n")
+        line = deck.slides[0].blocks[0]
+        assert (line.text, line.seg_deltas) == ("A\vB", [None, -2]), src
+    # タイトルでも同じ（通す場所は _split_br の 1 つ）．
+    deck = parse("---\ntheme: t.pptx\n---\n\n## A <br>{-2} B\n")
+    assert (deck.slides[0].title, deck.slides[0].title_deltas) == (
+        "A\vB", [None, -2])
+
+
 # ---------------------------------------------------------------------- IR
 def test_ir_normalises_the_parallel_lists():
     """並行配列はセグメント数へ揃う（render が添字で run に対応付けるため）．
