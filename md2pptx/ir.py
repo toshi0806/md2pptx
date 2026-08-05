@@ -44,6 +44,13 @@ class Line:
             ×1.125（拡大）/ ÷1.125（縮小）する（render が実サイズへ換算）．
             None ならスライド既定（@body-size）に従う＝未指定．0 で「テーマ既定
             に固定（スライド既定を無効化）」を表す．絶対 pt は持たない（テーマ委譲）．
+        seg_deltas: text を "\\v"（行内改行）で割った各セグメントの相対段数
+            （2 番目以降のセグメント先頭 "{+1}"/"{-2}" 由来）．セグメントと同じ長さで，
+            要素は int｜None（None＝未指定）．**[0] は常に None**——先頭セグメントの
+            段数は size_delta が持つ．分けてあるのは書き込む先が違うからで，
+            size_delta は段落の既定文字書式（defRPr）へ書く．そうしないと
+            **ビュレットや採番記号のサイズが本文とずれる**．2 番目以降は
+            段落を分けずに run だけを変えたいので run へ書く（DESIGN.md §5.8）．
     """
 
     text: str
@@ -52,6 +59,24 @@ class Line:
     num_style: str | None = None
     num_color: str | None = None
     size_delta: int | None = None
+    seg_deltas: list[int | None] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # 不変条件：seg_deltas は text のセグメント数と同じ長さで，[0] は None．
+        # 直接構築（テスト等）で食い違っても揃える——render は添字で run に
+        # 対応付けるので，長さがずれると**別のセグメントにサイズが付く**．
+        # 揃えるのは構築時のみ（TitleSlide.affiliation_deltas と同じ契約）．
+        # IR は parser が一度構築し render が消費するもので，構築後に text を
+        # 破壊的変更する運用は想定しない（同期はしない）．
+        n = len(self.text.split("\v"))
+        d = list(self.seg_deltas[:n])
+        d += [None] * (n - len(d))
+        if d:
+            # [0] は捨てる．先頭セグメントの段数は size_delta が持つ——**Slide と
+            # 非対称なのは書き込む先が違うから**で，こちらは段落の既定文字書式へ
+            # 書かないとビュレット・採番記号のサイズが本文とずれる．
+            d[0] = None
+        self.seg_deltas = d
 
 
 @dataclass
@@ -208,6 +233,12 @@ class Slide:
 
     Attributes:
         title: スライドタイトル（"## 見出し" 由来）．タイトルなしなら None．
+        title_deltas: title を "\\v"（行内改行）で割った各セグメントの相対段数．
+            セグメントと同じ長さで，要素は int｜None（None＝未指定）．
+            基点はタイトル枠の実効既定サイズ（render の _frame_font_levels）．
+            **Line.seg_deltas と違い [0] も有効**——タイトルにはビュレットも
+            採番記号も無いので，段落の既定文字書式に書き分ける理由がなく，
+            すべて run へ書けば足りる（DESIGN.md §5.8）．
         layout: 使用するスライドレイアウト番号．既定 1（タイトルとコンテンツ）．
         blocks: スライド本文を構成するブロック列．出現順に保持する（混在可）．
             単一カラム時に使用．
@@ -224,11 +255,23 @@ class Slide:
     """
 
     title: str | None = None
+    title_deltas: list[int | None] = field(default_factory=list)
     layout: int = 1
     blocks: list[Block] = field(default_factory=list)
     directives: dict[str, object] = field(default_factory=dict)
     columns: list[list[Block]] = field(default_factory=list)
     notes: str | None = None
+
+    def __post_init__(self) -> None:
+        # 不変条件：title_deltas は title のセグメント数と同じ長さ（Line と同じ理由．
+        # 揃えるのは構築時のみ）．**[0] は Line と違い捨てない**——タイトルには
+        # ビュレットも採番記号も無く，段落側へ書き分ける理由がないので，
+        # 先頭セグメントも run へ書けば足りる．
+        # title が None なら長さ 0．タイトルの無いスライドに段数だけ渡されても
+        # 置き場所が無いので落とす（そもそも parser がそう作らない）．
+        n = len(self.title.split("\v")) if self.title else 0
+        d = list(self.title_deltas[:n])
+        self.title_deltas = d + [None] * (n - len(d))
 
 
 @dataclass
