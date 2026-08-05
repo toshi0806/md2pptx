@@ -634,7 +634,10 @@ def _parse_content_line(raw: str) -> Line | None:
     """1 行を行頭マーカー規則（DESIGN.md §5.3）に従って Line へ変換する．
 
     インデント（半角スペース 2 つ＝1 レベル）でネスト深さを決める．
-    空行（マーカー除去後に空）は None を返す．
+
+    **箇条書きマーカーだけの行は空の段落になる**（"- " だけの行＝1 行空ける．
+    Issue #82）．他の行種はマーカー除去後に空なら None（＝行を作らない）．
+    素の空行は呼び出し側が段落区切りとして先に読み飛ばすのでここへは来ない．
 
     各行種のマーカー直後・本文直前に相対サイズトークン "{+1}"/"{-2}" を置ける
     （DESIGN.md §5.8）．トークンは本文から除去し Line.size_delta へ格納する．
@@ -650,7 +653,9 @@ def _parse_content_line(raw: str) -> Line | None:
 
     def _mk(text: str, **kw: Any) -> Line | None:
         """本文が空（マーカー／サイズトークンだけの行）なら Line を作らず None．
-        マーカー除去後に空の行を IR に入れない（先頭の空行チェックと整合）．
+
+        空を段落として残すのは**箇条書きマーカーだけ**（``_mk_bullet``）．採番行を
+        空で残すと番号を 1 つ消費するだけで，空けたい 1 行は得られない．
 
         本文中の <br> はタイトルと同じ規則で行内改行（\v）へ変換する．
         render 側は本文をそのまま段落 text へ渡すため，python-pptx が
@@ -658,10 +663,33 @@ def _parse_content_line(raw: str) -> Line | None:
         text = _RE_BR.sub("\v", text)
         return Line(text=text, level=level, **kw) if text else None
 
+    def _mk_bullet(text: str, size_delta: int | None) -> Line:
+        """箇条書き行を Line にする．**本文が空でも段落を作る**（Issue #82）．
+
+        マーカーだけの行は「1 行空ける」指示として使う．表紙の著者欄やセクション扉の
+        ように記号の出ない枠で，行の塊を分けるのに要る．front matter の
+        ``affiliation`` では ``- "{-2} "`` と書けば空段落が残っていたのに，本文では
+        捨てられていた——同じことを二重に実装した結果のずれで，本文側だけが
+        取りこぼしていた．
+
+        代用として ``- <br>`` は残るが**1 行多く空く**（段落 1 行＋``a:br`` の 2 行目）．
+        空けたいのは 1 行なので，空の段落そのものを作れる必要がある．
+        """
+        return Line(text=_RE_BR.sub("\v", text), level=level,
+                    kind="bullet", size_delta=size_delta)
+
+    # マーカーだけの行 → 空行（Issue #82）．**末尾に空白が無い形を必ず拾うこと**
+    # ——多くのエディタは保存時に行末空白を除去するので，"- " しか受けないと空行
+    # スペーサが保存した瞬間に壊れる（既定の箇条書きへ落ちて**文字の "-"** が出る）．
+    # 下の "- " 判定と分けてあるのは s[2:] の意味を保つため．あちらは「マーカーと
+    # 続く空白の 2 文字を除く」意図で，1 文字しかない行を同じ式に通すと意図が濁る．
+    if s in ("-", "*"):
+        return _mk_bullet("", None)
+
     # 通常箇条書き："- " / "* "
     if s.startswith("- ") or s.startswith("* "):
         delta, text = _split_size(s[2:].strip())
-        return _mk(text, kind="bullet", size_delta=delta)
+        return _mk_bullet(text, delta)
 
     # 連番："1. 2. 3." → arabicPeriod
     m = _RE_ORDERED.match(s)
