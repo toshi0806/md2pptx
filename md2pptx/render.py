@@ -47,7 +47,7 @@ from pptx.shapes.autoshape import Shape
 from pptx.shapes.graphfrm import GraphicFrame
 from pptx.shapes.picture import Picture
 from pptx.shapes.placeholder import SlidePlaceholder
-from pptx.slide import Slide as PptxSlide
+from pptx.slide import Slide as PptxSlide, SlideLayout
 from pptx.text.text import TextFrame
 
 from .ir import (
@@ -180,8 +180,8 @@ class Renderer:
             "tx1": MSO_THEME_COLOR.TEXT_1, "tx2": MSO_THEME_COLOR.TEXT_2,
             "bg1": MSO_THEME_COLOR.BACKGROUND_1, "bg2": MSO_THEME_COLOR.BACKGROUND_2,
         }
-        # 本文スタイルのレベル別フォントサイズ（pt）のキャッシュ（None=未取得）．
-        self._body_levels: list[float] | None = None
+        # マスターの txStyles 由来レベル別サイズ（pt）のキャッシュ（style 名 → 一覧）．
+        self._master_levels: dict[str, list[float]] = {}
 
         # レイアウト解決．title=0 / content=1 / section=2．
         layouts = self.prs.slide_layouts
@@ -289,42 +289,129 @@ class Renderer:
             f"dropped {len(lines)} line(s) of body text starting {head!r}\n"
         )
 
-    def _body_font_levels(self) -> list[float]:
-        """本文スタイルのレベル別フォントサイズ（pt）のリストを返す（lvl1 始まり）．
+    def _master_style_levels(self, style: str) -> list[float]:
+        """マスターの ``p:txStyles/p:<style>`` のレベル別サイズ（pt）を返す（lvl1 始まり）．
 
-        スライドマスターの ``p:txStyles/p:bodyStyle/a:lvl{n}pPr/a:defRPr@sz``
-        を lvl1 から順に読み取る．表・図が標準サイズで収まらないとき，下位レベルの
-        小さいサイズへ段階的に切り替えるために用いる．取得できなければ既定 [18]．
+        style は ``"bodyStyle"`` / ``"titleStyle"``．取得できなければ空リストを返す
+        （既定値は呼び出し側が当てる——本文と表題では妥当な既定が違う）．
         """
-        if self._body_levels is not None:
-            return self._body_levels
-        levels = []
+        cached = self._master_levels.get(style)
+        if cached is not None:
+            return cached
+        levels: list[float] = []
         try:
             master = self.prs.slide_masters[0]
-            body = master.element.find(
-                qn("p:txStyles") + "/" + qn("p:bodyStyle"))
-            if body is not None:
+            root = master.element.find(
+                qn("p:txStyles") + "/" + qn("p:" + style))
+            if root is not None:
                 for lvl in range(1, 10):
-                    el = body.find(
+                    el = root.find(
                         qn("a:lvl%dpPr" % lvl) + "/" + qn("a:defRPr"))
                     if el is not None and el.get("sz"):
                         levels.append(int(el.get("sz")) / 100.0)
         except Exception:
             pass
-        if not levels:
-            levels = [18.0]
-        self._body_levels = levels
+        self._master_levels[style] = levels
         return levels
+
+    def _body_font_levels(self) -> list[float]:
+        """マスター本文スタイルのレベル別フォントサイズ（pt）を返す（lvl1 始まり．既定 [18]）．
+
+        テーマが持つ「本文サイズの梯子」で，表・図が標準サイズで収まらないときに
+        下位レベルの小さいサイズへ段階的に切り替えるために用いる（``_fit_font``）．
+        **プレースホルダへ流す文字の基点にはこれを使わないこと**——レイアウトによる
+        上書きを含む ``_frame_font_levels`` が実際に描かれるサイズを返す（Issue #83）．
+        """
+        return self._master_style_levels("bodyStyle") or [18.0]
+
+    def _layout_level_sizes(self, layout: SlideLayout, idx: int) -> dict[int, float]:
+        """レイアウトの idx プレースホルダが ``a:lstStyle`` で上書きするサイズ（pt）．
+
+        戻り値はレベル番号（1 始まり）→ pt の辞書．上書きの無いレベルは含まない
+        （テーマは一部のレベルだけ上書きすることがあるため，欠けは呼び出し側が
+        マスター側の値で埋める）．
+        """
+        sizes: dict[int, float] = {}
+        try:
+            # python-pptx の LayoutPlaceholders は __iter__ を Callable 属性として
+            # 宣言しており，mypy が "self を取らない" と誤検出する（_effective_geom 同様）．
+            for lph in layout.placeholders:  # type: ignore[misc]
+                if lph.placeholder_format.idx != idx:
+                    continue
+                lst = lph._element.find(
+                    qn("p:txBody") + "/" + qn("a:lstStyle"))
+                if lst is not None:
+                    for lvl in range(1, 10):
+                        el = lst.find(
+                            qn("a:lvl%dpPr" % lvl) + "/" + qn("a:defRPr"))
+                        if el is not None and el.get("sz"):
+                            sizes[lvl] = int(el.get("sz")) / 100.0
+                break
+        except Exception:
+            pass
+        return sizes
+
+    def _frame_font_levels(self, tf: TextFrame) -> list[float]:
+        """tf に流す文字のレベル別既定サイズ（pt）を返す（lvl1 始まり）．
+
+        相対サイズ（``{±n}``）の基点は「その文字が実際に出るサイズ」でなければ
+        意味を持たない（Issue #83）．PowerPoint の継承順に合わせ，**レイアウトの
+        プレースホルダの ``a:lstStyle`` をマスターの ``txStyles`` より優先**する．
+        テーマは一部のレベルだけ上書きすることがあるのでレベル単位で重ねる．
+
+        マスター側プレースホルダの ``a:lstStyle`` は見ていない．継承順では
+        レイアウトとマスター txStyles の間に入るが，手元のテーマはどれもそこに
+        サイズを持たず，足しても通らない経路が増えるだけになる．
+        プレースホルダでない図形（テキストボックス等）は本文スタイルを基点とする．
+        """
+        ptype, idx = self._frame_placeholder(tf)
+        is_title = ptype in ("title", "ctrTitle")
+        base = self._master_style_levels(
+            "titleStyle" if is_title else "bodyStyle")
+        if not base:
+            base = [42.0] if is_title else [18.0]
+        if idx is None:
+            return base
+        try:
+            # tf.part はこのテキストフレームを含む SlidePart．そこから所属スライドの
+            # レイアウトを引く（スライド側の描画中にしか呼ばれない）．
+            layout = tf.part.slide.slide_layout  # type: ignore[attr-defined]
+        except Exception:
+            return base
+        over = self._layout_level_sizes(layout, idx)
+        if not over:
+            return base
+        n = max(len(base), max(over))
+        return [over.get(i + 1, base[min(i, len(base) - 1)]) for i in range(n)]
+
+    @staticmethod
+    def _frame_placeholder(tf: TextFrame) -> tuple[str, int | None]:
+        """tf を持つ図形のプレースホルダ種別と idx を返す（プレースホルダ以外は idx=None）．
+
+        ``p:ph`` は属性を省略できる（``type`` 既定 ``body`` / ``idx`` 既定 0）ので，
+        欠けている場合は既定を当てる．
+        """
+        try:
+            sp = tf._txBody.getparent()
+            el = sp.find(
+                qn("p:nvSpPr") + "/" + qn("p:nvPr") + "/" + qn("p:ph"))
+        except Exception:
+            el = None
+        if el is None:
+            return "body", None
+        return el.get("type") or "body", int(el.get("idx") or 0)
 
     def _body_font_size(self) -> float:
         """本文プレースホルダの標準フォントサイズ（pt．lvl1）を返す．"""
         return self._body_font_levels()[0]
 
     def _apply_size_delta(self, p: _Paragraph, level: int,
-                          delta: int | None) -> None:
+                          delta: int | None, levels: list[float]) -> None:
         """段落 p に相対フォントサイズ（delta 段）を適用する．
 
-        基点はその段落の level に対応するテーマ既定サイズ（_body_font_levels）．
+        基点はその段落の level に対応するテーマ既定サイズ．levels は段落を置く
+        枠の実効サイズ（``_frame_font_levels``）で，呼び出し側が枠ごとに 1 度
+        解決して渡す（Issue #83．行ごとに引き直さないための引数でもある）．
         実サイズ = round(base × 1.125**delta) を [_SIZE_MIN_PT, _SIZE_MAX_PT] で
         クランプする（大きな段数指定でも極小・巨大化しない）．p.level（インデント）は
         変更しない＝段落の既定文字書式（defRPr＝p.font）にサイズを設定するため，
@@ -339,14 +426,19 @@ class Renderer:
             # スライド既定（@body-size）を無効化し，テーマ既定サイズへ戻す．
             p.font.size = None
             return
-        levels = self._body_font_levels()
         base = levels[min(level, len(levels) - 1)]
         size: float = round(base * self._SIZE_STEP_RATIO ** delta)
         size = min(self._SIZE_MAX_PT, max(self._SIZE_MIN_PT, size))
         p.font.size = Pt(size)
 
     def _title_font_size(self) -> float:
-        """タイトルプレースホルダの既定フォントサイズ（pt．lvl1）を返す（既定 42）．"""
+        """マスター表題スタイルの既定フォントサイズ（pt．lvl1）を返す（既定 42）．
+
+        **タイトルの描画には使っていない**——``title:`` の段落に ``sz`` は書かず，
+        実サイズはテーマ（レイアウトの CENTER_TITLE）が決める．唯一の用途は
+        front matter の ``subtitle:`` の基点で，そこが凍結されている理由は
+        ``render_title_slide`` のコメントを参照（Issue #83 / #82）．
+        """
         try:
             master = self.prs.slide_masters[0]
             el = master.element.find(
@@ -357,27 +449,6 @@ class Renderer:
         except Exception:
             pass
         return 42.0
-
-    def _subtitle_font_size(self) -> float:
-        """副題プレースホルダ（idx 1）の既定フォントサイズ（pt．lvl1）を返す（既定 28）．
-
-        著者・所属欄はこのプレースホルダに入るため，相対サイズ段数（{-1} 等）の基点にする．
-        （副題自体はタイトル枠内に別サイズで入るため基点が異なる：render_title_slide 参照．）
-        """
-        if self.title_layout is None:
-            return 28.0
-        try:
-            # python-pptx の LayoutPlaceholders は __iter__ をメソッドでなく
-            # Callable 属性として宣言しており（upstream 自身も pyright 用の
-            # ignore を付けている），mypy が "self を取らない" と誤検出する．
-            for ph in self.title_layout.placeholders:  # type: ignore[misc]
-                if ph.placeholder_format.idx == 1:
-                    for dr in ph._element.iter(qn("a:defRPr")):
-                        if dr.get("sz"):
-                            return int(dr.get("sz")) / 100.0
-        except Exception:
-            pass
-        return 28.0
 
     def _size_from_delta(self, base_pt: float, delta: int | None) -> float:
         """基点サイズ base_pt（pt）に相対段数 delta を適用した pt 値を返す（範囲クランプ）．
@@ -430,9 +501,15 @@ class Renderer:
                 sp = tf.add_paragraph()
                 sp.text = ts.subtitle
                 sp.space_before = Pt(6)
-                # 副題はタイトル枠内に入るため基点はタイトル×0.8（副題プレースホルダの
-                # 既定サイズではない）．著者・所属は別プレースホルダなので基点が異なるが，
-                # いずれも「その要素が本来出るサイズから delta 段」で一貫する．
+                # 副題だけは基点が「実際に描かれるサイズ」になっていない．
+                # _title_font_size() はマスターの titleStyle（42pt 等）で，
+                # タイトルが実際に出るサイズ（レイアウト 0 の上書き．60pt / 50pt）
+                # ではない．**承知のうえで現状の値のまま凍結する**（Issue #83）．
+                # front matter の表紙記述は Issue #82 で本文記法へ移して非推奨に
+                # するので，この経路は消える．非推奨の間は既存原稿が同じ見た目で
+                # 動き続けるほうが価値があり，消える直前に見た目を変える益がない．
+                # 直すのではなく，#82 で「副題＝タイトル枠に置く行」になったとき，
+                # 他の行と同じ _frame_font_levels 基点へ自然に合流させること．
                 sub_sz = self._size_from_delta(
                     self._title_font_size() * 0.8, ts.subtitle_delta)
                 for r in sp.runs:
@@ -468,7 +545,9 @@ class Renderer:
                 for ln in sub_lines[1:]:
                     tf.add_paragraph().text = ln
                 # {-1}/{+1} 指定のある行だけ副題既定サイズを基点に段階調整する．
-                base = self._subtitle_font_size()
+                # 基点は本文行と同じ解決を通す（同じ枠に出る同じ記法が経路で
+                # 違うサイズになっていた．Issue #83）．
+                base = self._frame_font_levels(tf)[0]
                 for para, delta in zip(tf.paragraphs, sub_deltas):
                     if delta is not None:
                         para.font.size = Pt(self._size_from_delta(base, delta))
@@ -1130,8 +1209,10 @@ class Renderer:
         追記しても良いよう，処理後の first 状態を返す．
 
         相対サイズは行の size_delta を優先し，None の行はスライド既定
-        （default_size_delta，@body-size 由来）を継承する．
+        （default_size_delta，@body-size 由来）を継承する．基点は tf の枠が
+        実際に持つ既定サイズで，枠ごとに 1 度だけ解決する（Issue #83）．
         """
+        levels = self._frame_font_levels(tf)
         for blk in line_blocks:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
             first = False
@@ -1150,7 +1231,7 @@ class Renderer:
             # なく無意味な no-op なので適用しない（テーマの段落サイズに触れない）．
             if delta == 0 and default_size_delta is None:
                 delta = None
-            self._apply_size_delta(p, blk.level, delta)
+            self._apply_size_delta(p, blk.level, delta, levels)
         return first
 
     def _fill_lines(self, tf: TextFrame, line_blocks: list[Line],
