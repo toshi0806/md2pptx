@@ -65,6 +65,9 @@ class Line:
         # 不変条件：seg_deltas は text のセグメント数と同じ長さで，[0] は None．
         # 直接構築（テスト等）で食い違っても揃える——render は添字で run に
         # 対応付けるので，長さがずれると**別のセグメントにサイズが付く**．
+        # 揃えるのは構築時のみ（TitleSlide.affiliation_deltas と同じ契約）．
+        # IR は parser が一度構築し render が消費するもので，構築後に text を
+        # 破壊的変更する運用は想定しない（同期はしない）．
         n = len(self.text.split("\v"))
         d = list(self.seg_deltas[:n])
         d += [None] * (n - len(d))
@@ -260,9 +263,12 @@ class Slide:
     notes: str | None = None
 
     def __post_init__(self) -> None:
-        # 不変条件：title_deltas は title のセグメント数と同じ長さ（Line と同じ理由）．
-        # **[0] は Line と違い捨てない**——タイトルにはビュレットも採番記号も無く，
-        # 段落側へ書き分ける理由がないので，先頭セグメントも run へ書けば足りる．
+        # 不変条件：title_deltas は title のセグメント数と同じ長さ（Line と同じ理由．
+        # 揃えるのは構築時のみ）．**[0] は Line と違い捨てない**——タイトルには
+        # ビュレットも採番記号も無く，段落側へ書き分ける理由がないので，
+        # 先頭セグメントも run へ書けば足りる．
+        # title が None なら長さ 0．タイトルの無いスライドに段数だけ渡されても
+        # 置き場所が無いので落とす（そもそも parser がそう作らない）．
         n = len(self.title.split("\v")) if self.title else 0
         d = list(self.title_deltas[:n])
         self.title_deltas = d + [None] * (n - len(d))

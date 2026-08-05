@@ -66,6 +66,24 @@ def _runs(tmp_path, src, ph_idx, name="out.pptx"):
             for para in ph.text_frame.paragraphs for run in para.runs]
 
 
+def _para_size(tmp_path, src, ph_idx, name="para.pptx"):
+    """先頭スライドの指定枠の，先頭段落の**段落既定サイズ**（pt）を返す．
+
+    ``_runs`` が見るのは run の ``rPr`` で，行頭トークンが書かれる
+    ``pPr/defRPr`` は映らない．役割が分かれていることを確かめるには両方要る．
+    """
+    out = tmp_path / name
+    r = render.Renderer(_theme(tmp_path))
+    r.render(parse(src))
+    r.save(str(out))
+    slide = Presentation(str(out)).slides[0]
+    ph = next((s for s in slide.placeholders
+               if s.placeholder_format.idx == ph_idx), None)
+    assert ph is not None, f"placeholder idx={ph_idx} not found"
+    size = ph.text_frame.paragraphs[0].font.size
+    return size.pt if size else None
+
+
 # ------------------------------------------------------------------ parser
 def test_parser_splits_tokens_off_each_segment():
     """2 番目以降のセグメント先頭のトークンが seg_deltas へ移る．"""
@@ -143,6 +161,21 @@ theme: t.pptx
 """, ph_idx=0) == [("主題", None), ("副題", 35.0)]
 
 
+def test_render_sizes_the_first_title_segment(tmp_path):
+    """タイトルは先頭セグメントにも段数を書ける（``Line`` との非対称の実物）．
+
+    44pt × 1.125 ＝ 49.5 を丸めて 50pt．run へ入るので段落既定は空のまま．
+    """
+    src = """---
+theme: t.pptx
+---
+
+## {+1} 大見出し<br>{-1} 小さく
+"""
+    assert _runs(tmp_path, src, ph_idx=0) == [("大見出し", 50.0), ("小さく", 39.0)]
+    assert _para_size(tmp_path, src, ph_idx=0) is None
+
+
 def test_render_sizes_the_body_segments(tmp_path):
     """本文行でも 2 番目以降の run だけサイズが変わる．"""
     assert _runs(tmp_path, """---
@@ -161,12 +194,17 @@ def test_segment_base_ignores_the_line_token(tmp_path):
     ``{-2}`` は行が ``{+1}`` でも「テーマ既定の 2 段下」＝ 25pt のまま．
     記法の意味を段で変えないほうが，書く側が結果を予測できる．
     """
-    assert _runs(tmp_path, """---
+    src = """---
 theme: t.pptx
 ---
 
 ## 見出し
 
 - {+1} 大きい行<br>{-2} 小さい続き
-""", ph_idx=1) == [("大きい行", None), ("小さい続き", 25.0)]
-    # 行の {+1} 自体は段落の既定文字書式へ入る（run には出ない）．
+"""
+    assert _runs(tmp_path, src, ph_idx=1) == [("大きい行", None),
+                                              ("小さい続き", 25.0)]
+    # 行頭の {+1} は run ではなく**段落の既定文字書式**へ入る（32 × 1.125 ＝ 36pt）．
+    # そうでないとビュレットが本文と違う大きさで出る．先頭 run が None なのは
+    # 「サイズ未指定」であって「調整されていない」ではない——段落側から継承する．
+    assert _para_size(tmp_path, src, ph_idx=1) == 36.0

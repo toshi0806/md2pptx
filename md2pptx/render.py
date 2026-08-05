@@ -1107,6 +1107,9 @@ class Renderer:
             # 基点は lvl1 固定．本文行と違いタイトルには**ネストの概念が無く**，
             # p.level を設定しないので常に lvl1 で描かれる（本文行が
             # levels[blk.level] を引くのはインデントで段が変わるから）．
+            # サイズは run の rPr へ入る．タイトルに段落既定（defRPr）を書く経路を
+            # 足すなら，**run 側が優先される**ことに注意——ここで書いた段数が
+            # 段落側の指定を上書きする（本文行は defRPr と rPr を役割で分けている）．
             self._apply_segment_deltas(tf.paragraphs[0], slide.title_deltas,
                                        self._frame_font_levels(tf)[0])
 
