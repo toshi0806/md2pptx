@@ -80,8 +80,11 @@ def _para_sizes(prs, slide_idx=0, ph_idx=1):
     slide = prs.slides[slide_idx]
     ph = next((s for s in slide.placeholders
                if s.placeholder_format.idx == ph_idx), None)
+    # 失敗時はレイアウト名まで出す．このテストの期待値はレイアウトごとの上書きに
+    # 依存するので，どのレイアウトを見に行けばよいかが分かるほうが早い．
     assert ph is not None, (
-        f"placeholder idx={ph_idx} not found on slide {slide_idx}")
+        f"placeholder idx={ph_idx} not found on slide {slide_idx} "
+        f"(layout {slide.slide_layout.name!r})")
     out = []
     for para in ph.text_frame._txBody.findall(f"{_A}p"):
         text = "".join(t.text or "" for t in para.iter(f"{_A}t"))
