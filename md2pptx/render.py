@@ -1149,7 +1149,12 @@ class Renderer:
                                  default_size_delta)
                 self._apply_autofit(tf, scale, default_autofit)
 
-        if slide_number:
+        # レイアウト 0（テーマの「タイトル スライド」）には番号を付けない．
+        # そのレイアウトを選ぶこと自体が「これは表紙」の宣言なので，
+        # 番号の有無をそこに紐づける（Issue #82）．front matter 由来の表紙を
+        # 描く render_title_slide も番号を付けず，本文記法で書いた表紙が
+        # 同じ扱いになる．slide_number: false は従来どおり全体に効く．
+        if slide_number and layout_idx != 0:
             self.add_slide_number(s)
         self._set_notes(s, slide.notes)
         return s
