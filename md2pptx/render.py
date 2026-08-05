@@ -381,7 +381,9 @@ class Renderer:
         over = self._layout_level_sizes(layout, idx)
         if not over:
             return base
-        n = max(len(base), max(over))
+        # 必要なレベル数＝マスター側の段数と，上書きが触れる最大レベルの大きいほう．
+        # over のキーはレベル番号（1 始まり）なので len(base) と同じ土俵で比べられる．
+        n = max(len(base), max(over.keys()))
         return [over.get(i + 1, base[min(i, len(base) - 1)]) for i in range(n)]
 
     @staticmethod

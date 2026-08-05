@@ -19,9 +19,21 @@ Issue #83 で実測した症状は 2 つで，ここで固定するのは①．
   見た目を変える益がない（判断の経緯は ``render_title_slide`` のコメント）．
 
 テーマは python-pptx 同梱の既定テンプレートから作るので，リポジトリの
-``OfficeTheme.pptx`` にも実 PowerPoint にも依存しない．既定テンプレートの構成は
-マスター bodyStyle が lvl1=32 / lvl2=28，レイアウト 2「Section Header」が
-lvl1=20，レイアウト 3「Two Content」が lvl1=28 / lvl2=24．
+``OfficeTheme.pptx`` にも実 PowerPoint にも依存しない．既定テンプレートで
+idx 1 の枠が持つ実効サイズはこうなっている（実測）．
+
+===================== ============================ =================
+レイアウト             lstStyle の sz 上書き          実効 lvl1
+===================== ============================ =================
+0 Title Slide         なし（配置とビュレットのみ）    マスターの 32pt
+1 Title and Content   なし                          マスターの 32pt
+2 Section Header      {1:20, 2:18, 3:16}            20pt
+3 Two Content         {1:28, 2:24, 3:20}            28pt
+===================== ============================ =================
+
+**レイアウト 0 に sz の上書きが無いこと**が
+``test_same_frame_same_size_across_paths`` の期待値の前提．``lstStyle`` 要素自体は
+9 レベル分あるが，持っているのは配置とビュレットだけで ``sz`` を含まない．
 """
 from __future__ import annotations
 
@@ -63,10 +75,17 @@ def _para_sizes(prs, slide_idx=0, ph_idx=1):
     サイズは段落の既定文字書式（``a:pPr/a:defRPr@sz``）から読む．``_apply_size_delta``
     が run ではなくここへ書くのは，run の無い空段落や採番記号にも効かせるため．
     未指定（テーマ継承のまま）は None．
+
+    ``ph_idx=1`` は本文（タイトルレイアウトでは著者・所属）の枠．既定テンプレートは
+    このテストが使うどのレイアウトにも idx 1 を持つ．見つからなければ ``assert`` で
+    止まる——**その枠が無ければテストの前提が崩れている**ので，静かに読み飛ばす
+    のではなく落ちるのが正しい．
     """
     slide = prs.slides[slide_idx]
-    ph = [s for s in slide.placeholders
-          if s.placeholder_format.idx == ph_idx][0]
+    ph = next((s for s in slide.placeholders
+               if s.placeholder_format.idx == ph_idx), None)
+    assert ph is not None, (
+        f"placeholder idx={ph_idx} not found on slide {slide_idx}")
     out = []
     for para in ph.text_frame._txBody.findall(f"{_A}p"):
         text = "".join(t.text or "" for t in para.iter(f"{_A}t"))
