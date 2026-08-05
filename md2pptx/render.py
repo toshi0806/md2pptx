@@ -433,6 +433,27 @@ class Renderer:
         size = min(self._SIZE_MAX_PT, max(self._SIZE_MIN_PT, size))
         p.font.size = Pt(size)
 
+    def _apply_segment_deltas(self, p: _Paragraph, deltas: list[int | None],
+                              base_pt: float) -> None:
+        """段落 p の run へ，セグメントごとの相対サイズを適用する（Issue #82）．
+
+        ``<br>`` を含む段落は python-pptx が ``\\v`` ごとに run を分けて ``a:br`` で
+        つなぐので，run と IR のセグメントが順に 1 対 1 で対応する．行や段落を分けずに
+        **一部だけサイズを変えられる**のはこの経路だけ——タイトル枠に副題を収める
+        （Issue #82）ような使い方がこれに当たる．
+
+        deltas は IR 側で run 数と同じ長さに正規化されている（``__post_init__``）が，
+        ここでも短いほうに合わせて回す．**長さがずれたときに別のセグメントへ
+        サイズを付けるより，付けないほうが害が小さい**（見た目の崩れは目に付くが，
+        1 つずれたサイズは正しく見えてしまう）．
+        """
+        for run, delta in zip(p.runs, deltas):
+            if delta is None:
+                continue
+            size = round(base_pt * self._SIZE_STEP_RATIO ** delta)
+            run.font.size = Pt(
+                min(self._SIZE_MAX_PT, max(self._SIZE_MIN_PT, size)))
+
     def _title_font_size(self) -> float:
         """マスター表題スタイルの既定フォントサイズ（pt．lvl1）を返す（既定 42）．
 
@@ -1078,7 +1099,10 @@ class Renderer:
 
         s = self.prs.slides.add_slide(layout)
         if slide.title is not None and s.shapes.title is not None:
-            s.shapes.title.text = slide.title
+            tf = s.shapes.title.text_frame
+            tf.text = slide.title
+            self._apply_segment_deltas(tf.paragraphs[0], slide.title_deltas,
+                                       self._frame_font_levels(tf)[0])
 
         # @widths によるプレースホルダ幅の上書きは，本文描画より
         # 前に済ませる（以降の _effective_geom / _content_rect が上書き後を参照）．
@@ -1234,6 +1258,11 @@ class Renderer:
             if delta == 0 and default_size_delta is None:
                 delta = None
             self._apply_size_delta(p, blk.level, delta, levels)
+            # セグメントの段数は行の段数と**同じ基点**（その level のテーマ既定）から
+            # 数える．行が {+1} でもセグメントの {-2} は同じ大きさになる——
+            # 「テーマ既定からの相対段数」という記法の意味を段で変えないため．
+            self._apply_segment_deltas(p, blk.seg_deltas,
+                                       levels[min(blk.level, len(levels) - 1)])
         return first
 
     def _fill_lines(self, tf: TextFrame, line_blocks: list[Line],

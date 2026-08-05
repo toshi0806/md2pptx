@@ -191,6 +191,8 @@ class Line:                  # 本文の 1 段落
     num_style: str | None = None  # autonum 時: "arabicPeriod" | "circleNumDbPlain" | ...
     num_color: str | None = None  # 採番記号色のテーマ名（例 "tx1"）
     size_delta: int | None = None # {+N}/{-N} の相対段数（None=未指定, 0=テーマ既定へ固定）
+    # text を "\v" で割ったセグメントと同じ長さ。[0] は常に None（先頭は size_delta）
+    seg_deltas: list[int | None] = field(default_factory=list)
 
 @dataclass
 class Table:
@@ -253,6 +255,8 @@ Block = Line | ObjectBlock
 @dataclass
 class Slide:
     title: str | None = None
+    # title を "\v" で割ったセグメントと同じ長さ。Line と違い [0] も有効
+    title_deltas: list[int | None] = field(default_factory=list)
     layout: int = 1          # 既定 1（タイトルとコンテンツ）
     # 出現順に保持（単一カラム時）
     blocks: list[Block] = field(default_factory=list)
@@ -339,6 +343,10 @@ affiliation:
 - front matter の `title` / `subtitle` / `author` / `affiliation` も同じ規則。
   ここだけ素通しにすると `<br>` の4文字がそのまま画面に出る（Issue #79）。
   相対サイズトークン `{-1}` の剥がしより**後**に変換する（`_split_size_opt`）。
+- `<br>` の直後には相対サイズトークンを置ける（5.8）。変換とトークンの剥がしは
+  `_split_br` に集約し、見出し・本文行・矢印行がすべてそこを通る。
+  **通す場所を増やしたら全部に掛けること**——#79 は front matter だけ素通しにして
+  `<br>` の4文字を画面に出した。
 
 ### 5.3 本文：行頭マーカー記法
 
@@ -563,6 +571,8 @@ note(bottom): → テーマを差し替えるだけで見た目が一新でき�
 | `→ {-1} テキスト` | トークンは `→` の後ろに置く。`→` は本文に残る |
 | `{0}` | テーマ既定に固定（後述のスライド既定 `@body-size` を無効化） |
 | `<!-- @body-size: -1 -->` | スライド既定。本文 Line を一律1段調整。**行トークンが優先** |
+| `A<br>{-2} B` | `<br>` の直後。その位置から先の run だけ調整（段落は分けない） |
+| `# 主題<br>{-2} 副題` | 見出しでも同じ。先頭セグメントにも置ける（`## {+1} X`） |
 
 - 符号は省略可（`{2}` ＝ `{+2}`）。`{+0}` / `{-0}` は `{0}` と同義（テーマ既定に固定）。
   トークンが無い行はスライド既定（無ければテーマ既定）に従う。
@@ -573,6 +583,22 @@ note(bottom): → テーマを差し替えるだけで見た目が一新でき�
 - 実サイズ ＝ `round(base × 1.125**delta)` を **8pt〜96pt** でクランプ（極端な段数でも暴走しない）。
   `base` はその行の `level` に対応する**実効既定サイズ**（`_frame_font_levels`）。
   pt 値はコードに持たず、テーマ由来の比だけを持つ。
+- **`<br>` セグメントごとの指定**（Issue #82）。`<br>` は段落を分けずに行を折る記法で、
+  python-pptx は `\v` をセグメントごとの `a:r` にして `a:br` でつなぐ。
+  つまり run と IR のセグメントが順に1対1で対応するので、run へ書けば
+  段落を分けずに一部だけ大きさを変えられる（`_apply_segment_deltas`）。
+  タイトル枠の中に副題を収める用途がこれに当たる。
+  **段数の基点は行頭の指定から数え直さない**。`- {+1} A<br>{-2} B` の `{-2}` は
+  「テーマ既定の2段下」のままで、書く側が位置によらず結果を予測できる。
+  格納先は行種で分かれ、理由は書き込む先が違うことにある。
+  - 本文行 … 行頭は `Line.size_delta` で**段落の既定文字書式**（`defRPr`）へ。
+    そうしないとビュレット・採番記号のサイズが本文とずれる。
+    2番目以降は `Line.seg_deltas`（`[0]` は常に `None`）で run へ。
+  - タイトル … `Slide.title_deltas` のみ。`[0]` も有効。
+    記号が無いので段落側へ書き分ける理由がない。
+  - どちらも `__post_init__` でセグメント数と同じ長さに正規化する。
+    **長さがずれると別のセグメントにサイズが付く**——見た目の崩れと違い、
+    1つずれたサイズは正しく見えてしまうので、構築時に潰す。
 - 実効既定サイズは、PowerPoint の継承順（スライド → レイアウト → マスター）に合わせ、
   **レイアウトのプレースホルダの `a:lstStyle` をマスターの `txStyles` より優先**して
   解決する（Issue #83）。テーマは一部のレベルだけ上書きすることがあるのでレベル単位で

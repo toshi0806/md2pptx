@@ -285,12 +285,18 @@ def _parse_body(body: str, body_offset: int = 0,
                     f"H{len(hashes)} heading is not supported at line {lineno}: "
                     f"{stripped!r} (use '#' for a section slide or '##' for a "
                     f"content slide)")
-            # タイトル内の <br> を行内改行（\v）へ変換する．
-            htext = _RE_BR.sub("\v", htext)
+            # タイトル内の <br> を行内改行（\v）へ変換し，各セグメント先頭の
+            # サイズトークンを剥がす．**先頭セグメントも段数を取れる**——
+            # 本文行と違いタイトルにはビュレットも採番記号も無いので，
+            # 段落の既定文字書式へ書き分ける理由がない（ir.Slide.title_deltas）．
+            head_delta, htext = _split_size(htext)
+            htext, title_deltas = _split_br(htext)
+            title_deltas[0] = head_delta
             if current is not None:
                 slides.append(current)
             layout = 2 if len(hashes) == 1 else 1
-            current = Slide(title=htext or None, layout=layout)
+            current = Slide(title=htext or None, title_deltas=title_deltas,
+                            layout=layout)
             i += 1
             continue
 
@@ -630,6 +636,26 @@ def _split_size(content: str) -> tuple[int | None, str]:
     return None, content
 
 
+def _split_br(text: str) -> tuple[str, list[int | None]]:
+    """<br> を行内改行（\\v）へ変換し，各セグメント先頭のサイズトークンを剥がす．
+
+    戻り値は (トークンを除いたテキスト, セグメントと同じ長さの段数リスト)．
+    先頭セグメントの段数は **None 固定**——本文行では行頭トークンを
+    ``_split_size`` が先に取っており，タイトルでは呼び出し側が入れ直す
+    （DESIGN.md §5.8．格納先が違う理由は ir.Line.seg_deltas の説明）．
+
+    ``_RE_BR`` は前後の空白ごと置換するので，セグメントの先頭に空白は残らない．
+    """
+    segs = _RE_BR.sub("\v", text).split("\v")
+    deltas: list[int | None] = [None]
+    out = [segs[0]]
+    for seg in segs[1:]:
+        delta, rest = _split_size(seg)
+        deltas.append(delta)
+        out.append(rest)
+    return "\v".join(out), deltas
+
+
 def _parse_content_line(raw: str) -> Line | None:
     """1 行を行頭マーカー規則（DESIGN.md §5.3）に従って Line へ変換する．
 
@@ -660,8 +686,9 @@ def _parse_content_line(raw: str) -> Line | None:
         本文中の <br> はタイトルと同じ規則で行内改行（\v）へ変換する．
         render 側は本文をそのまま段落 text へ渡すため，python-pptx が
         "\v" を段落内改行（<a:br/>）として出力する．"""
-        text = _RE_BR.sub("\v", text)
-        return Line(text=text, level=level, **kw) if text else None
+        text, seg_deltas = _split_br(text)
+        return (Line(text=text, level=level, seg_deltas=seg_deltas, **kw)
+                if text else None)
 
     def _mk_bullet(text: str, size_delta: int | None) -> Line:
         """箇条書き行を Line にする．**本文が空でも段落を作る**（Issue #82）．
@@ -675,8 +702,9 @@ def _parse_content_line(raw: str) -> Line | None:
         代用として ``- <br>`` は残るが**1 行多く空く**（段落 1 行＋``a:br`` の 2 行目）．
         空けたいのは 1 行なので，空の段落そのものを作れる必要がある．
         """
-        return Line(text=_RE_BR.sub("\v", text), level=level,
-                    kind="bullet", size_delta=size_delta)
+        body, seg_deltas = _split_br(text)
+        return Line(text=body, level=level, kind="bullet",
+                    size_delta=size_delta, seg_deltas=seg_deltas)
 
     # マーカーだけの行 → 空行（Issue #82）．**末尾に空白が無い形を必ず拾うこと**
     # ——多くのエディタは保存時に行末空白を除去するので，"- " しか受けないと空行
@@ -714,8 +742,9 @@ def _parse_content_line(raw: str) -> Line | None:
     if s.startswith(ARROW):
         delta, rest = _split_size(s[len(ARROW):].lstrip())
         text = f"{ARROW} {rest}" if rest else ARROW
-        text = _RE_BR.sub("\v", text)
-        return Line(text=text, level=level, kind="plain", size_delta=delta)
+        text, seg_deltas = _split_br(text)
+        return Line(text=text, level=level, kind="plain", size_delta=delta,
+                    seg_deltas=seg_deltas)
 
     # 上記以外 → 既定の箇条書き（インデントに応じたレベル）
     delta, text = _split_size(s)
