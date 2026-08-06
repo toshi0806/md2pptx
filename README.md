@@ -253,6 +253,7 @@ LaTeX Workshop のリアルタイムプレビューと同じ体験になりま�
 | `md2pptx/ir.py` | 中間表現のデータクラス定義 |
 | `md2pptx/render.py` | IR → pptx 描画 |
 | `md2pptx/flow.py` | フロー図 DSL のパーサ＋レイアウタ |
+| `md2pptx/layout.py` | 図の座標計算に共通の入れ物（矩形・配置結果）と単位換算 |
 | `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`） |
 | `md2pptx/watch.py` | 入力の変更監視（`--watch`） |
 | `md2pptx/workdir.py` | 使い捨て作業ディレクトリの作成と片付け |

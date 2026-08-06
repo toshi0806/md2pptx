@@ -286,6 +286,43 @@ class Deck:
     slides: list[Slide] = field(default_factory=list)
 ```
 
+### 4.1 座標計算の共通プリミティブ（`layout.py`）
+
+図 DSL は「DSL を解釈して IR にする」と「IR を矩形領域へ置いて座標を出す」を分け、
+**座標計算まで純 Python（EMU 整数）で完結**させる。python-pptx を持ち込まないので、
+図の配置は pptx を書かずに試せる。`flow.py` がこの形で、新しい図 DSL も踏襲する。
+
+`layout.py` はその共通部分だけを持つ。
+
+| 名前 | 役割 |
+|---|---|
+| `EMU` / `emu(inch)` | 単位換算 |
+| `Rect` | 矩形。端と中心を**名前で**読む |
+| `PlacedNode` | 角丸四角ノード（色・サブラベルを持つので `node` ごと渡す） |
+| `PlacedText` | 文字だけの要素（省略記号・矢印ラベル・キャプション） |
+| `PlacedArrow` | 向きのある矢印 |
+| `PlacedLine` | 矢尻の無い線分（ライフラインなど）。`dashed` で破線 |
+
+**位置を名前で持つ。** 位置で持つと取り違えても誰も気づかない——幅と高さを
+入れ替えても、右端と下端を取り違えても、型としては同じ整数で通ってしまい、
+図が歪んで出てくるまで分からない（Issue #71）。
+
+図ごとの並べ方（何をどこに置くか）は各 DSL のモジュールが決める。
+
+#### `ObjectBlock` の判定は 1 か所
+
+`ir.is_object_block`（`TypeGuard`）が `ObjectBlock` の定義から実行時の判定を作る。
+それまで `(Table, Flow, Image)` というタプルが render の 5 か所
+（`render_slide` の単一カラム／多カラム、`_render_stacked_into`、`_obj_weight`、
+`_stack_objects`）に複製されており、**種類を増やすと必ずどこかが漏れる**形だった。
+
+#### 線を引く（`Renderer.line`）
+
+`block_arrow` はノード間の**すき間に収まる塗り矢印**で、太い直線＋三角矢じりが
+box に食い込むのを避けるための道具。`line` は任意の 2 点を結ぶ細い線で、
+シーケンス図のライフラインやメッセージのように**すき間ではなく図の骨格**を描く。
+`dashed` で破線、`arrow` で終点に矢じり（`a:tailEnd` を直接書く）。
+
 ## 5. Markdown 記法仕様
 
 ### 5.1 フロントマター（YAML）
