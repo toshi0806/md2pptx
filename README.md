@@ -87,6 +87,7 @@ python3 -m md2pptx input.md
 | 見た目を変える（配色・フォント・ロゴ・レイアウト） | [THEME.md](THEME.md) |
 | VS Code で編集しながらプレビューする | [VSCODE.md](VSCODE.md) |
 | 内部設計・記法の厳密仕様・再現検証結果 | [DESIGN.md](DESIGN.md) |
+| 版ごとの変更点 | [CHANGELOG.md](CHANGELOG.md) |
 
 ## コマンドラインリファレンス
 

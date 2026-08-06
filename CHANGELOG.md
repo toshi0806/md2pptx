@@ -1,0 +1,132 @@
+# 変更履歴
+
+このファイルは md2pptx の変更を版ごとにまとめたものです。
+形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に、
+版番号は [Semantic Versioning](https://semver.org/lang/ja/) に従います。
+
+各項目の末尾の番号は Pull Request です。詳しい経緯はそちらを参照してください。
+
+## 1.0.0 — 2026-08-06
+
+記法が固まった版です。**同じことを言う方法が1つになりました**——スライドは見出しで分け、
+大きさは相対段数で指定し、見た目はテーマが決めます。
+
+これまでは表紙だけが例外で、「文書のメタデータ」の名前を持つ YAML キーに
+描画指示（`<br>` や `{±n}`）を書かせていました。記法が二重にあるので処理も二重になり、
+`<br>` を片方だけ通し忘れる取りこぼしまで起きています。旧記法は警告付きで動き続けます。
+
+### 追加
+
+- 表紙を本文記法で書けるようになりました。`# 主題` に `<!-- @layout: 0 -->` を添えます。
+  このレイアウトのスライドには番号が付きません [#89]
+- `<br>` の直後に相対サイズトークンを置けるようになりました。
+  その位置から先だけ大きさが変わります（副題をタイトル枠に収めるための記法）[#88]
+- 箇条書きマーカーだけの行が空行になります。記号の出ない枠で行の塊を分けられます [#86]
+- `<br>` を本文行でも使えるようになりました [#27]
+- 保存のたびに作り直す `--watch` [#54]
+- pptx の生成後に PDF を作れるようになりました。macOS では実 PowerPoint を裏で使います [#40][#41]
+- 変換の待ち時間に上限を設けました。tty なら打ち切りません [#51]
+
+### 変更
+
+- **破壊的**: `--pdf` をフラグにし、出力先を `--pdf-output PATH` へ分けました。
+  値を取るオプションだったため、`md2pptx --pdf 入力.md` が入力ファイルを
+  オプションの値として食べてしまっていました [#43]
+- **破壊的**: Python 3.11以上が必要になりました。3.9 は 2025-10-31 に
+  サポートが終わっています [#37]
+- フロントマターの `title` / `subtitle` / `author` / `affiliation` は**非推奨**です。
+  警告が出ますが、動作は従来どおりです [#89]
+- 全シグネチャに型注釈を必須化し、mypy を CI に入れました [#73][#74]
+
+### 修正
+
+- 相対サイズの基点が、実際に描かれる枠の既定を見ていませんでした。
+  同じ記法が同じ枠で違うサイズになっていました [#84]
+- 出力する文字に言語が付かず、日本語の禁則処理が効いていませんでした。
+  行頭に「ー」や句読点が来ることがありました [#80]
+- 本文を置く枠が無いテーマで、捨てた行を黙って落としていました [#68]
+- 出力 pptx と PDF を差し替え方式にしました。作り直している間に
+  壊れたファイルが見えることがありました [#53][#57]
+- PDF 変換中に PowerPoint の画面が出ないようにしました [#45]
+- 使い捨て作業ディレクトリの片付け規則を揃えました [#59]
+
+## 0.9.1 — 2026-07-22
+
+- フロー図の省略記号に固定幅の枠を割り当てるようにしました [#26]
+
+## 0.9.0 — 2026-07-22
+
+- ` ```note ` ブロックで発表者ノートを書けるようになりました [#24]
+
+## 0.8.0 — 2026-07-15
+
+- 表と画像のはみ出し指定を `<!-- @overflow: true -->` に統一しました [#23]
+
+## 0.7.0 — 2026-07-15
+
+- **破壊的**: Markdown 記法を整理しました。`@ph-widths` / `@body-width` は
+  `@widths` へ、`@col-widths` は `@table-widths` へ改名しています
+  （旧名称はエラーメッセージで新名称を案内します）[#22]
+
+## 0.6.0 — 2026-07-14
+
+- 多カラムスライド内の表でも列幅指定が効くようになりました [#21]
+
+## 0.5.0 — 2026-07-14
+
+- スライド単位でプレースホルダ幅を指定できるようになりました [#19]
+- 画像ブロックにはみ出し指定を追加しました [#16]
+
+## 0.4.0 — 2026-07-09
+
+- 表の区切り行のコロンから列ごとの水平寄せを読むようになりました [#15]
+
+## 0.3.0 — 2026-07-09
+
+- 多カラムスライドの中に表・画像・フロー図を置けるようになりました [#12]
+- `--version` を追加しました [#13]
+
+## 0.2.0 — 2026-07-02
+
+- 画像（jpg / png）をスライドに埋め込めるようになりました [#9]
+
+## 0.1.1 — 2026-07-01
+
+- フロントマターのタイトルスライドで相対サイズトークンを使えるようになりました [#6]
+
+## 0.1.0 — 2026-07-01
+
+- 最初の版。`pip` / `pipx` で入れられる `md2pptx` コマンドとして公開しました [#5]
+
+[#5]: https://github.com/toshi0806/md2pptx/pull/5
+[#6]: https://github.com/toshi0806/md2pptx/pull/6
+[#9]: https://github.com/toshi0806/md2pptx/pull/9
+[#12]: https://github.com/toshi0806/md2pptx/pull/12
+[#13]: https://github.com/toshi0806/md2pptx/pull/13
+[#15]: https://github.com/toshi0806/md2pptx/pull/15
+[#16]: https://github.com/toshi0806/md2pptx/pull/16
+[#19]: https://github.com/toshi0806/md2pptx/pull/19
+[#21]: https://github.com/toshi0806/md2pptx/pull/21
+[#22]: https://github.com/toshi0806/md2pptx/pull/22
+[#23]: https://github.com/toshi0806/md2pptx/pull/23
+[#24]: https://github.com/toshi0806/md2pptx/pull/24
+[#26]: https://github.com/toshi0806/md2pptx/pull/26
+[#27]: https://github.com/toshi0806/md2pptx/pull/27
+[#37]: https://github.com/toshi0806/md2pptx/pull/37
+[#40]: https://github.com/toshi0806/md2pptx/pull/40
+[#41]: https://github.com/toshi0806/md2pptx/pull/41
+[#43]: https://github.com/toshi0806/md2pptx/pull/43
+[#45]: https://github.com/toshi0806/md2pptx/pull/45
+[#51]: https://github.com/toshi0806/md2pptx/pull/51
+[#53]: https://github.com/toshi0806/md2pptx/pull/53
+[#54]: https://github.com/toshi0806/md2pptx/pull/54
+[#57]: https://github.com/toshi0806/md2pptx/pull/57
+[#59]: https://github.com/toshi0806/md2pptx/pull/59
+[#68]: https://github.com/toshi0806/md2pptx/pull/68
+[#73]: https://github.com/toshi0806/md2pptx/pull/73
+[#74]: https://github.com/toshi0806/md2pptx/pull/74
+[#80]: https://github.com/toshi0806/md2pptx/pull/80
+[#84]: https://github.com/toshi0806/md2pptx/pull/84
+[#86]: https://github.com/toshi0806/md2pptx/pull/86
+[#88]: https://github.com/toshi0806/md2pptx/pull/88
+[#89]: https://github.com/toshi0806/md2pptx/pull/89
