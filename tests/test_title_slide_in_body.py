@@ -58,6 +58,7 @@ def test_layout_zero_slides_get_no_number(tmp_path):
     """レイアウト 0 だけ番号が付かない（他のレイアウトは従来どおり）．"""
     prs = _build(tmp_path, """---
 theme: t.pptx
+syntax: 0
 slide_number: true
 ---
 
@@ -85,6 +86,7 @@ def test_a_title_slide_can_sit_anywhere(tmp_path):
     """
     prs = _build(tmp_path, """---
 theme: t.pptx
+syntax: 0
 slide_number: true
 ---
 
@@ -100,6 +102,7 @@ def test_slide_number_false_still_wins(tmp_path):
     """``slide_number: false`` は従来どおり全体に効く．"""
     prs = _build(tmp_path, """---
 theme: t.pptx
+syntax: 0
 slide_number: false
 ---
 
@@ -117,6 +120,7 @@ def test_the_title_frame_and_the_body_frame_are_filled(tmp_path):
     """
     prs = _build(tmp_path, """---
 theme: t.pptx
+syntax: 0
 ---
 
 # 主題<br>{-5} ― 副題 ―
@@ -150,6 +154,7 @@ def test_deprecated_front_matter_still_renders(tmp_path, capsys):
     """
     prs = _build(tmp_path, """---
 theme: t.pptx
+syntax: 0
 title: 主題
 author: 著者
 ---
@@ -161,7 +166,8 @@ author: 著者
     err = capsys.readouterr().err
     assert "deprecated" in err
     # 移行先を示すこと．警告だけ出して書き換え方が分からないと動きようがない．
-    assert "@layout: 0" in err
+    # syntax 0 の原稿なので @title-slide つきで案内する（0 では "#" は章の扉）．
+    assert "# 主題" in err and "@title-slide" in err
     assert "title" in err and "author" in err
 
 
@@ -169,6 +175,7 @@ def test_no_warning_without_the_deprecated_keys(tmp_path, capsys):
     """表紙を本文記法で書いた原稿には警告を出さない．"""
     _build(tmp_path, """---
 theme: t.pptx
+syntax: 0
 ---
 
 # 主題

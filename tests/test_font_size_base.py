@@ -104,7 +104,7 @@ def test_layout_override_is_the_base(tmp_path):
 theme: t.pptx
 ---
 
-## 章扉
+### 章扉
 <!-- @layout: 2 -->
 
 - {-1} 添え書き
@@ -122,7 +122,7 @@ def test_master_style_is_the_base_without_override(tmp_path):
 theme: t.pptx
 ---
 
-## 見出し
+### 見出し
 
 - {-1} 本文
 """)
@@ -139,7 +139,7 @@ def test_override_is_merged_per_level(tmp_path):
 theme: t.pptx
 ---
 
-## 比較
+### 比較
 
 - {+1} 親
   - {+1} 子
@@ -170,7 +170,7 @@ affiliation:
 theme: t.pptx
 ---
 
-## 表題
+### 表題
 <!-- @layout: 0 -->
 
 - 著者

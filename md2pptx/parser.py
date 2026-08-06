@@ -26,8 +26,8 @@ from typing import Any, Literal
 import yaml
 
 from .ir import (
-    TITLE_LAYOUT, Align, Block, Crop, Deck, Flow, Image, Length, Line, Slide,
-    Table, TitleSlide,
+    CONTENT_LAYOUT, SECTION_LAYOUT, TITLE_LAYOUT, Align, Block, Crop, Deck,
+    Flow, Image, Length, Line, Slide, Table, TitleSlide,
 )
 from .flow import parse_flow as _parse_flow
 
@@ -86,9 +86,20 @@ _RENAMED_DIRECTIVES = {
 
 # フロントマターの既知キー．未知のキーはエラー（ディレクティブと同方針）．
 _KNOWN_META_KEYS = {
-    "theme", "output", "slide_number", "default_autofit",
+    "theme", "output", "slide_number", "default_autofit", "syntax",
     "title", "subtitle", "author", "affiliation",
 }
+
+# 見出しレベルの割り当て（Issue #99）．``syntax:`` で選ぶ．**既定は 1**．
+# 0 は従来の割り当てで，旧原稿には ``syntax: 0`` を書き足して使う．
+# 既定を 1 にしたので，**書き足していない旧原稿は 1 段ずれて読まれる**
+# （``# 章の扉`` が表紙になる）．ずれてもエラーにならないため，
+# 表紙が 2 枚以上できる形だけは ``_check_title_slides`` で止める．
+_SYNTAX_HEADINGS: dict[int, dict[int, int]] = {
+    0: {1: SECTION_LAYOUT, 2: CONTENT_LAYOUT},
+    1: {1: TITLE_LAYOUT, 2: SECTION_LAYOUT, 3: CONTENT_LAYOUT},
+}
+_DEFAULT_SYNTAX = 1
 
 # 非推奨のフロントマターキー（Issue #82）．表紙は本文記法で書く．
 # **受理はやめない**——動く原稿を黙って壊さないため，警告だけ出して従来どおり描く．
@@ -116,10 +127,13 @@ def parse(md_text: str) -> Deck:
     """
     text = _normalize_newlines(md_text)
     meta, body, body_offset = _split_front_matter(text)
+    syntax = _validate_syntax(meta)
+    _warn_deprecated_meta(meta, syntax)
     deck = Deck(meta=meta)
     deck.title_slide = _build_title_slide(meta)
     deck.slides, title_notes = _parse_body(
-        body, body_offset, has_title_slide=deck.title_slide is not None)
+        body, body_offset, has_title_slide=deck.title_slide is not None,
+        syntax=syntax)
     # 不変条件：title_notes が非 None なのは has_title_slide=True のときだけ
     # （タイトルスライド無しの本文前 ```note は _parse_body が ValueError にする．
     # 空の ```note は捨てられ title_notes に積まれない）．よってここで
@@ -178,12 +192,25 @@ def _split_front_matter(text: str) -> tuple[dict, str, int]:
                     raise ValueError(
                         f"unknown front matter key(s): {keys} (known keys: {known})"
                     )
-                _warn_deprecated_meta(meta)
                 return meta, body, i + 1
     return {}, text, 0
 
 
-def _warn_deprecated_meta(meta: dict) -> None:
+def _validate_syntax(meta: dict) -> int:
+    """フロントマターの ``syntax:`` を検証して返す（既定 1．Issue #99）．
+
+    受けるのは ``_SYNTAX_HEADINGS`` にある値だけ．未知の値は，将来の版で
+    増える記法を古い md2pptx が黙って既定として読むのを防ぐために止める．
+    """
+    value = meta.get("syntax", _DEFAULT_SYNTAX)
+    if value not in _SYNTAX_HEADINGS:
+        known = ", ".join(str(k) for k in sorted(_SYNTAX_HEADINGS))
+        raise ValueError(
+            f"invalid syntax value {value!r} in front matter (known: {known})")
+    return int(value)
+
+
+def _warn_deprecated_meta(meta: dict, syntax: int) -> None:
     """フロントマターの表紙記述に非推奨の警告を出す（Issue #82）．
 
     ``title`` / ``subtitle`` / ``author`` / ``affiliation`` は「文書のメタデータ」の
@@ -197,12 +224,14 @@ def _warn_deprecated_meta(meta: dict) -> None:
     used = [k for k in _DEPRECATED_META_KEYS if meta.get(k)]
     if not used:
         return
+    # 移行先は syntax で変わる．0 では "#" が章の扉なので @title-slide が要る．
+    marker = "" if TITLE_LAYOUT in _SYNTAX_HEADINGS[syntax].values() \
+        else "  <!-- @title-slide -->\n"
     sys.stderr.write(
         "md2pptx: warning: front matter " + " / ".join(used)
         + " is deprecated; write the title slide in body syntax instead:\n"
-        "  # 主題<br>{-3} 副題\n"
-        "  <!-- @layout: 0 -->\n"
-        "\n"
+        "  # 主題<br>{-3} 副題\n" + marker
+        + "\n"
         "  - 著者\n"
         "  - 所属\n"
     )
@@ -218,7 +247,7 @@ def _warn_deprecated_rule(lineno: int) -> None:
     sys.stderr.write(
         f"md2pptx: warning: line {lineno}: '---' as a slide break is deprecated; "
         "give the slide a heading, or pick a layout without a title frame:\n"
-        "  ## 見出し\n"
+        "  ### 見出し\n"
         "  <!-- @layout: 6 -->      # 白紙．図・表だけのスライドはこちらへ置ける\n"
     )
 
@@ -287,12 +316,15 @@ def _split_size_opt(value: object) -> tuple[int | None, str | None]:
 # ---------------------------------------------------------------- 本文
 
 def _parse_body(body: str, body_offset: int = 0,
-                has_title_slide: bool = False) -> tuple[list[Slide], str | None]:
+                has_title_slide: bool = False,
+                syntax: int = _DEFAULT_SYNTAX,
+                ) -> tuple[list[Slide], str | None]:
     """本文をスライド列へ分割し，各行を IR ブロックへ変換する．
 
     body_offset はフロントマターが消費したファイル行数（エラー報告の行番号を
     ファイル先頭基準へ換算するために使う）．has_title_slide はフロントマター
     由来のタイトルスライドの有無（本文開始前の ```note の宛先判定に使う）．
+    syntax は見出しレベルの割り当て（``_SYNTAX_HEADINGS``．既定 ``_DEFAULT_SYNTAX``）．
 
     Returns:
         (slides, title_notes)．title_notes は本文開始前に現れた ```note の
@@ -317,6 +349,7 @@ def _parse_body(body: str, body_offset: int = 0,
     lines = body.split("\n")
     n = len(lines)
     i = 0
+    title_slides = 0
     while i < n:
         raw = lines[i]
         stripped = raw.strip()
@@ -326,14 +359,16 @@ def _parse_body(body: str, body_offset: int = 0,
         m = _RE_HEADING.match(raw.lstrip())
         if m:
             hashes, htext = m.group(1), m.group(2)
-            # "# 見出し"（H1）はセクションスライド（レイアウト2），
-            # "## 見出し" はコンテンツスライド（レイアウト1）．
-            # H3〜H6 は未定義（将来のスライド内小見出し用に予約）．
-            if len(hashes) > 2:
+            # 見出しレベル → レイアウト番号は syntax で決まる（Issue #99）．
+            # 割り当ての外のレベルは未定義（将来のスライド内小見出し用に予約）．
+            headings = _SYNTAX_HEADINGS[syntax]
+            level = len(hashes)
+            if level not in headings:
+                usable = " / ".join(
+                    "'" + "#" * lv + "'" for lv in sorted(headings))
                 raise ValueError(
-                    f"H{len(hashes)} heading is not supported at line {lineno}: "
-                    f"{stripped!r} (use '#' for a section slide or '##' for a "
-                    f"content slide)")
+                    f"H{level} heading is not supported at line {lineno}: "
+                    f"{stripped!r} (syntax {syntax} uses {usable})")
             # タイトル内の <br> を行内改行（\v）へ変換し，各セグメント先頭の
             # サイズトークンを剥がす．**先頭セグメントも段数を取れる**——
             # 本文行と違いタイトルにはビュレットも採番記号も無いので，
@@ -341,11 +376,21 @@ def _parse_body(body: str, body_offset: int = 0,
             head_delta, htext = _split_size(htext)
             htext, title_deltas = _split_br(htext)
             title_deltas[0] = head_delta
+            if headings[level] == TITLE_LAYOUT and syntax != 0:
+                # 表紙は 1 枚．H1 が文書に 1 つという Markdown の慣習に沿う．
+                # **``syntax: 0`` を書き忘れた旧原稿がここで止まる**——旧原稿の
+                # ``# 章の扉`` は複数あるので 2 枚目で引っかかる．黙って 1 段
+                # ずれたデッキが出るより、止めて書き足してもらうほうがよい．
+                title_slides += 1
+                if title_slides > 1:
+                    raise ValueError(
+                        f"a second title slide at line {lineno}: {stripped!r} "
+                        f"(a deck has one; if this is a section divider, "
+                        f"write 'syntax: 0' in the front matter or use '##')")
             if current is not None:
                 slides.append(current)
-            layout = 2 if len(hashes) == 1 else 1
             current = Slide(title=htext or None, title_deltas=title_deltas,
-                            layout=layout)
+                            layout=headings[level])
             i += 1
             continue
 
@@ -360,6 +405,14 @@ def _parse_body(body: str, body_offset: int = 0,
 
         # --- 表紙（テーマの「タイトル スライド」レイアウト）----------
         if _RE_TITLE_SLIDE.match(stripped):
+            # "#" 自体が表紙になる割り当てでは，この指定は冗長．黙って受けると
+            # 「表紙の書き方が 2 通りある」状態に戻る（@layout との併記と同じ理由）．
+            # syntax 番号ではなく**割り当ての中身**で見る——「表紙を持つ割り当てなら
+            # 冗長」が理由なので，将来 syntax が増えてもその判断がそのまま効く．
+            if TITLE_LAYOUT in _SYNTAX_HEADINGS[syntax].values():
+                raise ValueError(
+                    f"@title-slide is not used with syntax {syntax} at line "
+                    f"{lineno} ('#' is already the title slide)")
             s = ensure_slide()
             # @layout との併記はエラー．結果が同じ "@layout: 0" も含めて弾く——
             # 「同じ結果なら許す」を入れると，矛盾する組み合わせ（@layout: 5 等）を
