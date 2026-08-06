@@ -6,6 +6,18 @@
 
 各項目の末尾の番号は Pull Request です。詳しい経緯はそちらを参照してください。
 
+## 1.1.0 — 2026-08-06
+
+### 追加
+
+- 表紙を `<!-- @title-slide -->` で書けるようになりました。値を取らない指示で、
+  `@layout` との併記はエラーです [#95]
+
+### 変更
+
+- `---`（水平線）によるスライド分割は**非推奨**です。
+  行番号付きの警告が出ますが、動作は従来どおりです [#93]
+
 ## 1.0.0 — 2026-08-06
 
 記法が固まった版です。**同じことを言う方法が1つになりました**——スライドは見出しで分け、
@@ -130,3 +142,5 @@
 [#86]: https://github.com/toshi0806/md2pptx/pull/86
 [#88]: https://github.com/toshi0806/md2pptx/pull/88
 [#89]: https://github.com/toshi0806/md2pptx/pull/89
+[#93]: https://github.com/toshi0806/md2pptx/pull/93
+[#95]: https://github.com/toshi0806/md2pptx/pull/95
