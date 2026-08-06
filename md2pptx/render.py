@@ -225,9 +225,15 @@ class Renderer:
                 return
 
     def set_autonum(self, p: _Paragraph, fmt: str = "arabicPeriod",
-                    color: str | None = None) -> None:
+                    color: str | None = None, start: int | None = None) -> None:
         """段落の行頭記号を自動採番（1. 2. 3. …）に切り替える（enumerate 相当）．
-           color にテーマ色名（例 "tx1"）を渡すと採番記号の色を指定する．"""
+
+        color にテーマ色名（例 "tx1"）を渡すと採番記号の色を指定する．
+        start を渡すとその番号から数え始める（buAutoNum の startAt）．
+        PowerPoint の自動採番は**プレースホルダごとに 1 から数え直す**ので，
+        2 カラムに割った採番リストの続きを右カラムで書くにはこれが要る
+        （Issue #107）．渡すのはリストの先頭の行だけ．
+        """
         pPr = p._p.get_or_add_pPr()
         if color:
             for tag in ("a:buClrTx", "a:buClr"):
@@ -237,7 +243,10 @@ class Renderer:
             buClr = pPr.makeelement(qn("a:buClr"), {})
             buClr.append(buClr.makeelement(qn("a:schemeClr"), {"val": color}))
             pPr.insert(0, buClr)  # buClr は採番記号より前に置く
-        bu = pPr.makeelement(qn("a:buAutoNum"), {"type": fmt})
+        attrs = {"type": fmt}
+        if start is not None:
+            attrs["startAt"] = str(start)
+        bu = pPr.makeelement(qn("a:buAutoNum"), attrs)
         for tag in ("a:buChar", "a:buNone", "a:buAutoNum"):
             el = pPr.find(qn(tag))
             if el is not None:
@@ -1242,7 +1251,8 @@ class Renderer:
     # ----------------------------------------------------- 描画ユーティリティ
     def _append_lines(self, tf: TextFrame, line_blocks: list[Line], first: bool,
                       default_num_color: str | None,
-                      default_size_delta: int | None = None) -> bool:
+                      default_size_delta: int | None = None,
+                      counters: dict[tuple[int, str], int] | None = None) -> bool:
         """Line 列を text_frame に段落として追記する（採番／no_bullet を適用）．
 
         first=True なら最初の 1 行は既存の paragraphs[0] を使う．残りの行を
@@ -1251,7 +1261,18 @@ class Renderer:
         相対サイズは行の size_delta を優先し，None の行はスライド既定
         （default_size_delta，@body-size 由来）を継承する．基点は tf の枠が
         実際に持つ既定サイズで，枠ごとに 1 度だけ解決する（Issue #83）．
+
+        counters は (level, 形式) ごとの次の番号（Issue #107）．**全ての採番段落に
+        番号を明示して書く**——PowerPoint は startAt の付いた段落の**次から数え直す**
+        ので，先頭にだけ書くと 8. の次が 1. に戻る．番号はここで数えて渡す．
+        原稿の番号は**リストの先頭の行だけ**を種にし，以降は 1 ずつ増やす
+        （CommonMark と同じ規則．"1. 1. 1." と書けば 1・2・3 になる）．
+        **呼び出しをまたいで共有すること**——図表スライドでは地の文が帯の上下に
+        分かれて同じ枠へ 2 回追記されるので，呼び出しごとに数え直すと結論文側の
+        番号が 1 に戻る．
         """
+        if counters is None:
+            counters = {}
         levels = self._frame_font_levels(tf)
         for blk in line_blocks:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
@@ -1261,7 +1282,12 @@ class Renderer:
             if blk.kind == "autonum":
                 fmt = blk.num_style or "arabicPeriod"
                 color = blk.num_color or default_num_color
-                self.set_autonum(p, fmt, color=color)
+                key = (blk.level, fmt)
+                num = counters.get(key)
+                if num is None:                     # そのリストの先頭の行
+                    num = blk.num_start if blk.num_start is not None else 1
+                counters[key] = num + 1
+                self.set_autonum(p, fmt, color=color, start=num)
             elif blk.kind == "plain":
                 self.no_bullet(p)
             # kind == "bullet" はテーマ既定のまま
@@ -1652,13 +1678,16 @@ class Renderer:
             self._warn_no_body(prose_before + prose_after)
         else:
             tf = body.text_frame
+            # 採番の状態は 2 回の追記で共有する——同じ枠なので，結論文で
+            # 数え直すと番号が 1 に戻る（Issue #107）．
+            counters: dict[tuple[int, str], int] = {}
             first = self._append_lines(tf, prose_before, True, default_num_color,
-                                       default_size_delta)
+                                       default_size_delta, counters)
             for _ in range(blanks):
                 p = tf.paragraphs[0] if first else tf.add_paragraph()
                 first = False
             self._append_lines(tf, prose_after, first, default_num_color,
-                               default_size_delta)
+                               default_size_delta, counters)
             self._apply_autofit(tf, scale, default_autofit)
 
         # 結論文との重なりを避けるため帯を少しだけ詰めてオブジェクトを置く．
