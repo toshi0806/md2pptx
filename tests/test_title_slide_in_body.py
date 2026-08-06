@@ -129,6 +129,11 @@ theme: t.pptx
     frames = {ph.placeholder_format.idx: ph.text_frame.text
               for ph in slide.placeholders
               if ph.placeholder_format.idx in (0, 1)}
+    # 枠が無ければ「テストの前提が崩れた」ので落ちるのが正しいが，KeyError では
+    # 何が起きたか読み取れない．どちらの枠が欠けたかを言う．
+    assert set(frames) == {0, 1}, (
+        f"title/body frames not found on {slide.slide_layout.name!r}: "
+        f"got idx {sorted(frames)}")
     # 区切り文字の違いは枠ではなく**段落構造**の違い．python-pptx の
     # text_frame.text は段落の境目を "\n"，段落内の改行（a:br）を "\v" で返す．
     # 主題と副題は <br> でつないだ 1 段落なので "\v"，著者と所属は別々の行として
