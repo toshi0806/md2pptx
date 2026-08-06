@@ -5,9 +5,8 @@ slide_number: true
 default_autofit: true
 ---
 
-<!-- タイトルスライド。@layout: 0 でテーマの「タイトル スライド」を使う -->
 # md2pptx<br>{-5} ― Markdown でつくる発表スライド ―
-<!-- @layout: 0 -->
+<!-- @title-slide -->
 
 - md2pptx demo
 - Markdown ＋ PowerPoint テーマ → pptx

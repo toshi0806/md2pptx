@@ -26,8 +26,8 @@ from typing import Any, Literal
 import yaml
 
 from .ir import (
-    Align, Block, Crop, Deck, Flow, Image, Length, Line, Slide, Table,
-    TitleSlide,
+    TITLE_LAYOUT, Align, Block, Crop, Deck, Flow, Image, Length, Line, Slide,
+    Table, TitleSlide,
 )
 from .flow import parse_flow as _parse_flow
 
@@ -52,6 +52,8 @@ _RE_PAREN = re.compile(r"^\(\s*(\d+)\s*\)\s+(.*)$")  # (1) (2) …（arabicParen
 _RE_DIRECTIVE = re.compile(r"^<!--\s*@([\w-]+)\s*:\s*(.*?)\s*-->$")
 # カラム区切り（「2つのコンテンツ」レイアウト）．値を取らない指示．
 _RE_COL = re.compile(r"^<!--\s*@col\s*-->$")
+# 表紙（テーマの「タイトル スライド」レイアウト）．同じく値を取らない．
+_RE_TITLE_SLIDE = re.compile(r"^<!--\s*@title-slide\s*-->$")
 # 1 行 HTML コメント（ディレクティブ以外のメモ等．無視する）．
 _RE_COMMENT = re.compile(r"^<!--.*-->$")
 # Markdown テーブルの区切り行（例 "| --- | :--: |"）．ヘッダ行の直後に現れる．
@@ -68,7 +70,8 @@ _RE_SIZE = re.compile(r"^\{\s*([+-]?\d+)\s*\}\s*(.*)$")
 _INT_DIRECTIVES = {"layout", "autofit", "body_size"}
 
 # 受理するディレクティブキー（正規化後の名前）．未知のキーはタイポの可能性が
-# 高いので黙殺せずエラーにする（§5.6）．@col は値を取らない専用形式（_RE_COL）．
+# 高いので黙殺せずエラーにする（§5.6）．@col と @title-slide は値を取らない
+# 専用形式（_RE_COL / _RE_TITLE_SLIDE）で，ここへ来るのは値付きの誤りだけ．
 _KNOWN_DIRECTIVES = {
     "layout", "autofit", "body_size", "autonum_color", "widths", "table_widths",
     "overflow",
@@ -355,6 +358,21 @@ def _parse_body(body: str, body_offset: int = 0,
             i += 1
             continue
 
+        # --- 表紙（テーマの「タイトル スライド」レイアウト）----------
+        if _RE_TITLE_SLIDE.match(stripped):
+            s = ensure_slide()
+            # @layout との併記はエラー．結果が同じ "@layout: 0" も含めて弾く——
+            # 「同じ結果なら許す」を入れると，矛盾する組み合わせ（@layout: 5 等）を
+            # どちらで解決するかを別に決めることになる．規則は 1 つで足りる．
+            if "layout" in s.directives:
+                raise ValueError(
+                    f"@title-slide conflicts with @layout at line {lineno} "
+                    f"(use one or the other)")
+            s.directives["title_slide"] = True
+            s.layout = TITLE_LAYOUT
+            i += 1
+            continue
+
         # --- カラム区切り（「2つのコンテンツ」）→ 多カラム化（§5.7）----
         if _RE_COL.match(stripped):
             s = ensure_slide()
@@ -635,6 +653,10 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
         # "@col: 2" のような値付きで，カラム区切りとしては不正．
         raise ValueError(
             f"@col takes no value at line {lineno} (write '<!-- @col -->')")
+    if norm == "title_slide":
+        raise ValueError(
+            f"@title-slide takes no value at line {lineno} "
+            f"(write '<!-- @title-slide -->')")
     if norm in _RENAMED_DIRECTIVES:
         raise ValueError(
             f"@{key} was renamed in v0.7; use {_RENAMED_DIRECTIVES[norm]} "
@@ -643,7 +665,7 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
         known = ", ".join("@" + k.replace("_", "-") for k in sorted(_KNOWN_DIRECTIVES))
         raise ValueError(
             f"unknown directive @{key} at line {lineno} "
-            f"(known directives: @col, {known})")
+            f"(known directives: @col, @title-slide, {known})")
     val: object = value
     if norm in _INT_DIRECTIVES:
         try:
@@ -663,6 +685,10 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
 
     # @layout はスライドのレイアウト番号を直接上書きする．
     if norm == "layout" and isinstance(val, int):
+        if slide.directives.get("title_slide"):
+            raise ValueError(
+                f"@layout conflicts with @title-slide at line {lineno} "
+                f"(use one or the other)")
         slide.layout = val
 
 
