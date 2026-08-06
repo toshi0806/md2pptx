@@ -3,15 +3,15 @@ theme: OfficeTheme.pptx
 output: example.pptx
 slide_number: true
 default_autofit: true
-
-# タイトルスライド（front matter から 1 枚目に生成）
-title: md2pptx
-subtitle: ― Markdown でつくる発表スライド ―
-author: md2pptx demo
-affiliation:
-  - Markdown ＋ PowerPoint テーマ → pptx
-  - Python / python-pptx / PyYAML（MIT License）
 ---
+
+<!-- タイトルスライド。@layout: 0 でテーマの「タイトル スライド」を使う -->
+# md2pptx<br>{-5} ― Markdown でつくる発表スライド ―
+<!-- @layout: 0 -->
+
+- md2pptx demo
+- Markdown ＋ PowerPoint テーマ → pptx
+- Python / python-pptx / PyYAML（MIT License）
 
 ```note
 md2pptx の紹介です。このスライド自体が md2pptx で生成されています。

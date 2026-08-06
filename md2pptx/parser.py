@@ -20,6 +20,7 @@ python-pptx には依存しない（描画は render.py の責務）．
 from __future__ import annotations
 
 import re
+import sys
 from typing import Any, Literal
 
 import yaml
@@ -85,6 +86,10 @@ _KNOWN_META_KEYS = {
     "theme", "output", "slide_number", "default_autofit",
     "title", "subtitle", "author", "affiliation",
 }
+
+# 非推奨のフロントマターキー（Issue #82）．表紙は本文記法で書く．
+# **受理はやめない**——動く原稿を黙って壊さないため，警告だけ出して従来どおり描く．
+_DEPRECATED_META_KEYS = ("title", "subtitle", "author", "affiliation")
 
 # 画像ショートハンド（標準 Markdown 画像＋末尾 "{opts}"）．§5.9．
 # 例: "![実験結果](fig.png){width=70% align=left}"．opts は省略可．
@@ -170,8 +175,34 @@ def _split_front_matter(text: str) -> tuple[dict, str, int]:
                     raise ValueError(
                         f"unknown front matter key(s): {keys} (known keys: {known})"
                     )
+                _warn_deprecated_meta(meta)
                 return meta, body, i + 1
     return {}, text, 0
+
+
+def _warn_deprecated_meta(meta: dict) -> None:
+    """フロントマターの表紙記述に非推奨の警告を出す（Issue #82）．
+
+    ``title`` / ``subtitle`` / ``author`` / ``affiliation`` は「文書のメタデータ」の
+    名前を持つが，実体は表紙スライドの描画記述だった（コアプロパティへは 1 度も
+    書いていない）．同じ絵を出す記法が 2 つある状態が続き，``<br>`` を
+    片方だけ通し忘れる取りこぼし（Issue #79）まで起きた．
+
+    **止めはしない．** 動作は従来のまま——非推奨の間は既存原稿が同じ見た目で
+    動き続けるほうが価値がある（副題の基点を凍結したのと同じ理由．Issue #83）．
+    """
+    used = [k for k in _DEPRECATED_META_KEYS if meta.get(k)]
+    if not used:
+        return
+    sys.stderr.write(
+        "md2pptx: warning: front matter " + " / ".join(used)
+        + " is deprecated; write the title slide in body syntax instead:\n"
+        "  # 主題<br>{-3} 副題\n"
+        "  <!-- @layout: 0 -->\n"
+        "\n"
+        "  - 著者\n"
+        "  - 所属\n"
+    )
 
 
 def _build_title_slide(meta: dict) -> TitleSlide | None:
