@@ -76,10 +76,19 @@ def test_link():
         ("JPNIC", False, False, None, "https://www.nic.ad.jp/", None)]
 
 
-@pytest.mark.parametrize("name", ["accent2", "red", "#ff0000", "#f00", "RED"])
-def test_color_accepts_three_families(name):
-    """テーマ色名・CSS の色名・16進のいずれも受ける（大小文字は問わない）．"""
-    assert _spans(f"- [色]{{{name}}} の行")[0][3] == name
+@pytest.mark.parametrize("name,stored", [
+    ("accent2", "accent2"), ("ACCENT2", "accent2"), (" accent2 ", "accent2"),
+    ("red", "#FF0000"), ("RED", "#FF0000"),
+    ("#ff0000", "#FF0000"), ("#f00", "#FF0000"), ("#F00", "#FF0000"),
+])
+def test_color_accepts_three_families(name, stored):
+    """テーマ色名・CSS の色名・16進のいずれも受ける（大小文字は問わない）．
+
+    **IR には正規化した形で入る。** 正規化しないと ``#f00`` と ``#F00`` が別物として
+    残り、render がもう一度同じ文字列を解き直すことになる。テーマ色だけは名前のまま
+    ——RGB へ潰すとテーマを差し替えたときに色が取り残される。
+    """
+    assert _spans(f"- [色]{{{name}}} の行")[0][3] == stored
 
 
 def test_an_unknown_color_stops():
@@ -97,7 +106,7 @@ def test_decorations_nest():
     重ねられないと「色を付けたら太字にできない」という例外を説明することになる。
     """
     assert _spans("- [**赤い強調**]{red}") == [
-        ("赤い強調", True, False, "red", None, None)]
+        ("赤い強調", True, False, "#FF0000", None, None)]
 
 
 def test_a_plain_line_has_no_spans():

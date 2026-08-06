@@ -835,9 +835,11 @@ def _spans_in(text: str, segment: int, base: dict[str, Any]) -> list[Span]:
             out += _spans_in(m.group("ltext"), segment,
                              {**base, "link": m.group("url")})
         elif m.group("color") is not None:
-            # 色名はここで検証する（綴り違いは黙って既定色にせず止める）．
-            name = m.group("color").strip()
-            parse_color(name)
+            # 色名はここで**検証して正規化する**（綴り違いは黙って既定色にせず止める）．
+            # 正規化しないと "#f00" と "#F00" が別物として IR に入り，render で
+            # もう一度同じ文字列を解き直すことになる（Issue #105 のレビュー指摘）．
+            kind, value = parse_color(m.group("color"))
+            name = value if kind == "theme" else "#" + value
             out += _spans_in(m.group("ctext"), segment, {**base, "color": name})
         elif m.group("sup") is not None:
             out.append(Span(text=m.group("sup"), segment=segment,
