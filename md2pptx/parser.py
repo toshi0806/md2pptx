@@ -205,6 +205,21 @@ def _warn_deprecated_meta(meta: dict) -> None:
     )
 
 
+def _warn_deprecated_rule(lineno: int) -> None:
+    """``---`` によるスライド分割に非推奨の警告を出す（Issue #92）．
+
+    ``---`` が作るのは「タイトルとコンテンツ」のタイトル枠を空にしたスライドで，
+    テーマが用意していない形になる．**止めはしない**（front matter の表紙記述と
+    同じ扱い）．``---`` 1 件ごとに，行番号を添えて出す．
+    """
+    sys.stderr.write(
+        f"md2pptx: warning: line {lineno}: '---' as a slide break is deprecated; "
+        "give the slide a heading, or pick a layout without a title frame:\n"
+        "  ## 見出し\n"
+        "  <!-- @layout: 6 -->      # 白紙．図・表だけのスライドはこちらへ置ける\n"
+    )
+
+
 def _build_title_slide(meta: dict) -> TitleSlide | None:
     """フロントマターからタイトルスライドを構築する（title が無ければ None）．"""
     if not meta.get("title"):
@@ -332,7 +347,8 @@ def _parse_body(body: str, body_offset: int = 0,
             continue
 
         if stripped == "---":
-            # 水平線 → タイトルなしスライドを明示的に開始．
+            # 水平線 → タイトルなしスライドを明示的に開始．**非推奨**（Issue #92）．
+            _warn_deprecated_rule(lineno)
             if current is not None:
                 slides.append(current)
             current = Slide()
