@@ -27,8 +27,9 @@ import yaml
 
 from .ir import (
     CONTENT_LAYOUT, SECTION_LAYOUT, TITLE_LAYOUT, Align, Block, Crop, Deck,
-    Flow, Image, Length, Line, Slide, Table, TitleSlide,
+    Flow, Image, Length, Line, Slide, Span, Table, TitleSlide,
 )
+from .colors import parse_color
 from .flow import parse_flow as _parse_flow
 
 
@@ -801,6 +802,76 @@ def _split_br(text: str) -> tuple[str, list[int | None]]:
     return "\v".join(out), deltas
 
 
+# 行内装飾（§5.13）．左から順に食い，マッチしない部分は素のテキストになる．
+# ``[表示](url)`` は画像ショートハンド（``![…](…)``）より後で評価されるので衝突しない．
+_RE_INLINE = re.compile(
+    r"\*\*(?P<bold>.+?)\*\*"
+    r"|`(?P<code>[^`]+)`"
+    r"|\[(?P<ltext>[^\[\]]*)\]\((?P<url>[^()\s]*)\)"
+    r"|\[(?P<ctext>[^\[\]]*)\]\{(?P<color>[^{}]*)\}"
+    r"|\^(?P<sup>[^\^\s]+)\^"
+    r"|~(?P<sub>[^~\s]+)~"
+)
+
+
+def _spans_in(text: str, segment: int, base: dict[str, Any]) -> list[Span]:
+    """1 セグメントを Span 列へ分解する（``base`` は外側から継承する装飾）．
+
+    ``[…]{色}`` と ``[…](url)`` の中身は**再帰的に解釈する**——
+    ``[**赤い強調**]{red}`` のように重ねて書けるほうが自然で，
+    「色を付けたら太字にできない」という説明を増やさずに済む．
+    """
+    out: list[Span] = []
+    pos = 0
+    for m in _RE_INLINE.finditer(text):
+        if m.start() > pos:
+            out.append(Span(text=text[pos:m.start()], segment=segment, **base))
+        if m.group("bold") is not None:
+            out += _spans_in(m.group("bold"), segment, {**base, "bold": True})
+        elif m.group("code") is not None:
+            out.append(Span(text=m.group("code"), segment=segment,
+                            **{**base, "mono": True}))
+        elif m.group("url") is not None:
+            out += _spans_in(m.group("ltext"), segment,
+                             {**base, "link": m.group("url")})
+        elif m.group("color") is not None:
+            # 色名はここで検証する（綴り違いは黙って既定色にせず止める）．
+            name = m.group("color").strip()
+            parse_color(name)
+            out += _spans_in(m.group("ctext"), segment, {**base, "color": name})
+        elif m.group("sup") is not None:
+            out.append(Span(text=m.group("sup"), segment=segment,
+                            **{**base, "script": "sup"}))
+        else:
+            out.append(Span(text=m.group("sub"), segment=segment,
+                            **{**base, "script": "sub"}))
+        pos = m.end()
+    if pos < len(text):
+        out.append(Span(text=text[pos:], segment=segment, **base))
+    return out
+
+
+def _parse_spans(text: str) -> tuple[str, list[Span]]:
+    """行内装飾を解釈し (装飾記号を除いたテキスト, Span 列) を返す（§5.13）．
+
+    装飾がまったく無ければ **Span 列は空**で返す——従来どおり 1 run で書く経路に
+    落ちるので，装飾を使わない原稿の出力はこの変更で 1 ビットも変わらない．
+
+    セグメント（``\\v`` 区切り）ごとに解釈し，各 Span はどのセグメントの
+    ものかを覚える．**1 セグメントが複数 run に割れる**ので，
+    相対サイズを付ける相手を位置ではなくこの値で決める必要がある．
+    """
+    all_spans: list[Span] = []
+    plain: list[str] = []
+    for i, seg in enumerate(text.split("\v")):
+        spans = _spans_in(seg, i, {})
+        plain.append("".join(s.text for s in spans))
+        all_spans.extend(spans)
+    decorated = any(s.bold or s.mono or s.color or s.link or s.script
+                    for s in all_spans)
+    return "\v".join(plain), (all_spans if decorated else [])
+
+
 def _parse_content_line(raw: str) -> Line | None:
     """1 行を行頭マーカー規則（DESIGN.md §5.3）に従って Line へ変換する．
 
@@ -832,7 +903,9 @@ def _parse_content_line(raw: str) -> Line | None:
         render 側は本文をそのまま段落 text へ渡すため，python-pptx が
         "\v" を段落内改行（<a:br/>）として出力する．"""
         text, seg_deltas = _split_br(text)
-        return (Line(text=text, level=level, seg_deltas=seg_deltas, **kw)
+        text, spans = _parse_spans(text)
+        return (Line(text=text, level=level, seg_deltas=seg_deltas,
+                     spans=spans, **kw)
                 if text else None)
 
     def _mk_bullet(text: str, size_delta: int | None) -> Line:
@@ -848,8 +921,9 @@ def _parse_content_line(raw: str) -> Line | None:
         空けたいのは 1 行なので，空の段落そのものを作れる必要がある．
         """
         body, seg_deltas = _split_br(text)
+        body, spans = _parse_spans(body)
         return Line(text=body, level=level, kind="bullet",
-                    size_delta=size_delta, seg_deltas=seg_deltas)
+                    size_delta=size_delta, seg_deltas=seg_deltas, spans=spans)
 
     # マーカーだけの行 → 空行（Issue #82）．**末尾に空白が無い形を必ず拾うこと**
     # ——多くのエディタは保存時に行末空白を除去するので，"- " しか受けないと空行
@@ -888,8 +962,9 @@ def _parse_content_line(raw: str) -> Line | None:
         delta, rest = _split_size(s[len(ARROW):].lstrip())
         text = f"{ARROW} {rest}" if rest else ARROW
         text, seg_deltas = _split_br(text)
+        text, spans = _parse_spans(text)
         return Line(text=text, level=level, kind="plain", size_delta=delta,
-                    seg_deltas=seg_deltas)
+                    seg_deltas=seg_deltas, spans=spans)
 
     # 上記以外 → 既定の箇条書き（インデントに応じたレベル）
     delta, text = _split_size(s)

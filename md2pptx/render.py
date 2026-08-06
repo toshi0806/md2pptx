@@ -36,6 +36,7 @@ from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
 from pptx.enum.dml import MSO_THEME_COLOR
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.ns import qn
+from pptx.dml.color import RGBColor
 from pptx.util import Emu, Inches, Pt
 # python-pptx の Slide は ir.Slide と名前がぶつかる．**外来のほうに印を付ける**
 # ——``Slide`` は parser / cli でも ir の意味で使っており，この 1 ファイルのために
@@ -50,6 +51,7 @@ from pptx.shapes.placeholder import SlidePlaceholder
 from pptx.slide import Slide as PptxSlide, SlideLayout
 from pptx.text.text import TextFrame
 
+from .colors import parse_color
 from .ir import (
     TITLE_LAYOUT, Block, Crop, Deck, Flow, Image, Length, Line, ObjectBlock,
     Slide, Table, TitleSlide,
@@ -63,7 +65,7 @@ if TYPE_CHECKING:
     # 名前で起動ごと落とさない**ため——``from __future__ import annotations``
     # により注釈は文字列のままなので、実行には要らない．CI の typecheck が
     # 気づかせてくれる．
-    from pptx.text.text import _Paragraph
+    from pptx.text.text import _Paragraph, _Run
 
 
 # Table.aligns の寄せ名 → PowerPoint の段落水平アラインメント．
@@ -243,7 +245,11 @@ class Renderer:
                 if el is not None:
                     pPr.remove(el)
             buClr = pPr.makeelement(qn("a:buClr"), {})
-            buClr.append(buClr.makeelement(qn("a:schemeClr"), {"val": color}))
+            # 色名の解決は本文の行内装飾と同じリゾルバを使う（Issue #105）．
+            # @autonum-color でも CSS の色名と16進が書けるのはこのため．
+            kind, value = parse_color(color)
+            tag = "a:schemeClr" if kind == "theme" else "a:srgbClr"
+            buClr.append(buClr.makeelement(qn(tag), {"val": value}))
             pPr.insert(0, buClr)  # buClr は採番記号より前に置く
         bu = pPr.makeelement(qn("a:buAutoNum"), {"type": fmt})
         for tag in ("a:buChar", "a:buNone", "a:buAutoNum"):
@@ -441,9 +447,78 @@ class Renderer:
         size = min(self._SIZE_MAX_PT, max(self._SIZE_MIN_PT, size))
         p.font.size = Pt(size)
 
+    def _write_spans(self, p: _Paragraph, blk: Line) -> None:
+        """Line を段落へ書く．装飾があれば run を分けて属性を付ける（§5.13）．
+
+        装飾の無い行（``blk.spans`` が空）は従来どおり ``p.text`` へ一括で入れる——
+        python-pptx が ``\\v`` を ``a:br`` に割ってくれるので，触る理由がない．
+        **装飾を使わない原稿の出力はこの経路のままで 1 ビットも変わらない．**
+
+        装飾がある行は run を自分で並べる．セグメントの境目（``segment`` が変わる位置）
+        には ``a:br`` を挟む——``p.text`` に任せられないのは，1 セグメントが
+        複数 run に割れるため．
+        """
+        if not blk.spans:
+            p.text = blk.text
+            return
+        p.text = ""
+        prev_seg = blk.spans[0].segment if blk.spans else 0
+        for i, span in enumerate(blk.spans):
+            if i and span.segment != prev_seg:
+                self._append_break(p)
+                prev_seg = span.segment
+            run = p.add_run()
+            run.text = span.text
+            if span.bold:
+                run.font.bold = True
+            if span.mono:
+                run.font.name = self._mono_font
+            if span.color:
+                self._set_run_color(run, span.color)
+            if span.link:
+                run.hyperlink.address = span.link
+            if span.script:
+                self._set_run_script(run, span.script)
+
+    @staticmethod
+    def _append_break(p: _Paragraph) -> None:
+        """段落の末尾（``a:endParaRPr`` の前）へ ``a:br`` を足す．"""
+        br = p._p.makeelement(qn("a:br"), {})
+        end = p._p.find(qn("a:endParaRPr"))
+        if end is None:
+            p._p.append(br)
+        else:
+            end.addprevious(br)
+
+    def _set_run_color(self, run: _Run, name: str) -> None:
+        """run の文字色を設定する（テーマ色名／CSS の色名／16進）．
+
+        テーマ色は **RGB へ潰さず** ``theme_color`` で指定する——
+        テーマを差し替えたときに追従させたいため．
+        """
+        kind, value = parse_color(name)
+        if kind == "theme":
+            run.font.color.theme_color = self._theme_map[value]
+        else:
+            run.font.color.rgb = RGBColor.from_string(value)
+
+    @staticmethod
+    def _set_run_script(run: _Run, script: str) -> None:
+        """run を上付き／下付きにする（``a:rPr/@baseline``）．
+
+        python-pptx に API が無いので属性を直接書く．値は OOXML の千分率で，
+        PowerPoint の UI が付けるのと同じ ±30% にしている．
+        """
+        run.font._rPr.set("baseline", "30000" if script == "sup" else "-25000")
+
     def _apply_segment_deltas(self, p: _Paragraph, deltas: list[int | None],
-                              base_pt: float) -> None:
+                              base_pt: float,
+                              segments: list[int] | None = None) -> None:
         """段落 p の run へ，セグメントごとの相対サイズを適用する（Issue #82）．
+
+        segments を渡すと run とセグメントの対応をそれで決める（Issue #105）．
+        **行内装飾があると 1 セグメントが複数 run に割れる**ので，位置で対応させると
+        別のセグメントへサイズが付く．渡さないときは従来どおり位置で対応させる．
 
         ``<br>`` を含む段落は python-pptx が ``\\v`` ごとに run を分けて ``a:br`` で
         つなぐので，run と IR のセグメントが順に 1 対 1 で対応する．行や段落を分けずに
@@ -458,7 +533,9 @@ class Renderer:
 
         本文が空の段落（``- `` 由来）は run が 0 個で，このループは回らない．
         """
-        for run, delta in zip(p.runs, deltas):
+        idx = segments if segments is not None else range(len(deltas))
+        for run, seg in zip(p.runs, idx):
+            delta = deltas[seg] if seg < len(deltas) else None
             if delta is None:
                 continue
             size = round(base_pt * self._SIZE_STEP_RATIO ** delta)
@@ -1265,7 +1342,7 @@ class Renderer:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
             first = False
             p.level = blk.level
-            p.text = blk.text
+            self._write_spans(p, blk)
             if blk.kind == "autonum":
                 fmt = blk.num_style or "arabicPeriod"
                 color = blk.num_color or default_num_color
@@ -1289,8 +1366,9 @@ class Renderer:
             # セグメントの段数は行の段数と**同じ基点**（その level のテーマ既定）から
             # 数える．行が {+1} でもセグメントの {-2} は同じ大きさになる——
             # 「テーマ既定からの相対段数」という記法の意味を段で変えないため．
-            self._apply_segment_deltas(p, blk.seg_deltas,
-                                       levels[min(blk.level, len(levels) - 1)])
+            self._apply_segment_deltas(
+                p, blk.seg_deltas, levels[min(blk.level, len(levels) - 1)],
+                [s.segment for s in blk.spans] if blk.spans else None)
         return first
 
     def _fill_lines(self, tf: TextFrame, line_blocks: list[Line],
