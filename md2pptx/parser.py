@@ -127,11 +127,13 @@ def parse(md_text: str) -> Deck:
     """
     text = _normalize_newlines(md_text)
     meta, body, body_offset = _split_front_matter(text)
+    syntax = _validate_syntax(meta)
+    _warn_deprecated_meta(meta, syntax)
     deck = Deck(meta=meta)
     deck.title_slide = _build_title_slide(meta)
     deck.slides, title_notes = _parse_body(
         body, body_offset, has_title_slide=deck.title_slide is not None,
-        syntax=_validate_syntax(meta))
+        syntax=syntax)
     # 不変条件：title_notes が非 None なのは has_title_slide=True のときだけ
     # （タイトルスライド無しの本文前 ```note は _parse_body が ValueError にする．
     # 空の ```note は捨てられ title_notes に積まれない）．よってここで
@@ -190,7 +192,6 @@ def _split_front_matter(text: str) -> tuple[dict, str, int]:
                     raise ValueError(
                         f"unknown front matter key(s): {keys} (known keys: {known})"
                     )
-                _warn_deprecated_meta(meta, _validate_syntax(meta))
                 return meta, body, i + 1
     return {}, text, 0
 
@@ -316,13 +317,14 @@ def _split_size_opt(value: object) -> tuple[int | None, str | None]:
 
 def _parse_body(body: str, body_offset: int = 0,
                 has_title_slide: bool = False,
-                syntax: int = 0) -> tuple[list[Slide], str | None]:
+                syntax: int = _DEFAULT_SYNTAX,
+                ) -> tuple[list[Slide], str | None]:
     """本文をスライド列へ分割し，各行を IR ブロックへ変換する．
 
     body_offset はフロントマターが消費したファイル行数（エラー報告の行番号を
     ファイル先頭基準へ換算するために使う）．has_title_slide はフロントマター
     由来のタイトルスライドの有無（本文開始前の ```note の宛先判定に使う）．
-    syntax は見出しレベルの割り当て（``_SYNTAX_HEADINGS``．既定 0＝従来）．
+    syntax は見出しレベルの割り当て（``_SYNTAX_HEADINGS``．既定 ``_DEFAULT_SYNTAX``）．
 
     Returns:
         (slides, title_notes)．title_notes は本文開始前に現れた ```note の
@@ -403,8 +405,10 @@ def _parse_body(body: str, body_offset: int = 0,
 
         # --- 表紙（テーマの「タイトル スライド」レイアウト）----------
         if _RE_TITLE_SLIDE.match(stripped):
-            # syntax 1 では "#" 自体が表紙なので，この指定は冗長．黙って受けると
+            # "#" 自体が表紙になる割り当てでは，この指定は冗長．黙って受けると
             # 「表紙の書き方が 2 通りある」状態に戻る（@layout との併記と同じ理由）．
+            # syntax 番号ではなく**割り当ての中身**で見る——「表紙を持つ割り当てなら
+            # 冗長」が理由なので，将来 syntax が増えてもその判断がそのまま効く．
             if TITLE_LAYOUT in _SYNTAX_HEADINGS[syntax].values():
                 raise ValueError(
                     f"@title-slide is not used with syntax {syntax} at line "

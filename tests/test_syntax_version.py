@@ -95,10 +95,10 @@ def test_a_second_title_slide_stops_and_points_at_syntax_zero():
     普通なので、2 枚目で引っかかる。黙って 1 段ずれたデッキを出すより良い。
     """
     old = _fm() + "# 第1部\n\n## スライドA\n\n# 第2部\n"
-    with pytest.raises(ValueError, match="second title slide"):
+    with pytest.raises(ValueError) as e:
         parse(old)
-    with pytest.raises(ValueError, match="syntax: 0"):
-        parse(old)
+    assert "second title slide" in str(e.value)
+    assert "syntax: 0" in str(e.value)   # 何を書けばよいかを示すこと
     # syntax: 0 を足せば通る。
     assert _layouts(_fm(0) + "# 第1部\n\n## スライドA\n\n# 第2部\n") == [
         SECTION_LAYOUT, CONTENT_LAYOUT, SECTION_LAYOUT]
