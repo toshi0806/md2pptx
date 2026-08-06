@@ -18,11 +18,13 @@ from typing import Literal
 # 水平寄せ．表の列・画像の配置で共通に使う．
 Align = Literal["left", "center", "right"]
 
-# 表紙に使うレイアウト番号．OOXML では**先頭が「タイトル スライド」**という並びが
-# テーマの慣行で，thmx / pptx のどちらから作った base でもここに来る．
-# parser（``@title-slide`` の解決）と render（番号を付けない判定・title_layout）が
-# 同じ値を見るので，契約であるこのモジュールに置く．
+# レイアウト番号．OOXML では**先頭から「タイトル スライド」「タイトルとコンテンツ」
+# 「セクション見出し」**という並びがテーマの慣行で，thmx / pptx のどちらから作った
+# base でもここに来る．parser（見出しレベルの割り当て）と render（番号を付けない
+# 判定・title_layout）が同じ値を見るので，契約であるこのモジュールに置く．
 TITLE_LAYOUT = 0
+CONTENT_LAYOUT = 1
+SECTION_LAYOUT = 2
 
 
 @dataclass

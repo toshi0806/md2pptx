@@ -20,7 +20,8 @@ from md2pptx import render
 from md2pptx.ir import TITLE_LAYOUT
 from md2pptx.parser import parse
 
-_FM = "---\ntheme: t.pptx\n---\n\n"
+# @title-slide は syntax 0 専用（1 では "#" 自体が表紙）．
+_FM = "---\ntheme: t.pptx\nsyntax: 0\n---\n\n"
 
 
 def _theme(tmp_path):

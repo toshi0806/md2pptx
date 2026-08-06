@@ -41,7 +41,7 @@ def _theme(tmp_path):
 
 def _lines(body):
     """本文だけの Markdown を parse して Line の (本文, 段数, 種別) を返す．"""
-    deck = parse("---\ntheme: t.pptx\n---\n\n## 見出し\n" + body)
+    deck = parse("---\ntheme: t.pptx\n---\n\n### 見出し\n" + body)
     return [(b.text, b.size_delta, b.kind) for b in deck.slides[0].blocks]
 
 
@@ -123,7 +123,7 @@ def test_empty_line_is_rendered_as_a_runless_paragraph(tmp_path):
 theme: t.pptx
 ---
 
-## 見出し
+### 見出し
 
 - A
 - {-2}
@@ -154,7 +154,7 @@ affiliation:
 theme: t.pptx
 ---
 
-## 表題
+### 表題
 <!-- @layout: 0 -->
 
 - 著者

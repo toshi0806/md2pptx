@@ -87,7 +87,7 @@ def _para_size(tmp_path, src, ph_idx, name="para.pptx"):
 # ------------------------------------------------------------------ parser
 def test_parser_splits_tokens_off_each_segment():
     """2 番目以降のセグメント先頭のトークンが seg_deltas へ移る．"""
-    deck = parse("---\ntheme: t.pptx\n---\n\n## 見出し\n- {+1} A<br>{-2} B<br>C\n")
+    deck = parse("---\ntheme: t.pptx\n---\n\n### 見出し\n- {+1} A<br>{-2} B<br>C\n")
     line = deck.slides[0].blocks[0]
     assert (line.text, line.size_delta, line.seg_deltas) == (
         "A\vB\vC", 1, [None, -2, None])
@@ -96,14 +96,14 @@ def test_parser_splits_tokens_off_each_segment():
 def test_parser_takes_the_first_title_segment_too():
     """タイトルは先頭セグメントの段数も取る（本文行と違い格納先が 1 つ）．"""
     deck = parse("---\ntheme: t.pptx\n---\n\n"
-                 "# 主題<br>{-2} 副題\n\n## {+1} 大見出し<br>{-1} 小さく\n")
+                 "# 主題<br>{-2} 副題\n\n### {+1} 大見出し<br>{-1} 小さく\n")
     assert deck.slides[0].title_deltas == [None, -2]
     assert deck.slides[1].title_deltas == [1, -1]
 
 
 def test_arrow_lines_take_segment_tokens():
     """``→`` 行でもセグメントの段数を取れる（行種で挙動を変えない）．"""
-    deck = parse("---\ntheme: t.pptx\n---\n\n## 見出し\n→ {-1} 結論<br>{+2} 強め\n")
+    deck = parse("---\ntheme: t.pptx\n---\n\n### 見出し\n→ {-1} 結論<br>{+2} 強め\n")
     line = deck.slides[0].blocks[0]
     assert (line.text, line.size_delta, line.seg_deltas) == (
         "→ 結論\v強め", -1, [None, 2])
@@ -111,7 +111,7 @@ def test_arrow_lines_take_segment_tokens():
 
 def test_plain_br_keeps_meaning_nothing():
     """トークンの無い ``<br>`` は従来どおり段数を持たない．"""
-    deck = parse("---\ntheme: t.pptx\n---\n\n## 見出し<br>続き\n- A<br>B\n")
+    deck = parse("---\ntheme: t.pptx\n---\n\n### 見出し<br>続き\n- A<br>B\n")
     assert deck.slides[0].title_deltas == [None, None]
     assert deck.slides[0].blocks[0].seg_deltas == [None, None]
 
@@ -125,11 +125,11 @@ def test_whitespace_around_br_is_eaten():
     行末に空白を残すエディタ設定でも表示がずれない，という既存の性質に乗っている．
     """
     for src in ("A <br>{-2} B", "A<br> {-2} B", "A  <br>  {-2}  B"):
-        deck = parse(f"---\ntheme: t.pptx\n---\n\n## 見出し\n- {src}\n")
+        deck = parse(f"---\ntheme: t.pptx\n---\n\n### 見出し\n- {src}\n")
         line = deck.slides[0].blocks[0]
         assert (line.text, line.seg_deltas) == ("A\vB", [None, -2]), src
     # タイトルでも同じ（通す場所は _split_br の 1 つ）．
-    deck = parse("---\ntheme: t.pptx\n---\n\n## A <br>{-2} B\n")
+    deck = parse("---\ntheme: t.pptx\n---\n\n### A <br>{-2} B\n")
     assert (deck.slides[0].title, deck.slides[0].title_deltas) == (
         "A\vB", [None, -2])
 
@@ -170,7 +170,7 @@ def test_render_sizes_the_first_title_segment(tmp_path):
 theme: t.pptx
 ---
 
-## {+1} 大見出し<br>{-1} 小さく
+### {+1} 大見出し<br>{-1} 小さく
 """
     assert _runs(tmp_path, src, ph_idx=0) == [("大見出し", 50.0), ("小さく", 39.0)]
     assert _para_size(tmp_path, src, ph_idx=0) is None
@@ -182,7 +182,7 @@ def test_render_sizes_the_body_segments(tmp_path):
 theme: t.pptx
 ---
 
-## 見出し
+### 見出し
 
 - A<br>{-2} 小さい続き
 """, ph_idx=1) == [("A", None), ("小さい続き", 25.0)]
@@ -198,7 +198,7 @@ def test_segment_base_ignores_the_line_token(tmp_path):
 theme: t.pptx
 ---
 
-## 見出し
+### 見出し
 
 - {+1} 大きい行<br>{-2} 小さい続き
 """
