@@ -62,7 +62,7 @@ jobs:
               if s.has_notes_slide and s.notes_slide.notes_text_frame.text.strip()
           )
           print(f"slides={len(p.slides)} slides_with_notes={notes}")
-          assert len(p.slides) == 14, f"expected 14 slides, got {len(p.slides)}"
+          assert len(p.slides) == 15, f"expected 15 slides, got {len(p.slides)}"
           assert notes == 2, f"expected 2 slides with notes, got {notes}"
           PY
       # The watch loop's signal handling cannot be reached from unit tests: the

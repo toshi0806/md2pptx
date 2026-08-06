@@ -86,7 +86,7 @@ _RENAMED_DIRECTIVES = {
 
 # フロントマターの既知キー．未知のキーはエラー（ディレクティブと同方針）．
 _KNOWN_META_KEYS = {
-    "theme", "output", "slide_number", "default_autofit", "syntax",
+    "theme", "output", "slide_number", "default_autofit", "syntax", "mono_font",
     "title", "subtitle", "author", "affiliation",
 }
 
@@ -450,7 +450,7 @@ def _parse_body(body: str, body_offset: int = 0,
             i += 1
             continue
 
-        # --- フェンスドコードブロック（```flow … ```）→ Flow（§5.5）--
+        # --- フェンスドブロック（```flow / ```image / ```note / コード）------
         if stripped.startswith("```"):
             info = stripped[3:].strip().lower()
             j = i + 1
@@ -458,6 +458,12 @@ def _parse_body(body: str, body_offset: int = 0,
             while j < n and lines[j].strip() != "```":
                 buf.append(lines[j])
                 j += 1
+            if j >= n:
+                # 閉じ忘れを黙って末尾まで飲み込むと，以降のスライドが丸ごと
+                # 消えたデッキが出る．**行番号付きで止める**（§7 の方針）．
+                raise ValueError(
+                    f"unclosed code fence at line {lineno}: "
+                    f"{stripped!r} (add a closing ```)")
             if info == "flow":
                 add_block(_parse_flow("\n".join(buf)))
             elif info == "image":
@@ -481,8 +487,21 @@ def _parse_body(body: str, body_offset: int = 0,
                     else:
                         s = ensure_slide()
                         s.notes = text if s.notes is None else s.notes + "\n" + text
-            # flow / image / note 以外のコードブロックは範囲外（無視）．
-            i = j + 1  # 閉じフェンスの次へ（無い場合も末尾へ）
+            else:
+                # それ以外はすべてコードブロック（§5.12）．**info string は
+                # 自由で，md2pptx は読み飛ばす**——構文強調はしないので言語名に
+                # 意味が無く，受理する名前の一覧を持つと維持する羽目になる．
+                # 行は原稿のまま Line にする（行頭マーカーもサイズトークンも
+                # <br> も解釈しない．解釈したらもうコードではない）．
+                # 前後の空行だけ落とす（フェンス境界に接する空行の正規化）．
+                body_lines = list(buf)
+                while body_lines and not body_lines[0].strip():
+                    body_lines.pop(0)
+                while body_lines and not body_lines[-1].strip():
+                    body_lines.pop()
+                for text in body_lines:
+                    add_block(Line(text=text, kind="code"))
+            i = j + 1  # 閉じフェンスの次へ
             continue
 
         # --- 画像ショートハンド（![cap](src){opts}）→ Image（§5.9）--------

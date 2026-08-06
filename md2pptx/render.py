@@ -69,6 +69,11 @@ if TYPE_CHECKING:
 # Table.aligns の寄せ名 → PowerPoint の段落水平アラインメント．
 _TABLE_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
 
+# コードブロックの既定の等幅フォント（front matter の ``mono_font`` で変えられる）．
+# Windows / macOS の Office に同梱されていて，日本語混在時は欧文だけに効く
+# （和文はテーマの東アジア用フォントへ落ちる．``font.name`` は latin にだけ書くため）．
+DEFAULT_MONO_FONT = "Consolas"
+
 
 def resolve_image_path(src: str, base_dir: str | None) -> str:
     """``Image.src`` の宣言パスを実際のファイルパスへ解決する．
@@ -160,6 +165,9 @@ class Renderer:
             raise ValueError("theme has no slide size (slide_width/height)")
         self.SW = self.prs.slide_width
         self.SH = self.prs.slide_height
+        # コードブロックの等幅フォント（§5.12）．render() が front matter の
+        # ``mono_font`` で上書きする．Renderer を直接使う経路でも既定が要る．
+        self._mono_font = DEFAULT_MONO_FONT
 
         # テーマのアクセント色（図形用）．テキスト色・フォントはテーマ任せ．
         # Phase 1 では box/block_arrow/note/table（Phase 2/3）が使うため保持のみ．
@@ -1264,6 +1272,12 @@ class Renderer:
                 self.set_autonum(p, fmt, color=color)
             elif blk.kind == "plain":
                 self.no_bullet(p)
+            elif blk.kind == "code":
+                # 行頭記号を消して等幅にする（§5.12）．書いた桁が揃わないと
+                # コードとして読めないので，ここだけはテーマ既定に任せない．
+                self.no_bullet(p)
+                for run in p.runs:
+                    run.font.name = self._mono_font
             # kind == "bullet" はテーマ既定のまま
             delta = blk.size_delta if blk.size_delta is not None else default_size_delta
             # 行トークン {0} は「スライド既定を無効化してテーマ既定へ戻す」意味だが，
@@ -1674,6 +1688,11 @@ class Renderer:
         # ここで bool にする（if での評価と同じ結果になる）．
         slide_number = bool(meta.get("slide_number", True))
         default_autofit = bool(meta.get("default_autofit", True))
+        # 等幅フォントだけはテーマに委ねきれない（§5.12）．テーマの本文フォントは
+        # プロポーショナルで，桁が揃わないとコードとして読めない——見た目の好みでは
+        # なく機能なので，既定を持ち，変えたい人は front matter で変える．
+        mono = meta.get("mono_font")
+        self._mono_font = str(mono) if mono else DEFAULT_MONO_FONT
 
         if deck.title_slide is not None:
             self.render_title_slide(deck.title_slide)
