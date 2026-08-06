@@ -24,11 +24,10 @@
 from __future__ import annotations
 
 from pptx import Presentation
+from pptx.enum.shapes import PP_PLACEHOLDER
 
 from md2pptx import render
 from md2pptx.parser import parse
-
-_SLIDE_NUMBER_IDX = 12   # 既定テンプレートの番号プレースホルダ
 
 
 def _theme(tmp_path):
@@ -46,7 +45,12 @@ def _build(tmp_path, src, name="out.pptx"):
 
 
 def _numbered(slide):
-    return any(ph.placeholder_format.idx == _SLIDE_NUMBER_IDX
+    """スライドに番号プレースホルダが入っているか．
+
+    **種別で判定する**（``add_slide_number`` は ``idx == 12`` で探すが，それは
+    実装側の前提）．テストまで同じ添字を見ると，添字の取り違えを検出できない．
+    """
+    return any(ph.placeholder_format.type == PP_PLACEHOLDER.SLIDE_NUMBER
                for ph in slide.placeholders)
 
 
@@ -125,6 +129,10 @@ theme: t.pptx
     frames = {ph.placeholder_format.idx: ph.text_frame.text
               for ph in slide.placeholders
               if ph.placeholder_format.idx in (0, 1)}
+    # 区切り文字の違いは枠ではなく**段落構造**の違い．python-pptx の
+    # text_frame.text は段落の境目を "\n"，段落内の改行（a:br）を "\v" で返す．
+    # 主題と副題は <br> でつないだ 1 段落なので "\v"，著者と所属は別々の行として
+    # 書いたので別段落＝"\n" になる．
     assert frames[0] == "主題\v― 副題 ―"
     assert frames[1] == "著者\n所属"
 
