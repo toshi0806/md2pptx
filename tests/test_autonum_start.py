@@ -22,6 +22,8 @@ md2pptx 側の仕事にする。
 """
 from __future__ import annotations
 
+import re
+
 from pptx import Presentation
 
 from md2pptx import render
@@ -46,7 +48,6 @@ def _numbers(slide):
     番号は ``a:buAutoNum`` の ``startAt``。全ての採番段落に付いているはずで、
     付いていない段落は None として現れる（＝数え直しが起きる状態）。
     """
-    import re
     found = []
     for sh in slide.shapes:
         if not sh.has_text_frame:

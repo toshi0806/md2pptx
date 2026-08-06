@@ -48,9 +48,12 @@ class Line:
         num_color: 採番記号の色をテーマ色名で指定（例 "tx1"）．
             None ならテーマ任せ．kind=="autonum" のときのみ意味を持つ．
         num_start: 原稿に書かれていた番号（"8." なら 8，"⑤" なら 5）．
-            render は**リストの先頭の行だけ**これを開始番号（buAutoNum の
-            startAt）として書き，以降は PowerPoint の自動採番に任せる
-            （CommonMark と同じ規則．DESIGN.md §5.3）．kind!="autonum" では None．
+            **効くのはリストの先頭の行だけ**で，以降の行の値は使わない
+            （CommonMark と同じ規則．"1. 1. 1." と書けば 1・2・3 になる）．
+            番号を数えるのは render で，**全ての採番段落に buAutoNum の startAt を
+            明示的に書く**——PowerPoint は startAt の付いた段落の次から数え直すため，
+            先頭にだけ書くと "8. 1. 2. 3. …" になる（DESIGN.md §5.3）．
+            kind!="autonum" では None．
         size_delta: 相対フォントサイズの段数（行頭 "{+1}"/"{-2}" 由来）．
             その行が level から得るテーマ既定サイズを基点に，1 段ごとに
             ×1.125（拡大）/ ÷1.125（縮小）する（render が実サイズへ換算）．
