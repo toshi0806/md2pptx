@@ -51,8 +51,8 @@ from pptx.slide import Slide as PptxSlide, SlideLayout
 from pptx.text.text import TextFrame
 
 from .ir import (
-    Block, Crop, Deck, Flow, Image, Length, Line, ObjectBlock, Slide, Table,
-    TitleSlide,
+    TITLE_LAYOUT, Block, Crop, Deck, Flow, Image, Length, Line, ObjectBlock,
+    Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
 from . import workdir
@@ -140,11 +140,6 @@ class Renderer:
     _SIZE_MIN_PT = 8.0
     _SIZE_MAX_PT = 96.0
 
-    # 表紙に使うレイアウト番号．OOXML では**先頭が「タイトル スライド」**という
-    # 並びがテーマの慣行で，thmx / pptx のどちらから作った base でもここに来る．
-    # 番号を付けない判定（render_slide）と title_layout の解決が同じ値を見る．
-    _TITLE_LAYOUT_IDX = 0
-
     # run に付ける言語（_apply_text_language）．PowerPoint はこれで禁則処理を選ぶ．
     # 2 つは**対で意味を持つ**（lang が主たる言語，altLang がもう一方の字種の言語）．
     # 日本語版 PowerPoint も ja-JP／en-US の組で書き出す．片方だけ変えないこと．
@@ -191,7 +186,7 @@ class Renderer:
         # レイアウト解決．title=0 / content=1 / section=2．
         layouts = self.prs.slide_layouts
         self.layouts = layouts
-        self.title_layout = layouts[self._TITLE_LAYOUT_IDX]
+        self.title_layout = layouts[TITLE_LAYOUT]
         self.L1 = layouts[1] if len(layouts) > 1 else layouts[0]
         self.section_layout = layouts[2] if len(layouts) > 2 else self.L1
 
@@ -1159,7 +1154,7 @@ class Renderer:
         # 番号の有無をそこに紐づける（Issue #82）．front matter 由来の表紙を
         # 描く render_title_slide も番号を付けず，本文記法で書いた表紙が
         # 同じ扱いになる．slide_number: false は従来どおり全体に効く．
-        if slide_number and layout_idx != self._TITLE_LAYOUT_IDX:
+        if slide_number and layout_idx != TITLE_LAYOUT:
             self.add_slide_number(s)
         self._set_notes(s, slide.notes)
         return s
