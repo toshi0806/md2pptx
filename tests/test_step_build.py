@@ -147,10 +147,11 @@ def test_a_step_before_the_column_break_leaves_the_right_column_empty():
                  "- 左2\n"
                  "<!-- @col -->\n"
                  "- 右1\n")
-    first, last = parse(src).slides
+    slides = parse(src).slides
+    first, last = slides
     assert _col_texts(first) == [["左1"], []]
     assert _col_texts(last) == [["左1", "左2"], ["右1"]]
-    assert [s.layout for s in parse(src).slides] == [3, 3]
+    assert [s.layout for s in slides] == [3, 3]
 
 
 def test_steps_do_not_leak_into_the_next_slide():

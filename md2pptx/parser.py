@@ -354,7 +354,11 @@ def _parse_body(body: str, body_offset: int = 0,
         (s.columns[-1] if s.columns else s.blocks).append(b)
 
     def flush() -> None:
-        """現在のスライドを（段があれば展開して）slides へ移す．"""
+        """現在のスライドを（段があれば展開して）slides へ移す．
+
+        ``slides`` に ``nonlocal`` が要らないのは ``extend`` するだけで
+        束縛し直さないため（``current`` と ``step_marks`` は代入するので要る）．
+        """
         nonlocal current, step_marks
         if current is not None:
             slides.extend(_expand_steps(current, step_marks))
@@ -564,11 +568,17 @@ def _expand_steps(slide: Slide, marks: list[list[int]]) -> list[Slide]:
     """
     if not marks:
         return [slide]
+    # ``Slide.columns`` は**空リストが「単一カラム」の意味**（``None`` は取らない）．
+    # parser の add_block も ``s.columns[-1] if s.columns else s.blocks`` と
+    # 同じ判定をしており，ここだけ ``is not None`` にすると食い違う．
     cols = slide.columns if slide.columns else [slide.blocks]
     out: list[Slide] = []
     for mark in marks:
         counts = list(mark) + [0] * (len(cols) - len(mark))
         sliced = [list(c[:k]) for c, k in zip(cols, counts)]
+        # 浅いコピーで足りる——``title_deltas`` は ``int | None``，
+        # ``directives`` の値は ``int | str | bool`` で，どれも不変
+        # （``ir.Slide`` の注釈が正）．``blocks`` は下でスライスした新しいリスト．
         step = Slide(title=slide.title,
                      title_deltas=list(slide.title_deltas),
                      layout=slide.layout,
