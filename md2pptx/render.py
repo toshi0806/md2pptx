@@ -366,8 +366,9 @@ class Renderer:
                 last = 0
                 for lvl in range(1, 10):
                     el = root.find(qn("a:lvl%dpPr" % lvl))
-                    if el is not None and el.get("marL") is not None:
-                        last = int(el.get("marL"))
+                    marL = el.get("marL") if el is not None else None
+                    if marL:
+                        last = int(marL)
                     levels.append(last)
         except Exception:
             levels = []
@@ -1593,6 +1594,8 @@ class Renderer:
             return sz, n, ind
 
         y = ph.top + tf.margin_top
+        # preceding は**位置を数えるためだけ**に使う．そこに枠が付いていても
+        # ここでは描かない——呼び出し元が同じ行列で 1 度描いている．
         for ln in preceding or []:
             sz, n, _ = measure(ln)
             y += n * int(Pt(sz) * 1.32)
@@ -1622,6 +1625,10 @@ class Renderer:
 
         塗りつぶさないのは、下に文字があるため．色の既定はテーマのアクセント色で、
         ``{box:blue}`` のように指定があればそちらを使う（語彙は行内装飾と共通）．
+
+        ``color`` はパーサが正規化済みだが、``_set_run_color`` と同じくここでも
+        ``parse_color`` を通す．冪等（テーマ色名も "#RRGGBB" もそのまま返る）なうえ、
+        **色名の語彙を知る場所を 1 つに保てる**．
         """
         shp = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE, Emu(left), Emu(top), Emu(w), Emu(h))

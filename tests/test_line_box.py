@@ -110,6 +110,11 @@ def test_no_frame_without_the_token(tmp_path):
 
 
 def test_the_frame_sits_inside_the_body(tmp_path):
+    """短い 1 行なら枠は本文の枠に収まる．
+
+    見積もりなので、枠いっぱいまで折り返す行では下端を超えうる。ここで固定して
+    いるのは「ふつうの行で枠が飛び出さない」ことで、上限そのものではない。
+    """
     prs = _build(tmp_path, _FM + "### x\n\n- {box} 囲む行\n")
     slide = prs.slides[-1]
     box, = _boxes(slide)
