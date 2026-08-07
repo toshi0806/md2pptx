@@ -863,7 +863,7 @@ def _parse_image_block(text: str) -> Image:
 
 
 def _parse_arrow_block(text: str) -> Arrow:
-    """``` ```arrow ``` ブロックを Arrow へ解釈する（§5.15）．
+    """``` ```arrow ``` ブロックを Arrow へ解釈する（§5.16）．
 
     受けるキーは ``direction:`` だけ．**必須**——向きの無い矢印は描きようが無い．
     知らないキー・知らない向きはタイポとみなしてエラーで止める（他のフェンスと同じ）．

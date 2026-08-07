@@ -107,14 +107,17 @@ def test_the_figure_stays_on_the_slide(tmp_path):
 
 
 def test_a_layout_with_a_body_is_unchanged(tmp_path):
-    """本文プレースホルダのあるレイアウトはそもそもこの分岐へ来ない．"""
+    """本文プレースホルダのあるレイアウトはそもそもこの分岐へ来ない．
+
+    図は本文の枠の中に置かれる——`_content_rect` はその枠を返し、
+    既定値（この修正で触ったところ）まで落ちない。
+    """
     img = _fig(tmp_path)
     src = (_FM + "### x\n\n```image\nsrc: %s\nwidth: 100%%\n```\n" % img.name)
     out = _build(tmp_path, src)
-    pic = _picture(out.slides[-1])
-    body_top = min(sh.top for sh in out.slides[-1].shapes
-                   if sh.is_placeholder and sh.placeholder_format.idx == 1) \
-        if any(sh.is_placeholder and sh.placeholder_format.idx == 1
-               for sh in out.slides[-1].shapes) else None
-    if body_top is not None:
-        assert pic.top >= body_top
+    slide = out.slides[-1]
+    pic = _picture(slide)
+    bodies = [sh for sh in slide.shapes
+              if sh.is_placeholder and sh.placeholder_format.idx == 1]
+    assert bodies, "既定レイアウトに本文プレースホルダが無い（前提が崩れている）"
+    assert pic.top >= bodies[0].top
