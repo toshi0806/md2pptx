@@ -1936,7 +1936,9 @@ class Renderer:
 
         箇条書きが長くて右端まで届くスライドでは**文字に重なる**．元のスライドも
         同じ作りで、そこは書く側が見て決める（SYNTAX.md に明記）．
-        カラムが 2 つ無ければ何もしない．
+        カラムが 2 つ無ければ何もしない．``@col: arrow`` はカラム区切りそのものなので、
+        パーサを通る限りカラムは必ず 2 つ以上ある——ここは直接呼ばれたときの防御で、
+        起きないことに警告は出さない．
         """
         if ncols < 2:
             return None
@@ -1949,6 +1951,9 @@ class Renderer:
         inset = Inches(0.1)
         # 右端の内側．右カラムの本文には決して掛からない．
         x = min(a.left + a.width - w - inset, b.left - w - inset)
+        # 縦は**上寄り**．矢印は「左の並びから右の並びへ」を指すもので、
+        # 指す先は列の先頭にある．中央に置くと、項目数が少ないスライドで
+        # 矢印だけが下に取り残される（元の講義スライドも上寄り）．
         y = a.top + int(a.height * 0.12)
         shp = slide.shapes.add_shape(
             MSO_SHAPE.RIGHT_ARROW, Emu(x), Emu(y), Emu(w), Emu(h))

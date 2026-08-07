@@ -159,8 +159,13 @@ def test_an_unknown_col_value_stops():
         _slide("- 左\n\n<!-- @col: 2 -->\n\n- 右")
 
 
-def test_col_arrow_needs_two_columns(tmp_path, capsys):
-    """カラムが 1 つしかなければ矢印は描かず、警告する．"""
-    src = _FM + "### x\n\n- 左だけ\n"
-    _build(tmp_path, src)
-    assert "@col: arrow" not in capsys.readouterr().err
+def test_a_single_column_slide_is_untouched(tmp_path, capsys):
+    """カラム区切りの無いスライドには何も起きない（警告も出さない）．
+
+    ``@col: arrow`` はカラム区切りそのものなので、パーサを通る限りカラムは
+    必ず 2 つ以上ある。描画側の ``ncols < 2`` は直接呼ばれたときの防御で、
+    起きないことに警告を出しても読まれない。
+    """
+    prs = _build(tmp_path, _FM + "### x\n\n- 左だけ\n")
+    assert _rights(prs.slides[-1]) == []
+    assert capsys.readouterr().err == ""

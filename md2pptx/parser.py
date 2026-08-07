@@ -57,7 +57,9 @@ _RE_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 _RE_ORDERED = re.compile(r"^(\d+)\.\s+(.*)$")        # 1. 2. 3. …（arabicPeriod）
 _RE_PAREN = re.compile(r"^\(\s*(\d+)\s*\)\s+(.*)$")  # (1) (2) …（arabicParenBoth）
 _RE_DIRECTIVE = re.compile(r"^<!--\s*@([\w-]+)\s*:\s*(.*?)\s*-->$")
-# カラム区切り（「2つのコンテンツ」レイアウト）．値を取らない指示．
+# カラム区切り（「2つのコンテンツ」レイアウト）．値は arrow のみ．
+# **_RE_DIRECTIVE より先に評価すること**——"@col: arrow" は汎用の
+# "@キー: 値" にも当たるので、順序が入れ替わると _apply_directive へ落ちる．
 _RE_COL = re.compile(r"^<!--\s*@col(?:\s*:\s*(\S+?))?\s*-->$")
 # 段階の区切り（アニメーションの代替．§5.11）．同じく値を取らない．
 _RE_STEP = re.compile(r"^<!--\s*@step\s*-->$")
