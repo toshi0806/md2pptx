@@ -2005,6 +2005,10 @@ class Renderer:
         av = geom.find(qn("a:avLst")) if geom is not None else None
         if av is None:
             return          # プリセット図形でなければ調整値そのものが無い
+        # **既にある調整値は捨ててから書く**．2 回呼んでも同じ結果になるように
+        # ——同名の ``a:gd`` が並ぶと、どちらが効くかは実装依存になる．
+        for old in list(av.findall(qn("a:gd"))):
+            av.remove(old)
         for name, val in adj.items():
             gd = av.makeelement(qn("a:gd"), {"name": name,
                                              "fmla": f"val {val}"})

@@ -200,3 +200,19 @@ def test_setting_adj_on_a_shape_without_a_preset_is_a_no_op(tmp_path):
     slide = r.prs.slides.add_slide(r.prs.slide_layouts[6])
     box = slide.shapes.add_textbox(Emu(0), Emu(0), Emu(1000), Emu(1000))
     r._set_shape_adj(box, {"adj1": 50000})       # 例外にならない
+
+
+def test_setting_adj_twice_is_idempotent(tmp_path):
+    """2 回書いても調整値は 1 組（同名が並ぶと、どちらが効くか実装依存になる）．"""
+    from pptx.oxml.ns import qn
+    prs = _build(tmp_path, _fence(direction="down"))
+    shp = _shape(prs.slides[-1])
+    render.Renderer._set_shape_adj(shp, {"adj1": 50000, "adj2": 25000})
+    gds = shp._element.spPr.find(qn("a:prstGeom")).find(qn("a:avLst"))
+    assert len(gds.findall(qn("a:gd"))) == 2
+
+
+@pytest.mark.parametrize("text", ["2.5CM", "1IN", "72PT"])
+def test_units_are_case_insensitive(text):
+    """``2.5CM`` のような大文字の単位も受ける（``_parse_length`` が畳む）．"""
+    assert _arrow(_fence(direction="down", height=text)).height.unit == "emu"
