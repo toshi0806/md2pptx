@@ -263,10 +263,16 @@ class SeqNote:
         after: **何本目の矢印の後ろか**（0 なら最初の矢印より前）．
             時間軸上の位置を「本数」で持つ——座標は plan_seq が決めるので、
             IR が高さを知る必要はない．
+        since: **何本目の矢印が出た段から見せるか**（Issue #125）．
+            既定では ``after`` と同じだが、``@step`` の**後ろ**に書いた注記は
+            次の矢印の本数になる——その注記は次に起きることの説明なので、
+            先に出ると答えが見えてしまう．``after`` と分けてあるのは、
+            **置く高さ**と**出す段**が別の話だから．
     """
 
     text: str = ""
     after: int = 0
+    since: int = 0
 
 
 @dataclass
@@ -305,9 +311,10 @@ class Seq:
             lifelines=list(self.lifelines),
             messages=self.messages[:n],
             # ``after`` は「何本目の矢印の後ろか」．n 本目までを見せる段では
-            # **n 本目の直後の注記はまだ出さない**——その注記は次に起きることの
-            # 説明なので、先に出ると答えが見えてしまう．
-            notes=[nt for nt in self.notes if nt.after < n],
+            # **n 本目の直後までの注記を出す**——その位置の矢印が出たなら、
+            # それを説明する注記も一緒に出るのが自然（起きたことの説明）．
+            # 次の矢印より後ろに書いた注記は、その矢印が出るまで伏せられる．
+            notes=[nt for nt in self.notes if nt.since <= n],
             caption=self.caption,
             note_top=self.note_top,
             note_bottom=self.note_bottom,

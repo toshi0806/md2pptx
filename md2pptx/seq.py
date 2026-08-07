@@ -75,6 +75,7 @@ def parse_seq(text: str) -> Seq:
     """``` ```seq ``` ブロック本文を Seq（IR）へ変換する．"""
     seq = Seq()
     declared = False
+    after_step = False        # 直前に ``@step`` を読んだか（注記の since 用）
     names: list[str] = []
 
     def index_of(name: str) -> int:
@@ -111,18 +112,25 @@ def parse_seq(text: str) -> Seq:
             # 図の中の段階（Issue #125）．**その時点までの本数**を覚えておき、
             # parser がスライドの段へ展開する．図の座標には関係しない．
             seq.steps.append(len(seq.messages))
+            after_step = True
             continue
 
         mn = _RE_NOTE.match(line)
         if mn:
             # 図の中の注記．**その時点までに引いた矢印の本数**を覚えておき、
             # 配置のときに時間軸のその位置へ置く．
-            seq.notes.append(
-                SeqNote(text=mn.group(1).strip(), after=len(seq.messages)))
+            # 置く高さ（after）と出す段（since）は別．``@step`` の後ろに
+            # 書いた注記は**次の矢印が出る段**から見せる——その注記は次に
+            # 起きることの説明なので、先に出ると答えが見えてしまう．
+            at = len(seq.messages)
+            seq.notes.append(SeqNote(
+                text=mn.group(1).strip(), after=at,
+                since=at + 1 if after_step else at))
             continue
 
         mm = _RE_MESSAGE.match(line)
         if mm:
+            after_step = False
             src_name = mm.group(1).strip()
             dst_name = mm.group(2).strip()
             label = (mm.group(3) or "").strip() or None

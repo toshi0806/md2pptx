@@ -48,8 +48,11 @@ def test_the_lifelines_stay_the_same_in_every_step():
         assert _figs(s, Seq)[0].lifelines == ["A", "B", "C"]
 
 
-def test_notes_appear_with_their_step():
-    """図の中の注記は、その位置の矢印が出た段から現れる．"""
+def test_a_note_after_the_step_waits_for_its_message():
+    """``@step`` の**後**に書いた注記は、その先の矢印が出るまで伏せられる．
+
+    その注記は次に起きることの説明なので、先に出ると答えが見えてしまう。
+    """
     src = _FM + (f"### x\n\n{_F}seq\nlifelines: A, B\n"
                  "A -> B: 1\n@step\nnote: ここで待つ\nB -> A: 2\n"
                  f"{_F}\n")
@@ -107,3 +110,35 @@ def test_a_figure_without_steps_is_one_slide():
     src = _FM + (f"### x\n\n{_F}seq\nlifelines: A, B\nA -> B: 1\nB -> A: 2\n{_F}\n")
     slide, = parse(src).slides
     assert len(_figs(slide, Seq)[0].messages) == 2
+
+
+def test_a_note_before_the_step_shows_with_it():
+    """``@step`` の**前**に書いた注記は、その段から出る．
+
+    ``after < n`` の境界がどちら向きにも正しいことを見る——後ろに書いた注記
+    （次に起きることの説明）は伏せ、前に書いた注記（起きたことの説明）は出す。
+    """
+    src = _FM + (f"### x\n\n{_F}seq\nlifelines: A, B\n"
+                 "A -> B: 1\nnote: 送信完了\n@step\nB -> A: 2\n"
+                 f"{_F}\n")
+    first, last = parse(src).slides
+    assert [n.text for n in _figs(first, Seq)[0].notes] == ["送信完了"]
+    assert [n.text for n in _figs(last, Seq)[0].notes] == ["送信完了"]
+
+
+def test_the_right_column_figure_is_the_one_that_advances():
+    """左右どちらにも図があるとき、**段を刻んだ側**が進む．
+
+    「最初に見つかった図」で選ぶと左の図が常に選ばれ、右の図に書いた ``@step``
+    が左に効いてしまう。段のマークはカラム番号を持つ。
+    """
+    src = _FM + (f"### x\n\n{_F}seq\nlifelines: A, B\nA -> B: 1\nB -> A: 2\n{_F}\n"
+                 f"\n<!-- @col -->\n\n{_F}seq\nlifelines: C, D\n"
+                 f"C -> D: 1\n@step\nD -> C: 2\n{_F}\n")
+    first, last = parse(src).slides
+    left_first, right_first = (c[0] for c in first.columns)
+    left_last, right_last = (c[0] for c in last.columns)
+    assert len(left_first.messages) == 2      # 左は最初から全部
+    assert len(right_first.messages) == 1     # 右が段階的に増える
+    assert len(left_last.messages) == 2
+    assert len(right_last.messages) == 2
