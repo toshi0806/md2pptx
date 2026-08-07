@@ -129,6 +129,25 @@ def test_each_level_counts_on_its_own(tmp_path):
         ("外1", 1), ("内1", 1), ("内2", 2), ("外2", 2), ("内3", 3)]
 
 
+def test_two_separate_lists_in_one_frame_keep_counting(tmp_path):
+    """同じ枠に独立した採番リストを 2 つ書くと、**2 つ目は続きから数える**．
+
+    地の文をはさんでも数え直さない——1 つの枠の中では (深さ, 形式) ごとに
+    1 本の連番、という規則の帰結。標準 Markdown なら 2 つ目は 1 に戻るので、
+    ここは**意図した差**であって取りこぼしではない。
+
+    数え直す条件を足すには「どこでリストが切れたか」を別に決める必要があり、
+    入れ子の扱いとも噛み合わせることになる（#119 で検討）。それまで挙動が
+    黙って変わらないよう、ここで固定しておく。
+    """
+    src = _FM + ("### x\n\n"
+                 "1. A\n2. B\n\n"
+                 "説明の地の文\n\n"
+                 "1. C\n2. D\n")
+    slide, = _build(tmp_path, src).slides
+    assert _numbers(slide) == [("A", 1), ("B", 2), ("C", 3), ("D", 4)]
+
+
 def test_the_numbering_survives_a_figure_in_the_middle(tmp_path):
     """導入文と結論文に分かれても振り直されない．
 
