@@ -170,3 +170,10 @@ def test_a_vertical_arrow_is_taller_than_wide(tmp_path):
     prs = _build(tmp_path, _FM + "### x\n\n- 上\n\n" + _fence("down") + "\n\n→ 下\n")
     arrow, = _shapes(prs.slides[-1], MSO_SHAPE.DOWN_ARROW)
     assert arrow.height > arrow.width
+
+
+def test_a_repeated_key_takes_the_last_value():
+    """同じキーを 2 回書いたら後勝ち（``` ```image ``` と同じ扱い）．"""
+    arrow, = [b for b in _blocks(
+        "```arrow\ndirection: down\ndirection: up\n```") if isinstance(b, Arrow)]
+    assert arrow.direction == "up"
