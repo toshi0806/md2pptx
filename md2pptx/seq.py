@@ -146,6 +146,9 @@ def _label_width(text: str) -> int:
     render はラベルを折り返さない設定で描くので、**この幅が効くのは中心の位置**
     であって読めるかどうかではない（Issue #111 と同じ理由）．
     """
+    # 0x2E80 より上を全角とみなす．CJK の記号・かな・漢字（U+3000〜）だけでなく、
+    # 全角英数と全角記号（U+FF01〜）も上側に入るので、実用上これで足りる
+    # （"（" U+FF08 も "Ａ" U+FF21 も 2 文字ぶんとして数えられることを確認済み）．
     units = sum(2 if ord(c) > 0x2E80 else 1 for c in text)
     return int(units * _LABEL_PT * 12700 * 0.55) + _emu(0.12)
 
@@ -177,12 +180,14 @@ def plan_seq(seq: Seq, left: int, top: int, width: int, height: int) -> SeqPlan:
     avail = max(_emu(0.5), body_h - _HEAD_H - _HEAD_GAP)
     rows = len(seq.messages)
     if rows:
+        # 帯を rows+1 で割った高さが基準．少ないときに間延びしないよう上限で
+        # 抑え、多いときは下限で広げる．
         fit = avail // (rows + 1)
-        # **帯に収めることを下限より優先する**．本数が多いと下限（0.30in）では
-        # 帯を超え、図が下のスライドへはみ出す．読みにくくなっても切れるよりよい
-        # ——読みにくさは見れば分かるが、はみ出しは PowerPoint を開くまで気づけない．
-        row_h = min(_ROW_MAX, fit) if fit < _ROW_MIN else max(
-            _ROW_MIN, min(_ROW_MAX, fit))
+        row_h = max(_ROW_MIN, min(_ROW_MAX, fit))
+        # ただし**下限より帯に収めるほうを優先する**．本数が多いと下限では帯を
+        # 超え、図が下のスライドへはみ出す．読みにくくなっても切れるよりよい——
+        # 読みにくさは見れば分かるが、はみ出しは PowerPoint を開くまで気づけない．
+        row_h = min(row_h, fit) if fit else _ROW_MIN
     else:
         row_h = _ROW_MIN
     line_bottom = min(top + body_h, line_top + row_h * (rows + 1))
