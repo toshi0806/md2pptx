@@ -59,7 +59,8 @@ def test_is_object_block_follows_the_type_alias():
     samples = {ir.Table: lambda: ir.Table(),
                ir.Flow: lambda: ir.Flow(),
                ir.Seq: lambda: ir.Seq(),
-               ir.Image: lambda: ir.Image(src="fig.png")}
+               ir.Image: lambda: ir.Image(src="fig.png"),
+               ir.Arrow: lambda: ir.Arrow()}
     kinds = get_args(ir.ObjectBlock)
     # 種類が増えたらこのテストが先に落ちる（作り方を書き足せ、という合図）．
     assert set(kinds) == set(samples), "ObjectBlock が増えた——見本を足すこと"

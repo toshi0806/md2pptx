@@ -28,7 +28,7 @@ import yaml
 
 from .ir import (
     CONTENT_LAYOUT, SECTION_LAYOUT, TITLE_LAYOUT, Align, Block, Crop, Deck,
-    Flow, Image, Length, Line, Slide, Span, Table, TitleSlide,
+    Arrow, Flow, Image, Length, Line, Slide, Span, Table, TitleSlide,
 )
 from .colors import parse_color
 from .flow import parse_flow as _parse_flow
@@ -48,13 +48,19 @@ CIRCLED_DIGITS = "".join(chr(c) for c in range(0x2460, 0x2474))
 # 矢印（結論・補足行の目印）．no_bullet 相当の plain 段落になる．
 ARROW = "→"
 
+# **その字だけの行**を大きな下向き矢印にする（§5.15）．横向きを入れないのは、
+# カラム間の矢印が `@col: arrow` の仕事だから——同じことを 2 通りで書けるようにしない．
+DOWN_ARROWS = ("↓", "⇓")
+
 # 行頭マーカーの正規表現（インデント除去後の文字列に対して評価する）．
 _RE_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 _RE_ORDERED = re.compile(r"^(\d+)\.\s+(.*)$")        # 1. 2. 3. …（arabicPeriod）
 _RE_PAREN = re.compile(r"^\(\s*(\d+)\s*\)\s+(.*)$")  # (1) (2) …（arabicParenBoth）
 _RE_DIRECTIVE = re.compile(r"^<!--\s*@([\w-]+)\s*:\s*(.*?)\s*-->$")
-# カラム区切り（「2つのコンテンツ」レイアウト）．値を取らない指示．
-_RE_COL = re.compile(r"^<!--\s*@col\s*-->$")
+# カラム区切り（「2つのコンテンツ」レイアウト）．値は arrow のみ．
+# **_RE_DIRECTIVE より先に評価すること**——"@col: arrow" は汎用の
+# "@キー: 値" にも当たるので、順序が入れ替わると _apply_directive へ落ちる．
+_RE_COL = re.compile(r"^<!--\s*@col(?:\s*:\s*(\S+?))?\s*-->$")
 # 段階の区切り（アニメーションの代替．§5.11）．同じく値を取らない．
 _RE_STEP = re.compile(r"^<!--\s*@step\s*-->$")
 # 表紙（テーマの「タイトル スライド」レイアウト）．同じく値を取らない．
@@ -467,13 +473,31 @@ def _parse_body(body: str, body_offset: int = 0,
             continue
 
         # --- カラム区切り（「2つのコンテンツ」）→ 多カラム化（§5.7）----
-        if _RE_COL.match(stripped):
+        m_col = _RE_COL.match(stripped)
+        if m_col:
             s = ensure_slide()
+            if m_col.group(1) is not None:
+                # 区切りそのものを図形として描く指定．いまは arrow だけ．
+                if m_col.group(1) != "arrow":
+                    raise ValueError(
+                        f"invalid @col value {m_col.group(1)!r} at line "
+                        f"{lineno} (arrow)")
+                s.directives["col_arrow"] = True
             if not s.columns:
                 s.layout = 3                 # 2つのコンテンツ レイアウト
                 s.columns = [s.blocks, []]   # 既存ブロックを左カラムへ
             else:
                 s.columns.append([])
+            i += 1
+            continue
+
+        # --- 矢印 1 文字だけの行 → 大きな下向き矢印（§5.15）----
+        # **矢印のほかに文字が無い行**だけを図形にする．"→ 結論" は従来どおり
+        # 地の文（行頭記号なし）で，既存の書き方とぶつからない．
+        if stripped in DOWN_ARROWS:
+            s = ensure_slide()
+            target = s.columns[-1] if s.columns else s.blocks
+            target.append(Arrow())
             i += 1
             continue
 
@@ -858,10 +882,11 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
     """
     norm = key.replace("-", "_")
     if norm == "col":
-        # 値なしの "<!-- @col -->" は _RE_COL が先に拾う．ここへ来るのは
-        # "@col: 2" のような値付きで，カラム区切りとしては不正．
+        # "<!-- @col -->" と "<!-- @col: arrow -->" は _RE_COL が先に拾う．
+        # ここへ来るのは値の綴りが違うときだけ．
         raise ValueError(
-            f"@col takes no value at line {lineno} (write '<!-- @col -->')")
+            f"invalid @col value at line {lineno} "
+            f"(write '<!-- @col -->' or '<!-- @col: arrow -->')")
     if norm == "title_slide":
         raise ValueError(
             f"@title-slide takes no value at line {lineno} "

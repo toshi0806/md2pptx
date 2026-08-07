@@ -66,9 +66,9 @@ jobs:
               if s.has_notes_slide and s.notes_slide.notes_text_frame.text.strip()
           )
           print(f"slides={len(p.slides)} slides_with_notes={notes}")
-          # 見出しは 19 個（`#` の表紙を含む）だが、@step を 2 つ持つスライドが 3 枚へ展開されるので 21 枚。
+          # 見出しは 20 個（`#` の表紙を含む）だが、@step を 2 つ持つスライドが 3 枚へ展開されるので 22 枚。
           # ノートは 3 つ書いてあり、@step のスライドでは最終段だけに付くので 3 枚。
-          assert len(p.slides) == 21, f"expected 21 slides, got {len(p.slides)}"
+          assert len(p.slides) == 22, f"expected 22 slides, got {len(p.slides)}"
           assert notes == 3, f"expected 3 slides with notes, got {notes}"
           PY
       # The watch loop's signal handling cannot be reached from unit tests: the

@@ -392,10 +392,25 @@ class Image:
     overflow: bool | None = None
 
 
+@dataclass
+class Arrow:
+    """本文の流れを示す大きな矢印（``↓`` だけの行．DESIGN.md §5.15）．
+
+    **オブジェクトブロックにしてある**——地の文として段落位置を見積もるより，
+    帯（``_stack_objects``）に座標を決めさせるほうが確実で，
+    導入文と結論文の間に置くという使い方がそのまま表せる．
+
+    Attributes:
+        direction: 向き．いまは下向きだけ（横向きはカラム区切りの仕事）．
+    """
+
+    direction: Literal["down"] = "down"
+
+
 # 帯（中央領域）へ座標配置するブロック．地の文（Line）と違い，本文プレースホルダ
 # ではなく矩形に直接置かれる．render の _stack_objects / _obj_weight はこれらを
 # 扱う（Line を渡すと属性が無く落ちる）．
-ObjectBlock = Table | Flow | Image | Seq
+ObjectBlock = Table | Flow | Image | Seq | Arrow
 
 # 実行時の判定用（``isinstance`` に渡せる形）．**ObjectBlock を増やしたら
 # ここだけ直せばよい**——render は 5 か所でこの判定をするので，型注釈と別に
