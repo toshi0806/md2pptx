@@ -55,8 +55,8 @@ from pptx.text.text import TextFrame
 
 from .colors import parse_color
 from .ir import (
-    TITLE_LAYOUT, Block, Crop, Deck, Flow, Image, Length, Line, is_object_block,
-    ObjectBlock, Seq, Slide, Table, TitleSlide,
+    TITLE_LAYOUT, Arrow, Block, Crop, Deck, Flow, Image, Length, Line,
+    is_object_block, ObjectBlock, Seq, Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
 from .parser import parse_content_line
@@ -1369,6 +1369,8 @@ class Renderer:
             self._render_columns(s, slide.columns, default_num_color, scale,
                                  default_autofit, default_size_delta,
                                  self._col_ratios(directives), slide_overflow)
+            if directives.get("col_arrow"):
+                self.draw_column_arrow(s, len(slide.columns))
         elif any(is_object_block(b) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
                                  self._col_ratios(directives), default_size_delta,
@@ -1896,11 +1898,66 @@ class Renderer:
         if isinstance(obj, Seq):
             # ラダー図は**やりとりの本数**で背が決まる（横幅は人数で決まる）．
             return max(4, len(obj.messages) + 2)
+        if isinstance(obj, Arrow):
+            # 矢印は「流れの向き」を示すだけなので、帯は狭くてよい．
+            return 3
         if isinstance(obj, Image):
             # 画像は帯を広めに確保（キャプションぶんを少し足す）．細かな大きさは
             # width/height でセグメント内に調整する．
             return 8 + (1 if obj.caption else 0)
         return max(2, len(obj.rows) + (1 if obj.header else 0))
+
+    def render_arrow(self, slide: PptxSlide, arrow: Arrow,
+                     left: int, top: int, width: int, height: int) -> Shape:
+        """大きな下向き矢印を、与えられた帯の中央に描く（Issue #134）．
+
+        大きさは**上限を持たせる**．帯の高さに素直に比例させると、地の文が
+        少ないスライドで矢印がページの主役になってしまう．
+        """
+        h = min(Inches(0.75), max(Inches(0.3), int(height * 0.8)))
+        w = min(int(width * 0.5), max(Inches(0.4), int(h * 0.8)))
+        x = left + (width - w) // 2
+        y = top + (height - h) // 2
+        shp = slide.shapes.add_shape(
+            MSO_SHAPE.DOWN_ARROW, Emu(x), Emu(y), Emu(w), Emu(h))
+        shp.fill.solid()
+        shp.fill.fore_color.theme_color = self.GOLD
+        shp.line.fill.background()
+        shp.shadow.inherit = False
+        shp.text_frame.word_wrap = False
+        return shp
+
+    def draw_column_arrow(self, slide: PptxSlide, ncols: int) -> Shape | None:
+        """カラムとカラムのすき間に、右向きの大きな矢印を描く（``@col: arrow``）．
+
+        置き場は**左カラムの右端の内側**．テーマのカラム間のすき間は 0.5cm ほどしか
+        無く、そこへ収めると矢印が糸のように細くなる（元の講義スライドも、すき間では
+        なく左カラムの右寄りに置いてある）．
+
+        箇条書きが長くて右端まで届くスライドでは**文字に重なる**．元のスライドも
+        同じ作りで、そこは書く側が見て決める（SYNTAX.md に明記）．
+        カラムが 2 つ無ければ何もしない．
+        """
+        if ncols < 2:
+            return None
+        a = self._find_placeholder(slide, 1)
+        b = self._find_placeholder(slide, 2)
+        if a is None or b is None:
+            return None
+        h = min(Inches(1.1), max(Inches(0.5), int(a.height * 0.18)))
+        w = h
+        inset = Inches(0.1)
+        # 右端の内側．右カラムの本文には決して掛からない．
+        x = min(a.left + a.width - w - inset, b.left - w - inset)
+        y = a.top + int(a.height * 0.12)
+        shp = slide.shapes.add_shape(
+            MSO_SHAPE.RIGHT_ARROW, Emu(x), Emu(y), Emu(w), Emu(h))
+        shp.fill.solid()
+        shp.fill.fore_color.theme_color = self.GOLD
+        shp.line.fill.background()
+        shp.shadow.inherit = False
+        shp.text_frame.word_wrap = False
+        return shp
 
     def _stack_objects(self, slide: PptxSlide, objects: list[ObjectBlock],
                        left: int, top: int, width: int, height: int,
@@ -1920,7 +1977,9 @@ class Renderer:
         y = top
         for obj, w in zip(objects, weights):
             seg_h = int(avail * w / total)
-            if isinstance(obj, Flow):
+            if isinstance(obj, Arrow):
+                self.render_arrow(slide, obj, left, y, width, seg_h)
+            elif isinstance(obj, Flow):
                 self.render_flow(slide, obj, left, y, width, seg_h)
             elif isinstance(obj, Seq):
                 self.render_seq(slide, obj, left, y, width, seg_h)
