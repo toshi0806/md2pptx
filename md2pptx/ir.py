@@ -28,6 +28,35 @@ SECTION_LAYOUT = 2
 
 
 @dataclass
+class Span:
+    """段落の中の 1 続きの文字（run に 1 対 1 で対応する．DESIGN.md §5.13）．
+
+    行内の装飾（``**強調**`` / ``[色]{red}`` / `` `等幅` `` / ``2^32^`` /
+    ``[表示](url)``）を解釈した結果．装飾の無い行では ``Line.spans`` は空で，
+    render は ``Line.text`` を 1 つの run として書く（従来どおり）．
+
+    Attributes:
+        text: この run の文字（装飾の記号は除去済み）．
+        segment: この run が属する ``\\v`` 区切りセグメントの添字．
+            **1 セグメントが複数 run に割れる**ので，相対サイズ（``Line.seg_deltas``）を
+            付ける相手を位置ではなくこの値で決める．
+        bold: 太字（``**…**``）．
+        mono: 等幅（`` `…` ``）．フォント名は render が持つ（``mono_font``）．
+        color: 文字色．テーマ色名／CSS の色名／16進のいずれか（``colors.parse_color``）．
+        link: ハイパーリンクの URL（``[表示](url)`` 由来）．
+        script: 上付き ``"sup"`` / 下付き ``"sub"``（``2^32^`` / ``H~2~O``）．
+    """
+
+    text: str
+    segment: int = 0
+    bold: bool = False
+    mono: bool = False
+    color: str | None = None
+    link: str | None = None
+    script: Literal["sup", "sub"] | None = None
+
+
+@dataclass
 class Line:
     """本文の 1 段落（箇条書き・自動採番・記号なしのいずれか）．
 
@@ -62,6 +91,9 @@ class Line:
             ×1.125（拡大）/ ÷1.125（縮小）する（render が実サイズへ換算）．
             None ならスライド既定（@body-size）に従う＝未指定．0 で「テーマ既定
             に固定（スライド既定を無効化）」を表す．絶対 pt は持たない（テーマ委譲）．
+        spans: 行内装飾を解釈した run の列（DESIGN.md §5.13）．**空なら装飾なし**で，
+            render は text を 1 つの run として書く（従来の経路）．非空なら
+            連結した文字列が text と一致する（text は装飾記号を除いた素のテキスト）．
         seg_deltas: text を "\\v"（行内改行）で割った各セグメントの相対段数
             （2 番目以降のセグメント先頭 "{+1}"/"{-2}" 由来）．セグメントと同じ長さで，
             要素は int｜None（None＝未指定）．**[0] は常に None**——先頭セグメントの
@@ -79,6 +111,7 @@ class Line:
     num_start: int | None = None
     size_delta: int | None = None
     seg_deltas: list[int | None] = field(default_factory=list)
+    spans: list[Span] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         # 不変条件：seg_deltas は text のセグメント数と同じ長さで，[0] は None．

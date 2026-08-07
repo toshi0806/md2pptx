@@ -17,6 +17,10 @@
   端末のセッションや2進数の並びなど、桁を揃えて見せたい塊に使えます。
   info string（` ```console ` の `console`）は自由で、構文強調はしません。
   等幅フォントはフロントマターの `mono_font:` で変えられます [#116]
+- 行内装飾を書けるようになりました。`**強調**` / `` `等幅` `` / `[語]{red}` /
+  `2^32^` / `H~2~O` / `[表示](url)` の6種です。重ねて書けます [#117]
+- 色はテーマ色名・CSS の基本色名・16進の3系統を受け付けます。既定はテーマ色名で、
+  綴りを間違えるとエラーで止まります。`@autonum-color` でも同じ色名が使えます [#117]
 
 ### 修正
 
@@ -192,3 +196,4 @@
 [#115]: https://github.com/toshi0806/md2pptx/pull/115
 [#118]: https://github.com/toshi0806/md2pptx/pull/118
 [#116]: https://github.com/toshi0806/md2pptx/pull/116
+[#117]: https://github.com/toshi0806/md2pptx/pull/117

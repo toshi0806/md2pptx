@@ -62,9 +62,9 @@ jobs:
               if s.has_notes_slide and s.notes_slide.notes_text_frame.text.strip()
           )
           print(f"slides={len(p.slides)} slides_with_notes={notes}")
-          # 見出しは 16 個だが、@step を 2 つ持つスライドが 3 枚へ展開されるので 18 枚。
+          # 見出しは 17 個だが、@step を 2 つ持つスライドが 3 枚へ展開されるので 19 枚。
           # ノートは 3 つ書いてあり、@step のスライドでは最終段だけに付くので 3 枚。
-          assert len(p.slides) == 18, f"expected 18 slides, got {len(p.slides)}"
+          assert len(p.slides) == 19, f"expected 19 slides, got {len(p.slides)}"
           assert notes == 3, f"expected 3 slides with notes, got {notes}"
           PY
       # The watch loop's signal handling cannot be reached from unit tests: the
@@ -102,4 +102,4 @@ jobs:
           test -f out.pdf
           pages=$(pdfinfo out.pdf | awk '/^Pages/{print $2}')
           echo "pages=$pages"
-          test "$pages" = "18"
+          test "$pages" = "19"

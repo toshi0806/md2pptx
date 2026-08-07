@@ -132,6 +132,15 @@ note(bottom): → テーマを差し替えるだけで見た目が一新でき�
   - テーマで見た目を統一
   - テキスト差分でレビュー可能
 
+### 行内装飾：語の単位で強調・色・等幅
+
+- **太字**で語を強調し、`コマンド名` は等幅にする
+- 上付き 2^32^ と下付き H~2~O も書ける
+- テーマ色で[アクセント]{accent2}、具体色で[危険は赤]{red}、16進で[この色]{#663399}
+- 重ねて[**赤い強調**]{red}、参考リンクは [python-pptx](https://python-pptx.readthedocs.io/)
+
+→ 既定はテーマ色名（差し替えに追従）。意味が色そのものに宿るときだけ具体色
+
 ### コードブロック：書いたまま等幅で
 <!-- @body-size: -2 -->
 
@@ -139,7 +148,7 @@ note(bottom): → テーマを差し替えるだけで見た目が一新でき�
 
 ```console
 $ md2pptx example.md --theme OfficeTheme.pptx --pdf
-saved: example.pptx slides: 15
+saved: example.pptx slides: 19
 saved: example.pdf
 ```
 
