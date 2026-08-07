@@ -1734,16 +1734,19 @@ class Renderer:
         return (Inches(0.6), Inches(1.7), self.SW - Inches(1.2),
                 self.SH - Inches(2.3))
 
-    def _note_to_line(self, text: str) -> Line:
+    def _note_to_line(self, text: str) -> Line | None:
         """図（Flow / Seq）の note 文字列を本文プレースホルダ用の Line へ変換する．
 
         note(top) / note(bottom) は図の一部ではなく**地の文**なので、解釈は
         本文行と同じでなければならない（Issue #129）．行頭マーカーだけを
         自前で見ていた頃は ``[語]{red}`` が生の文字で出ていた——行内装飾は
         本文行が通る ``parse_content_line`` の中で解決される．
+
+        **段落にならない行では None を返す**（``1.`` のように行頭マーカーだけの
+        note）．本文では行を作らない書き方なので、ここで空段落を作ると地の文が
+        1 行ぶん増え、帯が詰まって図と結論文が近づく．
         """
-        t = (text or "").strip()
-        return parse_content_line(t) or Line(text=t, kind="bullet")
+        return parse_content_line((text or "").strip())
 
     def _obj_weight(self, obj: ObjectBlock) -> int:
         """オブジェクト（Table / Flow / Seq / Image）の縦方向の重み（高さ配分用）．"""
@@ -1836,11 +1839,15 @@ class Renderer:
             if is_object_block(b):
                 if isinstance(b, (Flow, Seq)) and b.note_top:
                     bucket = prose_after if seen_obj else prose_before
-                    bucket.append(self._note_to_line(b.note_top))
+                    ln = self._note_to_line(b.note_top)
+                    if ln is not None:
+                        bucket.append(ln)
                 objects.append(b)
                 seen_obj = True
                 if isinstance(b, (Flow, Seq)) and b.note_bottom:
-                    prose_after.append(self._note_to_line(b.note_bottom))
+                    ln = self._note_to_line(b.note_bottom)
+                    if ln is not None:
+                        prose_after.append(ln)
             elif isinstance(b, Line):
                 (prose_after if seen_obj else prose_before).append(b)
         if not objects:

@@ -35,18 +35,19 @@ def _build(tmp_path, src):
 
 
 def _paragraphs(slide):
-    """スライドの**タイトル以外**のテキストフレームの段落を (text, runs) で返す．
+    """**本文プレースホルダ**の段落を (text, runs) で返す．
 
-    タイトルを外すのは、見出しと同じ文字列を note に書いたときに取り違えないため．
+    note は本文へ流れる地の文なので、見に行く先は本文プレースホルダ 1 つに絞る。
+    スライド上の全シェイプを舐めると、タイトルや図の中のラベルが混ざるうえ、
+    並び順が ``slide.shapes``（XML の順序）に左右されて順序検証の意味が薄れる。
     """
-    out = []
     for sh in slide.shapes:
         if not sh.has_text_frame or sh == slide.shapes.title:
             continue
-        for p in sh.text_frame.paragraphs:
-            if p.text.strip():
-                out.append((p.text, p.runs))
-    return out
+        if sh.is_placeholder:
+            return [(p.text, p.runs) for p in sh.text_frame.paragraphs
+                    if p.text.strip()]
+    return []
 
 
 def _texts(slide):
@@ -162,9 +163,20 @@ def test_arrow_note_has_no_bullet(tmp_path, src):
             continue
         for p in sh.text_frame.paragraphs:
             if p.text == "→ 結論":
-                assert p._pPr.find(render.qn("a:buNone")) is not None
+                assert "buNone" in p._p.xml
                 return
     pytest.fail("→ の note が見つからない")
+
+
+@pytest.mark.parametrize("src", [_FLOW, _SEQ], ids=["flow", "seq"])
+def test_marker_only_note_makes_no_paragraph(tmp_path, src):
+    """段落にならない note は**行を作らない**（本文行と同じ）．
+
+    空段落を足すと地の文が 1 行ぶん増え、帯が詰まって図と結論文が近づく。
+    """
+    prs = _build(tmp_path, src.format(top="上", bottom="①"))
+    texts = _texts(prs.slides[-1])
+    assert texts == ["上"]
 
 
 @pytest.mark.parametrize("src", [_FLOW, _SEQ], ids=["flow", "seq"])
