@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import pytest
 from pptx import Presentation
 
 from md2pptx import render
@@ -156,6 +157,5 @@ def test_an_unclosed_fence_stops(tmp_path):
     黙って末尾まで飲み込むと、以降のスライドが丸ごと消えたデッキが出る。
     """
     src = _FM + f"### x\n\n{_FENCE}\nGET /\n\n### y\n\n- b\n"
-    import pytest
     with pytest.raises(ValueError, match="unclosed code fence at line"):
         parse(src)
