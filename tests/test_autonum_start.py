@@ -22,9 +22,8 @@ md2pptx 側の仕事にする。
 """
 from __future__ import annotations
 
-import re
-
 from pptx import Presentation
+from pptx.oxml.ns import qn
 
 from md2pptx import render
 from md2pptx.parser import parse
@@ -47,6 +46,10 @@ def _numbers(slide):
 
     番号は ``a:buAutoNum`` の ``startAt``。全ての採番段落に付いているはずで、
     付いていない段落は None として現れる（＝数え直しが起きる状態）。
+
+    要素は**木から引く**——XML 文字列を正規表現で舐めると、段落の中に別の
+    ``buAutoNum`` が現れる形（将来の入れ子など）で最初の 1 つを拾ってしまう。
+    python-pptx に読み取り API が無いので lxml で直接たどる。
     """
     found = []
     for sh in slide.shapes:
@@ -54,11 +57,12 @@ def _numbers(slide):
             continue
         for p in sh.text_frame.paragraphs:
             text = "".join(r.text for r in p.runs)
-            m = re.search(r"<a:buAutoNum[^>]*>", p._p.xml)
-            if not m:
+            pPr = p._p.find(qn("a:pPr"))
+            bu = pPr.find(qn("a:buAutoNum")) if pPr is not None else None
+            if bu is None:
                 continue
-            at = re.search(r'startAt="(\d+)"', m.group(0))
-            found.append((text, int(at.group(1)) if at else None))
+            at = bu.get("startAt")
+            found.append((text, int(at) if at is not None else None))
     return found
 
 
