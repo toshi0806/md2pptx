@@ -143,7 +143,9 @@ def is_dark(rgb: str | None) -> bool:
     accent5（#E2CAAA）のような、緑が効いた色の判定を外す．
 
     閾値 0.35 は「白と黒のどちらがコントラスト比を稼げるか」の分かれ目
-    （相対輝度 0.179）より少し明るめ．中間色では白文字のほうが読みやすい．
+    （相対輝度 0.179）より明るめ．**WCAG の判定そのものではなく、読みやすさを
+    採った経験則**——0.18〜0.35 は黒でも 4.5:1 を満たすが、投影して見ると
+    白抜きのほうが読める（cn2026-theme の accent2 #3B812F がここに入る）．
 
     **色が引けなかったら濃いものとして扱う**（``None``）．塗ってあるのに黒文字だと
     読めない——読めるかもしれない側へ倒す．
@@ -430,7 +432,12 @@ class Renderer:
         return self._theme_rgb_cache.get(name)
 
     def _read_color_scheme(self) -> dict[str, str]:
-        """テーマの clrScheme を、DSL の色名で引ける辞書にして返す．"""
+        """テーマの clrScheme を、DSL の色名で引ける辞書にして返す．
+
+        見るのは ``slide_masters[0]`` だけ．md2pptx はテーマ 1 つ・マスター 1 つを
+        前提に描いており（``_master_style_levels`` なども同じ）、複数マスターの
+        pptx を作る手立ては無い．
+        """
         out: dict[str, str] = {}
         try:
             master = self.prs.slide_masters[0]

@@ -98,16 +98,16 @@ def test_an_unfilled_cell_is_untouched(tmp_path):
     assert _run_color(_table(prs).cell(1, 1)).type is None
 
 
-@pytest.mark.parametrize("hexval,light", [("000000", True), ("FFFFFF", False)])
-def test_a_hex_fill_is_judged_too(tmp_path, hexval, light):
+@pytest.mark.parametrize("hexval,dark", [("000000", True), ("FFFFFF", False)])
+def test_a_hex_fill_is_judged_too(tmp_path, hexval, dark):
     """16進で書いた塗りも同じ規則で判定する．"""
     theme = _theme(tmp_path)
     prs = _build(tmp_path, _src("| a {#%s} | b |\n" % hexval), theme)
     color = _run_color(_table(prs).cell(1, 0))
-    if light:
+    if dark:
         assert color.theme_color == MSO_THEME_COLOR.BACKGROUND_1
     else:
-        assert color.type is None
+        assert color.type is None                 # テーマの本文色のまま
 
 
 def test_bg2_goes_through_the_colour_map(tmp_path):
