@@ -1603,7 +1603,7 @@ class Renderer:
             sz, wrapped, ind = measure(ln)
             line_h = int(Pt(sz) * 1.32)
             if ln.boxed:
-                avail = avail_full - ind
+                avail = max(1, avail_full - ind)
                 text = (ln.text or "").replace("\v", " ")
                 # 枠は文字幅に合わせる（1 行に収まる短い項目まで枠が伸びると、
                 # 「ここだけ囲んでいる」ことが伝わらない）．左右に少し余白を取る．
@@ -1616,7 +1616,7 @@ class Renderer:
                               wrapped * line_h, ln.box_color)
             y += wrapped * line_h
 
-    def line_box(self, slide: PptxSlide, l: int, t: int, w: int, h: int,
+    def line_box(self, slide: PptxSlide, left: int, top: int, w: int, h: int,
                  color: str | None = None) -> Shape:
         """段落を囲む枠（塗りつぶし無しの角丸四角）を描く．
 
@@ -1624,7 +1624,7 @@ class Renderer:
         ``{box:blue}`` のように指定があればそちらを使う（語彙は行内装飾と共通）．
         """
         shp = slide.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE, Emu(l), Emu(t), Emu(w), Emu(h))
+            MSO_SHAPE.ROUNDED_RECTANGLE, Emu(left), Emu(top), Emu(w), Emu(h))
         shp.fill.background()
         if color:
             kind, value = parse_color(color)
@@ -1634,7 +1634,9 @@ class Renderer:
                 shp.line.color.rgb = RGBColor.from_string(value)
         else:
             shp.line.color.theme_color = self.A2
-        shp.line.width = Pt(1.5)
+        # 元の講義スライドは 6pt．そこまで太らせると枠が主役になるので、
+        # 「離れて見ても囲みと分かる」ところで 3pt にしている．
+        shp.line.width = Pt(3)
         shp.shadow.inherit = False
         # 図形に文字は入れない（文字はプレースホルダ側にある）．
         shp.text_frame.word_wrap = False

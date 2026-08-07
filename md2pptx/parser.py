@@ -942,10 +942,11 @@ def _split_tokens(content: str) -> tuple[int | None, bool, str | None, str]:
         if m:
             boxed = True
             if m.group(1):
-                # 綴りの誤りはここで止める——色名は行内装飾と同じ語彙で、
-                # 黙って既定色に落ちると「指定したのに変わらない」になる．
-                parse_color(m.group(1))
-                color = m.group(1)
+                # 色名はここで**検証して正規化する**——綴り違いは黙って既定色に
+                # 落とさず止める．正規化まで済ませるのは Span.color と同じ理由で、
+                # "#f00" と "#F00" を別物として IR に残さないため（§5.13）．
+                kind, value = parse_color(m.group(1))
+                color = value if kind == "theme" else "#" + value
             content = m.group(2).strip()
             continue
         return delta, boxed, color, content

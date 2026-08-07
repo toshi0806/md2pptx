@@ -168,8 +168,20 @@ def test_a_wrapped_line_gets_a_taller_frame(tmp_path):
 # ---------------------------------------------------------------- 枠の色
 
 def test_the_frame_takes_a_colour():
+    """色は**正規化して**持つ（Span.color と同じ扱い．"#f00" と "#F00" を分けない）．"""
     ln, = _lines("- {box:blue} 囲む行")
-    assert (ln.boxed, ln.box_color, ln.text) == (True, "blue", "囲む行")
+    assert (ln.boxed, ln.box_color, ln.text) == (True, "#0000FF", "囲む行")
+
+
+def test_a_theme_colour_stays_a_name():
+    """テーマ色名は RGB へ潰さない（テーマ差し替えに追従させるため）．"""
+    ln, = _lines("- {box:accent1} 囲む行")
+    assert ln.box_color == "accent1"
+
+
+def test_hex_case_is_normalised():
+    ln, = _lines("- {box:#f00} 囲む行")
+    assert ln.box_color == "#FF0000"
 
 
 def test_a_misspelt_colour_stops(tmp_path):
