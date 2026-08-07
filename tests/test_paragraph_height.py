@@ -96,8 +96,9 @@ def _text_bottom(prs, sizes=(3000, 2600, 2200), spc_pct=0):
     pt = 0.0
     for lvl in (0, 1, 1, 1):        # _SRC の A(lvl0) と a1/a2/a3(lvl1)
         sz = sizes[lvl] / 100.0        # sz 属性は 1/100 pt
-        # spcPct は千分率の％（20000 = 20%）なので、割合にするには 100000 で割る
-        pt += sz * 1.32 + sz * spc_pct / 100000.0
+        line = sz * 1.20               # 行の高さ（実測．Issue #152）
+        # spcPct は千分率の％（20000 = 20%）で、掛ける相手は**行の高さ**
+        pt += line + line * spc_pct / 100000.0
     return body.top + body.text_frame.margin_top + Pt(pt)
 
 

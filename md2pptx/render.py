@@ -514,10 +514,17 @@ class Renderer:
         self._spc_cache = levels
         return levels
 
+    # 行送りの倍率．**PowerPoint で実測した値**（Issue #152）．
+    # cn2026-theme（BIZ UDPゴシック・30pt）で ``spcBef`` を 0 にして段落の送りを
+    # 測ると 36.0pt ちょうど＝ 30 × 1.20．以前は保守的な 1.32 を置いていたが、
+    # ``{box}`` は**位置**を出すのに使うので、大きめに見ることに意味が無い
+    # （枠が段落の下半分から次の項目へ掛かっていた）．
+    _LINE = 1.20
+
     @staticmethod
     def _line_height(size_pt: float) -> int:
-        """文字 1 行ぶんの高さ（EMU）．行送りの 1.32 は従来どおり保守的な値．"""
-        return int(Pt(size_pt * 1.32))
+        """文字 1 行ぶんの高さ（EMU）．"""
+        return int(Pt(size_pt * Renderer._LINE))
 
     def _space_before(self, level: int, size_pt: float) -> int:
         """そのレベルの段落前アキ（EMU）．
@@ -529,7 +536,12 @@ class Renderer:
         """
         spc = self._body_space_before()
         raw = spc[min(level, len(spc) - 1)] if spc else SpaceBefore(0.0, False)
-        return int(Pt(raw.value * size_pt if raw.percent else raw.value))
+        if not raw.percent:
+            return int(Pt(raw.value))          # spcPts はそのまま pt
+        # **``spcPct`` はフォントサイズではなく「行の高さ」に対する割合**
+        # （Issue #152）．30pt・20% の段落を測ると 43.2pt ＝ 36.0 × 1.20 で、
+        # 増えぶんは 7.2 ＝ 0.20 × 36.0．フォントに掛けると 6.0 で足りない．
+        return int(raw.value * self._line_height(size_pt))
 
     def _para_height(self, level: int, size_pt: float, lines: int = 1) -> int:
         """段落 1 つぶんの高さ（EMU）．行の高さ × 行数 ＋ 段落前アキ．
@@ -2151,7 +2163,12 @@ class Renderer:
         # 帯を分け合うと 1 つあたり 1.8cm ほどしか無く、半分では菱形に見える
         # （Issue #141）．上限は元の講義スライドの大きさに合わせた．
         long_ = min(Inches(1.0), max(Inches(0.3), int(along * 0.8)))
-        short = min(int(across * 0.9), max(Inches(0.35), int(long_ * 0.75)))
+        # 短手には下限（0.35in）を置くが、**長手の 0.8 倍を超えさせない**——
+        # 帯が薄いと下限のほうが勝って正方形に近づき、向きが読めなくなる
+        # （Issue #141 と同じ症状が、下限の側から出る）．
+        short = min(int(across * 0.9),
+                    max(Inches(0.35), int(long_ * 0.75)),
+                    int(long_ * 0.8))
         w, h = (long_, short) if horizontal else (short, long_)
         # 明示した大きさは**上限を超えてよい**——書いた人がそう決めたということ
         # （層をまたぐ 1.5×7.6cm の矢印は自動では書けない．Issue #143）．
