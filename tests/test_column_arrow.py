@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""本文の流れを示す大きな矢印を固定するテスト（Issue #134）．
+"""カラム区切りの矢印 ``<!-- @col: arrow -->`` を固定するテスト（Issue #134）．
 
-「左の列 → 右の列 → その下の結論」を矢印の図形で見せる版が cn2025 にある
+「左の列 → 右の列」を大きな矢印で見せる版が cn2025 にある
 （cn2025-01 s13「インターネット以前の通信技術」・s16「☆共通基盤」）。
 `flow` は箱と矢印の図で、箇条書きの列の間には置けない。
 
-2つの記法を足す。
-
-- ``<!-- @col: arrow -->`` — カラムの区切りを右向きの矢印として描く
-- ``↓`` だけの行 — 下向きの矢印（**オブジェクトブロック**なので座標は帯が決める）
+カラム**内**に置く矢印は ``` ```arrow ``` フェンス（Issue #137）で、
+そちらは `tests/test_arrow_block.py` が持つ。ここは区切りの矢印だけ。
 """
 from __future__ import annotations
 
@@ -18,7 +16,6 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE
 
 from md2pptx import render
-from md2pptx.ir import Arrow
 from md2pptx.parser import parse
 
 
@@ -49,60 +46,6 @@ def _arrows(slide, shape_type):
 
 def _rights(slide):
     return _arrows(slide, MSO_SHAPE.RIGHT_ARROW)
-
-
-def _downs(slide):
-    return _arrows(slide, MSO_SHAPE.DOWN_ARROW)
-
-
-# ---------------------------------------------------------------- 下向き矢印
-
-@pytest.mark.parametrize("glyph", ["↓", "⇓"])
-def test_an_arrow_only_line_becomes_a_block(glyph):
-    """矢印1文字だけの行はオブジェクトブロックになる．"""
-    blocks = _slide(f"- 上\n\n{glyph}\n\n→ 下").blocks
-    assert any(isinstance(b, Arrow) for b in blocks)
-
-
-def test_an_arrow_with_text_stays_a_line():
-    """``→ 結論`` は従来どおり地の文（既存の書き方とぶつけない）．"""
-    blocks = _slide("→ 結論の行").blocks
-    assert not any(isinstance(b, Arrow) for b in blocks)
-    assert blocks[0].text == "→ 結論の行"
-
-
-def test_a_right_arrow_glyph_alone_is_not_a_block():
-    """横向きはカラム区切りの仕事なので、``→`` 単独は矢印図形にしない．"""
-    blocks = _slide("→").blocks
-    assert not any(isinstance(b, Arrow) for b in blocks)
-
-
-def test_the_down_arrow_is_drawn(tmp_path):
-    prs = _build(tmp_path, _FM + "### x\n\n- 上\n\n↓\n\n→ 下\n")
-    assert len(_downs(prs.slides[-1])) == 1
-
-
-def test_the_down_arrow_sits_between_the_prose(tmp_path):
-    """矢印は導入文より下、結論文より上に来る．"""
-    prs = _build(tmp_path, _FM + "### x\n\n- 上\n\n↓\n\n→ 下\n")
-    slide = prs.slides[-1]
-    arrow, = _downs(slide)
-    body, = [sh for sh in slide.shapes
-             if sh.is_placeholder and sh.has_text_frame
-             and sh != slide.shapes.title and "上" in sh.text_frame.text]
-    assert body.top < arrow.top
-    assert arrow.top + arrow.height <= body.top + body.height
-
-
-def test_the_down_arrow_works_inside_a_column(tmp_path):
-    """右カラムの中に置ける（cn2025-01 s13 の形）．"""
-    src = _FM + "### x\n\n- 左\n\n<!-- @col -->\n\n- 右\n\n↓\n\n→ 結論\n"
-    prs = _build(tmp_path, src)
-    slide = prs.slides[-1]
-    arrow, = _downs(slide)
-    right, = [sh for sh in slide.shapes
-              if sh.is_placeholder and sh.placeholder_format.idx == 2]
-    assert right.left <= arrow.left < right.left + right.width
 
 
 # ---------------------------------------------------------------- カラム間の矢印

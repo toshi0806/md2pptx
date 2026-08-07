@@ -39,7 +39,8 @@
 
 - 本文の流れを**大きな矢印**で示せるようになりました。
   `<!-- @col: arrow -->` でカラムの区切りが右向きの矢印になり、
-  `↓` だけの行が下向きの矢印になります [#136]
+  ` ```arrow ` ブロックで本文の中に矢印を置けます。
+  向きは `down` / `up` / `right` / `left` / `updown` / `leftright` の6つです [#136][#139]
 - 行頭に `{box}` を置くと、**その行を枠で囲める**ようになりました。
   シラバスや講義日程で「今日はここ」を示すのに使えます。
   色は `{box:blue}` のように指定でき、省略するとテーマのアクセント色です [#135]
@@ -237,3 +238,4 @@
 [#132]: https://github.com/toshi0806/md2pptx/pull/132
 [#135]: https://github.com/toshi0806/md2pptx/pull/135
 [#136]: https://github.com/toshi0806/md2pptx/pull/136
+[#139]: https://github.com/toshi0806/md2pptx/pull/139

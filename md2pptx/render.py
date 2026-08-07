@@ -1907,19 +1907,38 @@ class Renderer:
             return 8 + (1 if obj.caption else 0)
         return max(2, len(obj.rows) + (1 if obj.header else 0))
 
+    # ``` ```arrow ``` の向き → OOXML の図形．型注釈（ir.ArrowDirection）と
+    # 別に並べているので、**向きを増やしたらここも足す**（テストが先に落ちる）．
+    _ARROW_SHAPES = {
+        "down": MSO_SHAPE.DOWN_ARROW,
+        "up": MSO_SHAPE.UP_ARROW,
+        "right": MSO_SHAPE.RIGHT_ARROW,
+        "left": MSO_SHAPE.LEFT_ARROW,
+        "updown": MSO_SHAPE.UP_DOWN_ARROW,
+        "leftright": MSO_SHAPE.LEFT_RIGHT_ARROW,
+    }
+
     def render_arrow(self, slide: PptxSlide, arrow: Arrow,
                      left: int, top: int, width: int, height: int) -> Shape:
         """大きな下向き矢印を、与えられた帯の中央に描く（Issue #134）．
 
         大きさは**上限を持たせる**．帯の高さに素直に比例させると、地の文が
         少ないスライドで矢印がページの主役になってしまう．
+
+        横向きは長手が横になるので、縦横を入れ替えて測る．
         """
-        h = min(Inches(0.75), max(Inches(0.3), int(height * 0.8)))
-        w = min(int(width * 0.5), max(Inches(0.4), int(h * 0.8)))
+        shape = self._ARROW_SHAPES[arrow.direction]
+        horizontal = arrow.direction in ("right", "left", "leftright")
+        long_ = min(Inches(0.9), max(Inches(0.3), int(height * 0.8)))
+        short = max(Inches(0.35), int(long_ * 0.75))
+        if horizontal:
+            w, h = min(int(width * 0.5), long_), min(int(height * 0.9), short)
+        else:
+            w, h = min(int(width * 0.5), short), long_
         x = left + (width - w) // 2
         y = top + (height - h) // 2
         shp = slide.shapes.add_shape(
-            MSO_SHAPE.DOWN_ARROW, Emu(x), Emu(y), Emu(w), Emu(h))
+            shape, Emu(x), Emu(y), Emu(w), Emu(h))
         shp.fill.solid()
         shp.fill.fore_color.theme_color = self.GOLD
         shp.line.fill.background()
