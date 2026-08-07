@@ -1925,16 +1925,16 @@ class Renderer:
         大きさは**上限を持たせる**．帯の高さに素直に比例させると、地の文が
         少ないスライドで矢印がページの主役になってしまう．
 
-        横向きは長手が横になるので、縦横を入れ替えて測る．
+        横向きは長手が横になるので、**長さの基準も帯の幅**に取る．高さから
+        測ると、帯が薄いスライドで横向き矢印だけが縮む．
         """
         shape = self._ARROW_SHAPES[arrow.direction]
         horizontal = arrow.direction in ("right", "left", "leftright")
-        long_ = min(Inches(0.9), max(Inches(0.3), int(height * 0.8)))
-        short = max(Inches(0.35), int(long_ * 0.75))
-        if horizontal:
-            w, h = min(int(width * 0.5), long_), min(int(height * 0.9), short)
-        else:
-            w, h = min(int(width * 0.5), short), long_
+        along = width if horizontal else height     # 矢印が伸びる向きの余地
+        across = height if horizontal else width    # それと直交する向きの余地
+        long_ = min(Inches(0.9), max(Inches(0.3), int(along * 0.5)))
+        short = min(int(across * 0.9), max(Inches(0.35), int(long_ * 0.75)))
+        w, h = (long_, short) if horizontal else (short, long_)
         x = left + (width - w) // 2
         y = top + (height - h) // 2
         shp = slide.shapes.add_shape(

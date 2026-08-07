@@ -144,3 +144,29 @@ def test_the_column_break_arrow_still_works(tmp_path):
     src = _FM + "### x\n\n- 左\n\n<!-- @col: arrow -->\n\n- 右\n"
     prs = _build(tmp_path, src)
     assert len(_shapes(prs.slides[-1], MSO_SHAPE.RIGHT_ARROW)) == 1
+
+
+# ---------------------------------------------------------------- 型と図形の対
+
+def test_every_direction_has_a_shape():
+    """``ArrowDirection`` を増やしたら、図形の対応表も足す合図になる．
+
+    ``ARROW_DIRECTIONS`` が空になっていないことも、ここで一緒に見ている
+    （``get_args`` は実行時に評価するので、型注釈の書き方によっては空になりうる）。
+    """
+    from md2pptx.ir import ARROW_DIRECTIONS
+    assert len(ARROW_DIRECTIONS) == 6
+    assert set(ARROW_DIRECTIONS) == set(render.Renderer._ARROW_SHAPES)
+
+
+def test_a_horizontal_arrow_is_wider_than_tall(tmp_path):
+    """横向きは長手が横．帯の高さではなく幅から長さを取る．"""
+    prs = _build(tmp_path, _FM + "### x\n\n- 上\n\n" + _fence("right") + "\n\n→ 下\n")
+    arrow, = _shapes(prs.slides[-1], MSO_SHAPE.RIGHT_ARROW)
+    assert arrow.width > arrow.height
+
+
+def test_a_vertical_arrow_is_taller_than_wide(tmp_path):
+    prs = _build(tmp_path, _FM + "### x\n\n- 上\n\n" + _fence("down") + "\n\n→ 下\n")
+    arrow, = _shapes(prs.slides[-1], MSO_SHAPE.DOWN_ARROW)
+    assert arrow.height > arrow.width

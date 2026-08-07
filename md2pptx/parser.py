@@ -22,14 +22,14 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 
 from .ir import (
     CONTENT_LAYOUT, SECTION_LAYOUT, TITLE_LAYOUT, Align, Block, Crop, Deck,
-    ARROW_DIRECTIONS, Arrow, Flow, Image, Length, Line, Slide, Span, Table,
-    TitleSlide,
+    ARROW_DIRECTIONS, Arrow, ArrowDirection, Flow, Image, Length, Line, Slide,
+    Span, Table, TitleSlide,
 )
 from .colors import parse_color
 from .flow import parse_flow as _parse_flow
@@ -890,7 +890,9 @@ def _parse_arrow_block(text: str) -> Arrow:
         raise ValueError(
             "arrow block requires 'direction:' "
             f"({' | '.join(ARROW_DIRECTIONS)})")
-    return Arrow(direction=direction)   # type: ignore[arg-type]
+    # direction は上で ARROW_DIRECTIONS に含まれることを確かめてあるが、
+    # mypy は str から Literal への絞り込みを追えない．
+    return Arrow(direction=cast(ArrowDirection, direction))
 
 
 def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
