@@ -13,7 +13,7 @@ DESIGN.md §4 に対応．外部依存を持たない（python-pptx 等は impor
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, TypeGuard, get_args
 
 # 水平寄せ．表の列・画像の配置で共通に使う．
 Align = Literal["left", "center", "right"]
@@ -230,9 +230,24 @@ class Image:
 # だけを扱う（Line を渡すと属性が無く落ちる）．
 ObjectBlock = Table | Flow | Image
 
+# 実行時の判定用（``isinstance`` に渡せる形）．**ObjectBlock を増やしたら
+# ここだけ直せばよい**——render は 5 か所でこの判定をするので，型注釈と別に
+# タプルを書き並べると必ずどこかが漏れる（Issue #108）．
+OBJECT_BLOCKS: tuple[type, ...] = get_args(ObjectBlock)
+
 # スライド本文を構成するブロック．parser が出現順に並べ，render が型で分岐する．
 # Union は平坦化されるので Line | Table | Flow | Image と同一．
 Block = Line | ObjectBlock
+
+
+def is_object_block(b: "Block") -> TypeGuard[ObjectBlock]:
+    """帯へ座標配置するブロックか（``Line`` ではないか）を判定する．
+
+    ``isinstance`` を直に書くと ``(Table, Flow, Image)`` が render の 5 か所へ
+    散らばり，``ObjectBlock`` を増やしたときに必ずどこかが漏れる（Issue #108）．
+    ``TypeGuard`` にしてあるので型の絞り込みも効く．
+    """
+    return isinstance(b, OBJECT_BLOCKS)
 
 
 @dataclass
