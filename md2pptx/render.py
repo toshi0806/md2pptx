@@ -1873,9 +1873,29 @@ class Renderer:
                     return (lph.left, lph.top, lph.width, lph.height)
         except Exception:
             pass
-        # 既定：タイトル下の本文相当領域．
-        return (Inches(0.6), Inches(1.7), self.SW - Inches(1.2),
-                self.SH - Inches(2.3))
+        # 本文プレースホルダの無いレイアウト（「白紙」「タイトルのみ」）．
+        # **タイトルが無ければ、タイトルぶんを空けない**（Issue #138）．
+        # 1.7in はタイトルを避けるための値で、タイトルの無いレイアウトでは
+        # 根拠が無い——図だけのスライドがそのぶん小さくなる．
+        top = Inches(1.7) if self._layout_has_title(slide) else Inches(0.4)
+        return (Inches(0.6), top, self.SW - Inches(1.2),
+                self.SH - top - Inches(0.6))
+
+    @staticmethod
+    def _layout_has_title(slide: PptxSlide) -> bool:
+        """このスライドのレイアウトがタイトルの枠を持つか．
+
+        スライド側ではなく**レイアウト**を見る．`###` の見出しはタイトル枠が
+        無ければ描かれないので、「書いたかどうか」ではなく「置ける場所があるか」で
+        決める．
+        """
+        try:
+            for lph in slide.slide_layout.placeholders:  # type: ignore[misc]
+                if lph.placeholder_format.idx == 0:
+                    return True
+        except Exception:
+            return True          # 分からなければ従来どおり空ける（安全側）
+        return False
 
     def _note_to_line(self, text: str) -> Line | None:
         """図（Flow / Seq）の note 文字列を本文プレースホルダ用の Line へ変換する．
