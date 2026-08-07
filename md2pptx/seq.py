@@ -107,6 +107,12 @@ def parse_seq(text: str) -> Seq:
                 seq.note_bottom = val or None
             continue
 
+        if line == "@step":
+            # 図の中の段階（Issue #125）．**その時点までの本数**を覚えておき、
+            # parser がスライドの段へ展開する．図の座標には関係しない．
+            seq.steps.append(len(seq.messages))
+            continue
+
         mn = _RE_NOTE.match(line)
         if mn:
             # 図の中の注記．**その時点までに引いた矢印の本数**を覚えておき、

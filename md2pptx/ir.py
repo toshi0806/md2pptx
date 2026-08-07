@@ -204,6 +204,8 @@ class Flow:
         caption: 図下キャプション．無ければ None．
         note_top: 図の上に置く注記．無ければ None．
         note_bottom: 図の下に置く注記．無ければ None．
+        steps: 図の中の ``@step`` で切った時点の**ノード数**（DESIGN.md §5.15）．
+            空なら図の中に段階は無い．parser がスライドの段へ展開するときに使う．
         rows: 段ごとのノード index（``--`` 区切り由来．DESIGN.md §5.5）．
             **空なら段の指定なし＝一列**で，従来の原稿はこちらを通る．
             非空なら ``rows[i]`` が i 段目に並ぶノードの index 列．
@@ -216,6 +218,25 @@ class Flow:
     caption: str | None = None
     note_top: str | None = None
     note_bottom: str | None = None
+    steps: list[int] = field(default_factory=list)
+
+    def upto(self, n: int) -> "Flow":
+        """先頭 n 個のノードまでの姿を返す（Issue #125）．
+
+        **矢印は、その先のノードが出た段で一緒に出す**——片端しか無い線を
+        描くと「どこへ向かうのか」が読めず、図が壊れて見える．
+        """
+        keep = set(range(n))
+        return Flow(
+            direction=self.direction,
+            nodes=self.nodes[:n],
+            edges=[e for e in self.edges if e.src in keep and e.dst in keep],
+            rows=[r for r in ([i for i in row if i < n] for row in self.rows)
+                  if r],
+            caption=self.caption,
+            note_top=self.note_top,
+            note_bottom=self.note_bottom,
+        )
 
 
 @dataclass
@@ -262,6 +283,8 @@ class Seq:
         caption: 図下キャプション．無ければ None．
         note_top: 図の上に置く注記（地の文）．無ければ None．
         note_bottom: 図の下に置く注記（地の文）．無ければ None．
+        steps: 図の中の ``@step`` で切った時点の**メッセージ数**（DESIGN.md §5.15）．
+            空なら図の中に段階は無い．
     """
 
     lifelines: list[str] = field(default_factory=list)
@@ -270,6 +293,25 @@ class Seq:
     caption: str | None = None
     note_top: str | None = None
     note_bottom: str | None = None
+    steps: list[int] = field(default_factory=list)
+
+    def upto(self, n: int) -> "Seq":
+        """先頭 n 本のメッセージまでの姿を返す（Issue #125）．
+
+        **登場人物は最初から全員残す**——途中で増えると図が横に動いて、
+        段が変わるたびに目で追い直すことになる．
+        """
+        return Seq(
+            lifelines=list(self.lifelines),
+            messages=self.messages[:n],
+            # ``after`` は「何本目の矢印の後ろか」．n 本目までを見せる段では
+            # **n 本目の直後の注記はまだ出さない**——その注記は次に起きることの
+            # 説明なので、先に出ると答えが見えてしまう．
+            notes=[nt for nt in self.notes if nt.after < n],
+            caption=self.caption,
+            note_top=self.note_top,
+            note_bottom=self.note_bottom,
+        )
 
 
 @dataclass

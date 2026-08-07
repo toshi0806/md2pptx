@@ -121,13 +121,23 @@ def parse_flow(text: str) -> Flow:
     # **段ごとにトークン化する**（従来は全行を空白で連結していた）．
     # 段区切りは行の構造そのものなので、連結してしまうと復元できない．
     rows_of_tokens: list[list[_Token]] = [[]]
+    # 図の中の段階（Issue #125）．``@step`` までに置いたノードの**数**を覚える．
+    # 行の位置ではなく数で持つのは、parser が Flow.upto(n) で切るため．
+    step_at: list[int] = []
+    seen_nodes = 0
     for line in body_parts:
+        if line == "@step":
+            step_at.append(seen_nodes)
+            continue
         if _RE_ROW_BREAK.match(line):
             rows_of_tokens.append([])
             continue
-        rows_of_tokens[-1].extend(_tokenize(line))
+        toks = _tokenize(line)
+        seen_nodes += sum(1 for t in toks if isinstance(t, _NodeTok))
+        rows_of_tokens[-1].extend(toks)
     has_break = len(rows_of_tokens) > 1
     _build(flow, rows_of_tokens, has_break)
+    flow.steps = step_at
     return flow
 
 
