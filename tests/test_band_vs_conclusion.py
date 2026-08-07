@@ -49,6 +49,24 @@ def _objects(slide):
     return [sh for sh in slide.shapes if not sh.is_placeholder]
 
 
+def _only_object(slide):
+    """表・図がちょうど1つあることを確かめて返す．"""
+    objs = _objects(slide)
+    assert len(objs) == 1, f"表・図が1つのはずが {len(objs)} 個: {objs}"
+    return objs[0]
+
+
+def _body_of(slide, needle="結論文"):
+    """``needle`` を含む段落を持つ本文プレースホルダと、その段落番号を返す．"""
+    for sh in slide.shapes:
+        if not sh.has_text_frame or sh == slide.shapes.title:
+            continue
+        for i, p in enumerate(sh.text_frame.paragraphs):
+            if needle in p.text:
+                return sh, i
+    pytest.fail(f"結論文 {needle!r} が本文に無い")
+
+
 def _conclusion_top(slide, line_h, needle="結論文"):
     """結論文の描き始めの y（EMU）．枠の上端＋段落番号×行高．
 
@@ -57,19 +75,14 @@ def _conclusion_top(slide, line_h, needle="結論文"):
     厳しいほうへ倒しておきたい——実際の描画はここで求めた位置より
     わずかに下から始まる。
     """
-    for sh in slide.shapes:
-        if not sh.has_text_frame or sh == slide.shapes.title:
-            continue
-        for i, p in enumerate(sh.text_frame.paragraphs):
-            if needle in p.text:
-                return sh, sh.top + i * line_h
-    pytest.fail(f"結論文 {needle!r} が本文に無い")
+    sh, i = _body_of(slide, needle)
+    return sh.top + i * line_h
 
 
 def _assert_above(slide, line_h):
     objs = _objects(slide)
     assert objs, "表・図が描かれていない"
-    _, concl_top = _conclusion_top(slide, line_h)
+    concl_top = _conclusion_top(slide, line_h)
     bottom = max(o.top + o.height for o in objs)
     assert bottom <= concl_top, (
         f"帯の下端 {Emu(bottom).inches:.2f}in が "
@@ -121,8 +134,8 @@ def test_the_band_keeps_most_of_the_frame(tmp_path):
     prs, line_h = _build(
         tmp_path, _FM + "### 表\n\n導入文\n\n" + _TABLE + "\n→ 結論文\n")
     slide = prs.slides[-1]
-    tbl, = _objects(slide)
-    body, _ = _conclusion_top(slide, line_h)
+    tbl = _only_object(slide)
+    body, _ = _body_of(slide)
     assert tbl.height >= body.height - 3 * line_h
 
 
@@ -143,9 +156,29 @@ def test_overflow_still_extends_below_the_conclusion(tmp_path):
     over, _ = _build(tmp_path / "b",
                      _FM + body_src.format(d="<!-- @overflow: true -->\n"))
 
-    plain_tbl, = _objects(plain.slides[-1])
-    over_tbl, = _objects(over.slides[-1])
-    _, concl_top = _conclusion_top(plain.slides[-1], line_h)
+    plain_tbl = _only_object(plain.slides[-1])
+    over_tbl = _only_object(over.slides[-1])
+    concl_top = _conclusion_top(plain.slides[-1], line_h)
 
     assert plain_tbl.top + plain_tbl.height <= concl_top
     assert over_tbl.top + over_tbl.height > concl_top
+
+
+# ---------------------------------------------------------------- 最小高の警告
+
+def test_warns_when_the_band_hits_its_minimum(tmp_path, capsys):
+    """地の文が多すぎて帯が最小高（0.8in）に張り付いたら警告する．
+
+    下限は図を読める大きさに保つためのもので、外すわけにはいかない。
+    ただしその結果として結論文へ食い込むので、**黙って重ねない**
+    （気づけないのが Issue #131 の本体）。
+    """
+    prose = "".join(f"- 地の文 {i}\n" for i in range(1, 12))
+    _build(tmp_path, _FM + "### 表\n\n" + prose + "\n" + _TABLE + "\n→ 結論文\n")
+    assert "band hit its minimum height" in capsys.readouterr().err
+
+
+def test_no_minimum_warning_for_an_ordinary_slide(tmp_path, capsys):
+    """ふつうの分量では警告しない（出しすぎると読まれなくなる）．"""
+    _build(tmp_path, _FM + "### 表\n\n導入文\n\n" + _TABLE + "\n→ 結論文\n")
+    assert "band hit its minimum height" not in capsys.readouterr().err

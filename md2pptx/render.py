@@ -1917,7 +1917,16 @@ class Renderer:
         #   帯の上端     = band_top = top + nb * line_h + inset
         # なので帯に使えるのは blanks * line_h - inset まで．そこから
         # 従来どおり Pt(8) を余白として引く．
-        obj_h = max(Inches(0.8), blanks * line_h - inset - Pt(8))
+        fits = blanks * line_h - inset - Pt(8)
+        obj_h = max(Inches(0.8), fits)
+        if prose_after and obj_h > fits:
+            # 最小高（0.8in）に張り付くのは、地の文が枠をほぼ埋めて空行が
+            # 1 行しか取れないとき．図を読める大きさに保つため下限は残すが、
+            # その結果として結論文へ食い込む——**黙って重ねない**（Issue #131）．
+            sys.stderr.write(
+                "md2pptx: warning: too much body text for a table/figure "
+                "slide; the band hit its minimum height and may overlap the "
+                "concluding text (shorten the prose or split the slide)\n")
         self._stack_objects(slide, objects, left, band_top, width, obj_h, col_ratios,
                             slide_overflow, has_prose_after=bool(prose_after))
 
