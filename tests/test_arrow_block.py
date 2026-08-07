@@ -189,6 +189,8 @@ def test_two_arrows_stay_readable(tmp_path):
            + _fence("down") + "\n\n→ C\n")
     prs = _build(tmp_path, src)
     slide = prs.slides[-1]
+    # ここで置くのは**縦向きだけ**なので「高さ＞幅」で見る．横向きを足すなら
+    # 向きごとに条件を分けること（長手がどちらかは render が決める）．
     for kind in (MSO_SHAPE.UP_DOWN_ARROW, MSO_SHAPE.DOWN_ARROW):
         arrow, = _shapes(slide, kind)
         assert arrow.height > arrow.width * 1.2, f"{kind} が正方形に近い"
