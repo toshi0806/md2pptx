@@ -205,3 +205,4 @@
 [#116]: https://github.com/toshi0806/md2pptx/pull/116
 [#117]: https://github.com/toshi0806/md2pptx/pull/117
 [#123]: https://github.com/toshi0806/md2pptx/pull/123
+[#126]: https://github.com/toshi0806/md2pptx/pull/126

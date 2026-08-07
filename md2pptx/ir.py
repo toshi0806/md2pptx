@@ -141,11 +141,17 @@ class Table:
         aligns: 各列の水平寄せ（区切り行のコロン由来）．空リストは
             「指定なし＝すべて左」を意味する既定．列数に満たない場合，
             未指定の列は左寄せとして扱う（render 側で添字が範囲外なら "left"）．
+        fills: 本体行のセル背景色（``rows`` と同じ形．要素は色名か None）．
+            **空なら色指定なし**で，従来どおりテーマ任せに描く（DESIGN.md §5.4）．
+        header_fills: ヘッダ行のセル背景色（``header`` と同じ長さ）．
+            既定のアクセント色を上書きする．空なら従来どおり．
     """
 
     header: list[str] = field(default_factory=list)
     rows: list[list[str]] = field(default_factory=list)
     aligns: list[Align] = field(default_factory=list)
+    fills: list[list[str | None]] = field(default_factory=list)
+    header_fills: list[str | None] = field(default_factory=list)
 
 
 @dataclass

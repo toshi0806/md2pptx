@@ -1056,7 +1056,24 @@ class Renderer:
                     if is_header:
                         run.font.bold = True
                         run.font.color.theme_color = self.BG
+                # セルごとの背景色（§5.4）．**ヘッダの既定より優先する**——
+                # 書いたものがそのまま出るほうが説明しやすい．
+                fill_name: str | None = None
                 if is_header:
+                    if ci < len(table.header_fills):
+                        fill_name = table.header_fills[ci]
+                else:
+                    bi = ri - (1 if table.header else 0)
+                    if bi < len(table.fills) and ci < len(table.fills[bi]):
+                        fill_name = table.fills[bi][ci]
+                if fill_name:
+                    cell.fill.solid()
+                    kind, value = parse_color(fill_name)
+                    if kind == "theme":
+                        cell.fill.fore_color.theme_color = self._theme_map[value]
+                    else:
+                        cell.fill.fore_color.rgb = RGBColor.from_string(value)
+                elif is_header:
                     cell.fill.solid()
                     cell.fill.fore_color.theme_color = self.A2
         return gf
