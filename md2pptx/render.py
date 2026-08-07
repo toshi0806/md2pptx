@@ -440,6 +440,9 @@ class Renderer:
         行送りの 1.32 は従来どおり保守的な値．そこへ ``spcBef`` を足す——
         足さないと帯が上へずれ、図が地の文に食い込む（Issue #145）．
         """
+        # level は 0 始まり（``Line.level``）、リストは lvl1 始まり——先頭が level 0
+        # に当たるので添字はそのまま。テーマが書いていない深さは末尾で頭打ち。
+        # ``_body_font_levels`` を引くときと同じ数え方（render 全体で揃えてある）。
         spc = self._body_space_before()
         raw = spc[min(level, len(spc) - 1)] if spc else SpaceBefore(0.0, False)
         before = raw.value * size_pt if raw.percent else raw.value
@@ -1729,18 +1732,29 @@ class Renderer:
                            default_size_delta)
 
     def _autofit_scale(self, directives: dict[str, Any]) -> float | None:
-        """@autofit ディレクティブを縮小率へ解釈する（非数値は警告して None）．"""
+        """@autofit ディレクティブを縮小率へ解釈する（不正値は警告して None）．
+
+        0 以下は受けない——文字が消えるか裏返るかで、どちらも書き手の意図では
+        ありえない．ここで弾いておかないと帯の計算（``shrink``）まで巻き込む．
+        """
         autofit = directives.get("autofit")
         if autofit is None:
             return None
         try:
-            return float(autofit)
+            scale = float(autofit)
         except (TypeError, ValueError):
             sys.stderr.write(
                 f"md2pptx: warning: ignoring non-numeric @autofit value "
                 f"{autofit!r}\n"
             )
             return None
+        if scale <= 0:
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring non-positive @autofit value "
+                f"{autofit!r}\n"
+            )
+            return None
+        return scale
 
     def _apply_autofit(self, tf: TextFrame, scale: float | None,
                        default_autofit: bool) -> None:
@@ -2254,7 +2268,7 @@ class Renderer:
         # @autofit は**実際に描かれる字を縮める**ので、帯の計算もそれに合わせる．
         # 見ていなかった頃は、縮めたぶん空いた場所を帯が使えず、図が結論文へ
         # 食い込んでいた（Issue #145）．
-        shrink = (scale / 100.0) if scale else 1.0
+        shrink = (scale / 100.0) if scale is not None else 1.0
 
         def para_h(ln: Line) -> int:
             d = ln.size_delta if ln.size_delta is not None else default_size_delta

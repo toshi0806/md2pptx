@@ -93,7 +93,8 @@ def _text_bottom(prs, sizes=(3000, 2600, 2200), spc_pct=0):
     body = _body(slide)
     pt = 0.0
     for lvl in (0, 1, 1, 1):
-        sz = sizes[lvl] / 100.0
+        sz = sizes[lvl] / 100.0        # sz 属性は 1/100 pt
+        # spcPct は千分率の％（20000 = 20%）なので、割合にするには 100000 で割る
         pt += sz * 1.32 + sz * spc_pct / 100000.0
     return body.top + body.text_frame.margin_top + Pt(pt)
 
@@ -189,3 +190,17 @@ def test_autofit_moves_the_band_up(tmp_path):
     b = _arrow_top(_build(tmp_path / "b", shrunk,
                           _theme(tmp_path / "b", spc_pct=20000)))
     assert b < a
+
+
+def test_a_non_positive_autofit_is_ignored(tmp_path, capsys):
+    """``@autofit: 0`` は縮小率として受けない（文字が消える指定）．
+
+    ``if scale`` で見ていると 0 が「指定なし」と同じ経路へ落ち、黙って無視される。
+    無視するのは同じでも、**知らせないまま**にはしない。
+    """
+    src = _SRC.replace("### x\n", "### x\n<!-- @autofit: 0 -->\n", 1)
+    theme = _theme(tmp_path, spc_pct=20000)
+    a = _arrow_top(_build(tmp_path, _SRC, theme))
+    b = _arrow_top(_build(tmp_path, src, theme))
+    assert b == a                       # 縮小なしと同じ置き場
+    assert "non-positive" in capsys.readouterr().err
