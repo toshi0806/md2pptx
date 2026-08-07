@@ -141,14 +141,21 @@ def test_the_monospace_font_can_be_changed(tmp_path):
 
 
 def test_code_sits_between_the_prose(tmp_path):
-    """導入文・結論文と一緒に置ける（地の文と同じ枠に流れる）．"""
+    """導入文・結論文と一緒に置ける（地の文と同じ枠に流れる）．
+
+    **等幅になるのはコードの行だけ**——同じ枠に流し込む以上、地の文まで
+    等幅にしてしまう取り違えは起こりうるし、桁の揃った本文は読みにくい。
+    """
     src = _FM + (f"### x\n\n"
                  "以下のようにリクエストする\n"
                  f"{_FENCE}\nGET /\n{_FENCE}\n"
                  "→ 応答が返る\n")
     slide, = _build(tmp_path, src).slides
-    assert [t for t, _ in _body_paragraphs(slide)] == [
-        "以下のようにリクエストする", "GET /", "→ 応答が返る"]
+    assert _body_paragraphs(slide) == [
+        ("以下のようにリクエストする", None),
+        ("GET /", "Consolas"),
+        ("→ 応答が返る", None),
+    ]
 
 
 def test_an_unclosed_fence_stops(tmp_path):
