@@ -556,7 +556,19 @@ def _parse_body(body: str, body_offset: int = 0,
                     break  # 別ブロック開始
                 rows.append(_split_row(rs))
                 j += 1
-            add_block(Table(header=header, rows=rows, aligns=aligns))
+            # セル末尾の {色} を剥がす．**色を書いていない表では fills を空の
+            # まま**にして、従来どおりの経路（テーマ任せ）を通す．
+            header_cells = [_split_cell_fill(c) for c in header]
+            body_cells = [[_split_cell_fill(c) for c in r] for r in rows]
+            header_fills = [f for _, f in header_cells]
+            fills = [[f for _, f in r] for r in body_cells]
+            has_fill = any(header_fills) or any(any(r) for r in fills)
+            add_block(Table(
+                header=[t for t, _ in header_cells],
+                rows=[[t for t, _ in r] for r in body_cells],
+                aligns=aligns,
+                fills=fills if has_fill else [],
+                header_fills=header_fills if has_fill else []))
             i = j
             continue
 
@@ -614,6 +626,25 @@ def _expand_steps(slide: Slide, marks: list[list[int]]) -> list[Slide]:
         out.append(step)
     out.append(slide)
     return out
+
+
+# セル末尾の色指定 "… {accent2}"．**色名らしい語だけ**を対象にする
+# （"{n} 個" のような式まで拾うと、書けるものを勝手に減らすことになる）．
+_RE_CELL_FILL = re.compile(r"^(.*?)\s*\{\s*(#?[A-Za-z][\w-]*|#[0-9A-Fa-f]{3,6})\s*\}$")
+
+
+def _split_cell_fill(cell: str) -> tuple[str, str | None]:
+    """セルの末尾に書かれた ``{色}`` を剥がして (中身, 色名) を返す（§5.4）．
+
+    色として解釈できない ``{…}`` は**文字のまま残す**——式や記号を壊さないため．
+    色名らしいのに解決できないものはタイポとみなして止める（``parse_color``）．
+    """
+    m = _RE_CELL_FILL.match(cell)
+    if not m:
+        return cell, None
+    name = m.group(2)
+    parse_color(name)          # 綴り違いはここで止まる
+    return m.group(1).strip(), name
 
 
 def _split_row(s: str) -> list[str]:

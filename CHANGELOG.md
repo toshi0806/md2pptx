@@ -22,6 +22,9 @@
 - 色はテーマ色名・CSS の基本色名・16進の3系統を受け付けます。既定はテーマ色名で、
   綴りを間違えるとエラーで止まります。`@autonum-color` でも同じ色名が使えます [#117]
 
+- 表のセルを個別に塗れるようになりました。セルの末尾に `{accent2}` のように
+  書きます。NAT 変換表の「変換前／変換後」の色分けなど、着色が説明の一部に
+  なる表に使えます [#126]
 - ` ```seq ` でプロトコルのやりとり（ラダー図）を書けるようになりました。
   `lifelines: A, B` と `A -> B: ラベル` の2つが基本で、時間は上から下へ流れます。
   TCP のハンドシェイクや HTTP のやりとりに使えます [#124]
@@ -166,7 +169,6 @@
 ## 0.1.0 — 2026-07-01
 
 - 最初の版。`pip` / `pipx` で入れられる `md2pptx` コマンドとして公開しました [#5]
-
 [#5]: https://github.com/toshi0806/md2pptx/pull/5
 [#6]: https://github.com/toshi0806/md2pptx/pull/6
 [#9]: https://github.com/toshi0806/md2pptx/pull/9
@@ -204,8 +206,9 @@
 [#100]: https://github.com/toshi0806/md2pptx/pull/100
 [#114]: https://github.com/toshi0806/md2pptx/pull/114
 [#115]: https://github.com/toshi0806/md2pptx/pull/115
-[#118]: https://github.com/toshi0806/md2pptx/pull/118
 [#116]: https://github.com/toshi0806/md2pptx/pull/116
 [#117]: https://github.com/toshi0806/md2pptx/pull/117
+[#118]: https://github.com/toshi0806/md2pptx/pull/118
 [#123]: https://github.com/toshi0806/md2pptx/pull/123
 [#124]: https://github.com/toshi0806/md2pptx/pull/124
+[#126]: https://github.com/toshi0806/md2pptx/pull/126
