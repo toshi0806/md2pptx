@@ -32,9 +32,10 @@ import sys
 from typing import TYPE_CHECKING, Any, Callable
 
 from pptx import Presentation
+from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
 from pptx.enum.dml import MSO_THEME_COLOR
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 # python-pptx の Slide は ir.Slide と名前がぶつかる．**外来のほうに印を付ける**
@@ -44,6 +45,7 @@ from pptx.util import Emu, Inches, Pt
 # 注釈にはクラスのほうが要る．
 from pptx.presentation import Presentation as PptxPresentation
 from pptx.shapes.autoshape import Shape
+from pptx.shapes.connector import Connector
 from pptx.shapes.graphfrm import GraphicFrame
 from pptx.shapes.picture import Picture
 from pptx.shapes.placeholder import SlidePlaceholder
@@ -51,8 +53,8 @@ from pptx.slide import Slide as PptxSlide, SlideLayout
 from pptx.text.text import TextFrame
 
 from .ir import (
-    TITLE_LAYOUT, Block, Crop, Deck, Flow, Image, Length, Line, ObjectBlock,
-    Slide, Table, TitleSlide,
+    TITLE_LAYOUT, Block, Crop, Deck, Flow, Image, Length, Line, is_object_block,
+    ObjectBlock, Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
 from . import workdir
@@ -685,6 +687,32 @@ class Renderer:
                     r.font.size = Pt(ssize)
         return shp
 
+    def line(self, slide: PptxSlide, x1: int, y1: int, x2: int, y2: int,
+             color: MSO_THEME_COLOR | None = None, width_pt: float = 1.0,
+             dashed: bool = False, arrow: bool = False) -> Connector:
+        """2 点を結ぶ線を引く（Issue #108）．
+
+        ``block_arrow`` はノード間の**すき間に収まる塗り矢印**で，box に食い込ませない
+        ための道具．こちらは任意の 2 点を結ぶ細い線で，シーケンス図のライフライン
+        （縦線）やメッセージ（斜めの矢印）のように**すき間ではなく図の骨格**を描くのに使う．
+
+        ``arrow`` を立てると終点に矢じりが付き，``dashed`` で破線になる
+        （時間の経過や省略を表す線に使う）．色はテーマ任せ（既定は本文色）．
+        """
+        conn = slide.shapes.add_connector(
+            MSO_CONNECTOR.STRAIGHT, Emu(int(x1)), Emu(int(y1)),
+            Emu(int(x2)), Emu(int(y2)))
+        conn.line.color.theme_color = color or self.TX
+        conn.line.width = Pt(width_pt)
+        if dashed:
+            conn.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+        if arrow:
+            # 矢じりは python-pptx に API が無いので ``a:ln`` へ直接書く．
+            ln = conn.line._get_or_add_ln()
+            ln.append(ln.makeelement(qn("a:tailEnd"),
+                                     {"type": "triangle", "w": "med", "len": "med"}))
+        return conn
+
     def block_arrow(self, slide: PptxSlide, x1: int, y1: int, x2: int, y2: int,
                     thickness: int,
                     color: MSO_THEME_COLOR | None = None) -> Shape:
@@ -1146,7 +1174,7 @@ class Renderer:
             self._render_columns(s, slide.columns, default_num_color, scale,
                                  default_autofit, default_size_delta,
                                  self._col_ratios(directives), slide_overflow)
-        elif any(isinstance(b, (Table, Flow, Image)) for b in blocks):
+        elif any(is_object_block(b) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
                                  self._col_ratios(directives), default_size_delta,
                                  slide_overflow)
@@ -1219,7 +1247,7 @@ class Renderer:
             ph = self._find_placeholder(slide, ci + 1)
             if ph is None:
                 continue  # レイアウトに該当プレースホルダが無ければスキップ
-            if any(isinstance(b, (Table, Flow, Image)) for b in col_blocks):
+            if any(is_object_block(b) for b in col_blocks):
                 # カラム矩形へ表・図をスタック配置．継承ジオメトリはレイアウトで補う．
                 # 通常 layout 3 は idx1/idx2 のジオメトリを持つため，解決失敗はテーマ
                 # 異常時のみ．その場合は本文領域へフォールバックする（表が消えるより，
@@ -1626,7 +1654,7 @@ class Renderer:
         prose_after: list[Line] = []
         seen_obj = False
         for b in blocks:
-            if isinstance(b, (Table, Flow, Image)):
+            if is_object_block(b):
                 if isinstance(b, Flow) and b.note_top:
                     bucket = prose_after if seen_obj else prose_before
                     bucket.append(self._note_to_line(b.note_top))

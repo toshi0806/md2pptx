@@ -24,18 +24,13 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .ir import Flow, FlowNode, FlowEdge
+from .layout import EMU, PlacedArrow, PlacedText, Rect, emu as _emu
 
-
-EMU = 914400  # 1 インチ = 914400 EMU
 
 # 受理する値の集合．型付きなので "not in で弾いた残り" が Literal に絞られる
 # （検証と型の単一の情報源にもなる）．
 _DIRECTIONS: tuple[Literal["lr", "tb"], ...] = ("lr", "tb")
 _NODE_KINDS: tuple[Literal["box", "ellipsis"], ...] = ("box", "ellipsis")
-
-
-def _emu(inch: float) -> int:
-    return int(inch * EMU)
 
 
 # 省略記号として扱うラベル．
@@ -193,56 +188,15 @@ def _make_node(inner: str, color: str | None) -> FlowNode:
 # 描画指示（座標はすべて EMU 整数）．render はこれを読んで図形を置くだけで，
 # 位置の計算はここで終わっている．
 #
-# 名前で持つのは，位置で持つと**取り違えても誰も気づかない**から．幅と高さを
-# 入れ替えても，右端と下端を取り違えても，型としては同じ整数で通ってしまい，
-# 図が歪んで出てくるまで分からない（Issue #71）．
-
-@dataclass(frozen=True)
-class Rect:
-    """矩形．端や中心は毎回足し算で出さず，ここから読む．"""
-    left: int
-    top: int
-    width: int
-    height: int
-
-    @property
-    def right(self) -> int:
-        return self.left + self.width
-
-    @property
-    def bottom(self) -> int:
-        return self.top + self.height
-
-    @property
-    def center_x(self) -> int:
-        return self.left + self.width // 2
-
-    @property
-    def center_y(self) -> int:
-        return self.top + self.height // 2
-
-
 @dataclass(frozen=True)
 class PlacedNode:
-    """角丸四角ノード．色・サブラベルを持つので ``node`` ごと渡す．"""
+    """角丸四角ノード．色・サブラベルを持つので ``node`` ごと渡す．
+
+    **``layout.py`` ではなくここに置く**——``FlowNode`` を抱えており flow 固有だから．
+    共通の入れ物に 1 つの DSL の型を持ち込むと、次の DSL が再利用できずに詰む．
+    """
     node: FlowNode
     rect: Rect
-
-
-@dataclass(frozen=True)
-class PlacedText:
-    """文字だけの要素（省略記号・矢印ラベル・キャプション）．"""
-    text: str
-    rect: Rect
-
-
-@dataclass(frozen=True)
-class PlacedArrow:
-    """ノード間の矢印．始点から終点への線分で，太さは render が決める．"""
-    x1: int
-    y1: int
-    x2: int
-    y2: int
 
 
 @dataclass
