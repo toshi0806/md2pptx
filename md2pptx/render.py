@@ -33,9 +33,11 @@ from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
 from pptx import Presentation
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
 from pptx.enum.dml import MSO_THEME_COLOR
 from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
+from pptx.oxml import parse_xml
 from pptx.oxml.ns import qn
 from pptx.dml.color import RGBColor
 from pptx.util import Emu, Inches, Pt
@@ -133,6 +135,32 @@ def _read_image_size(path: str) -> tuple[int, int]:
     raise ValueError(f"cannot read image dimensions (png/jpeg only): {path}")
 
 
+def is_dark(rgb: str | None) -> bool:
+    """``"RRGGBB"`` が「白文字を載せるべき濃さ」か．
+
+    WCAG の相対輝度（sRGB をガンマ戻ししてから重みづけ）で見る．素の
+    ``0.299R+0.587G+0.114B`` だと cn2026-theme の accent2（#3B812F）と
+    accent5（#E2CAAA）のような、緑が効いた色の判定を外す．
+
+    閾値 0.35 は「白と黒のどちらがコントラスト比を稼げるか」の分かれ目
+    （相対輝度 0.179）より明るめ．**WCAG の判定そのものではなく、読みやすさを
+    採った経験則**——0.18〜0.35 は黒でも 4.5:1 を満たすが、投影して見ると
+    白抜きのほうが読める（cn2026-theme の accent2 #3B812F がここに入る）．
+
+    **色が引けなかったら濃いものとして扱う**（``None``）．塗ってあるのに黒文字だと
+    読めない——読めるかもしれない側へ倒す．
+    """
+    if not rgb or len(rgb) != 6:
+        return True
+    try:
+        ch = [int(rgb[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+    except ValueError:
+        return True
+    lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+           for c in ch]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2] < 0.35
+
+
 class SpaceBefore(NamedTuple):
     """段落前のアキ 1 つぶん（``a:spcBef``）．
 
@@ -210,6 +238,7 @@ class Renderer:
         self._master_levels: dict[str, list[float]] = {}
         self._indent_cache: list[int] | None = None
         self._spc_cache: list[SpaceBefore] | None = None
+        self._theme_rgb_cache: dict[str, str] | None = None
 
         # レイアウト解決．title=0 / content=1 / section=2．
         layouts = self.prs.slide_layouts
@@ -387,6 +416,57 @@ class Renderer:
             levels = []
         self._indent_cache = levels
         return levels
+
+    def _theme_rgb(self, name: str) -> str | None:
+        """テーマ色名（DSL の ``bg2`` / ``accent2`` …）を ``"RRGGBB"`` へ解決する．
+
+        **``p:clrMap`` を必ず踏む**——``bg2`` が指すのはテーマの ``lt2`` で、
+        名前がそのまま clrScheme のタグ名になっているのは accent1〜6 と
+        hlink / folHlink だけ．踏まずに引くと別の色を見る（Issue #148）．
+
+        引けなければ None．テーマによっては色が ``srgbClr`` ではなく
+        ``sysClr``（``lastClr`` に実効値）で書いてあるので、そちらも見る．
+        """
+        if self._theme_rgb_cache is None:
+            self._theme_rgb_cache = self._read_color_scheme()
+        return self._theme_rgb_cache.get(name)
+
+    def _read_color_scheme(self) -> dict[str, str]:
+        """テーマの clrScheme を、DSL の色名で引ける辞書にして返す．
+
+        見るのは ``slide_masters[0]`` だけ．md2pptx はテーマ 1 つ・マスター 1 つを
+        前提に描いており（``_master_style_levels`` なども同じ）、複数マスターの
+        pptx を作る手立ては無い．
+        """
+        out: dict[str, str] = {}
+        try:
+            master = self.prs.slide_masters[0]
+            part = master.part.part_related_by(RT.THEME)
+            root = parse_xml(part.blob)
+            scheme = root.find(
+                qn("a:themeElements") + "/" + qn("a:clrScheme"))
+            if scheme is None:
+                return out
+            raw: dict[str, str] = {}
+            for el in scheme:
+                key = str(el.tag).rsplit("}", 1)[-1]
+                for tag, attr in ((qn("a:srgbClr"), "val"),
+                                  (qn("a:sysClr"), "lastClr")):
+                    child = el.find(tag)
+                    if child is not None and child.get(attr):
+                        raw[key] = str(child.get(attr)).upper()
+                        break
+            # clrMap（bg1="lt1" 等）で DSL の名前へ引き直す．属性が無いテーマは
+            # 恒等写像とみなす（accent1〜6 / hlink は元から同名）．
+            cmap = master.element.find(qn("p:clrMap"))
+            for name in self._theme_map:
+                mapped = cmap.get(name) if cmap is not None else None
+                val = raw.get(str(mapped) if mapped else name)
+                if val:
+                    out[name] = val
+        except Exception:
+            return out
+        return out
 
     def _body_space_before(self) -> list[SpaceBefore]:
         """マスター本文スタイルのレベル別の段落前アキ（lvl1 始まり）．
@@ -1159,11 +1239,6 @@ class Renderer:
                 pa.text = row[ci] if ci < len(row) else ""
                 if al != "left":
                     pa.alignment = _TABLE_ALIGN[al]
-                for run in pa.runs:
-                    run.font.size = Pt(fsize)
-                    if is_header:
-                        run.font.bold = True
-                        run.font.color.theme_color = self.BG
                 # セルごとの背景色（§5.4）．**ヘッダの既定より優先する**——
                 # 書いたものがそのまま出るほうが説明しやすい．
                 fill_name: str | None = None
@@ -1174,16 +1249,27 @@ class Renderer:
                     bi = ri - (1 if table.header else 0)
                     if bi < len(table.fills) and ci < len(table.fills[bi]):
                         fill_name = table.fills[bi][ci]
+                if fill_name is None and is_header:
+                    fill_name = "accent2"       # ヘッダの既定
+                fill_rgb: str | None = None
                 if fill_name:
                     cell.fill.solid()
                     kind, value = parse_color(fill_name)
                     if kind == "theme":
                         cell.fill.fore_color.theme_color = self._theme_map[value]
+                        fill_rgb = self._theme_rgb(value)
                     else:
                         cell.fill.fore_color.rgb = RGBColor.from_string(value)
-                elif is_header:
-                    cell.fill.solid()
-                    cell.fill.fore_color.theme_color = self.A2
+                        fill_rgb = value
+                for run in pa.runs:
+                    run.font.size = Pt(fsize)
+                    if is_header:
+                        run.font.bold = True
+                    # 塗ったセルは文字色も塗りに合わせる（Issue #148）．濃い塗りに
+                    # 黒文字を載せると読めない——見出し行だけの特別扱いだったものを
+                    # 全セルへ広げた．明るい塗りでは触らない（テーマの本文色のまま）．
+                    if fill_name and is_dark(fill_rgb):
+                        run.font.color.theme_color = self.BG
         return gf
 
     def _resolve_image_path(self, src: str) -> str:
