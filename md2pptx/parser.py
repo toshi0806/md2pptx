@@ -865,37 +865,52 @@ def _parse_image_block(text: str) -> Image:
 def _parse_arrow_block(text: str) -> Arrow:
     """``` ```arrow ``` ブロックを Arrow へ解釈する（§5.16）．
 
-    受けるキーは ``direction:`` だけ．**必須**——向きの無い矢印は描きようが無い．
-    知らないキー・知らない向きはタイポとみなしてエラーで止める（他のフェンスと同じ）．
+    ``direction:`` は**必須**——向きの無い矢印は描きようが無い．
+    ``width:`` / ``height:`` / ``color:`` は任意で、語彙は ``` ```image ``` および
+    行内装飾と共通（``_parse_length`` / ``parse_color``）．新しい書き方を増やさない．
+    知らないキー・知らない値はタイポとみなしてエラーで止める（他のフェンスと同じ）．
 
     同じキーを 2 回書いたら**後に書いたほうが残る**．``` ```image ``` と同じ扱いで、
     フェンスの中のキーはどれもそう動く（ここだけエラーにすると規則が二重になる）．
     """
     direction: str | None = None
+    width = height = None
+    color: str | None = None
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
         if ":" not in line:
             raise ValueError(
-                f"arrow block: expected 'direction: …', got {line!r}")
+                f"arrow block: expected 'key: value', got {line!r}")
         k, v = line.split(":", 1)
-        k, v = k.strip().lower(), v.strip().lower()
-        if k != "direction":
+        k, v = k.strip().lower(), v.strip()
+        if k == "direction":
+            if v.lower() not in ARROW_DIRECTIONS:
+                raise ValueError(
+                    f"arrow block: unknown direction {v!r} "
+                    f"({' | '.join(ARROW_DIRECTIONS)})")
+            direction = v.lower()
+        elif k == "width":
+            width = _parse_length(v)
+        elif k == "height":
+            height = _parse_length(v)
+        elif k == "color":
+            # 色は行内装飾と同じ語彙．**検証して正規化してから** IR へ入れる．
+            kind, value = parse_color(v)
+            color = value if kind == "theme" else "#" + value
+        else:
             raise ValueError(
-                f"arrow block: unknown key {k!r} (only 'direction')")
-        if v not in ARROW_DIRECTIONS:
-            raise ValueError(
-                f"arrow block: unknown direction {v!r} "
-                f"({' | '.join(ARROW_DIRECTIONS)})")
-        direction = v
+                f"arrow block: unknown key {k!r} "
+                f"(direction | width | height | color)")
     if direction is None:
         raise ValueError(
             "arrow block requires 'direction:' "
             f"({' | '.join(ARROW_DIRECTIONS)})")
     # direction は上で ARROW_DIRECTIONS に含まれることを確かめてあるが、
     # mypy は str から Literal への絞り込みを追えない．
-    return Arrow(direction=cast(ArrowDirection, direction))
+    return Arrow(direction=cast(ArrowDirection, direction),
+                 width=width, height=height, color=color)
 
 
 def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:

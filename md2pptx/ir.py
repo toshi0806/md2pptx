@@ -409,9 +409,16 @@ class Arrow:
     Attributes:
         direction: 向き．``down`` / ``up`` / ``right`` / ``left`` /
             ``updown`` / ``leftright``．
+        width / height: 明示した大きさ．``None`` なら帯から自動で決める．
+            ``%`` は帯に対する割合（``Image`` と同じ ``Length``）．
+            **明示した値は自動のときの上限を超えてよい**——書いた人がそう決めた．
+        color: 色（テーマ色名／CSS の色名／16進）．``None`` ならテーマのアクセント色．
     """
 
     direction: ArrowDirection = "down"
+    width: Length | None = None
+    height: Length | None = None
+    color: str | None = None
 
 
 # 帯（中央領域）へ座標配置するブロック．地の文（Line）と違い，本文プレースホルダ

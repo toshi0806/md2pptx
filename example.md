@@ -105,6 +105,8 @@ note(bottom): → テーマを差し替えるだけで見た目が一新でき�
 
 ```arrow
 direction: down
+width: 2.5cm
+height: 2.1cm
 ```
 
 → 伝えたいものごとに別々の網が要る
