@@ -216,3 +216,26 @@ def test_setting_adj_twice_is_idempotent(tmp_path):
 def test_units_are_case_insensitive(text):
     """``2.5CM`` のような大文字の単位も受ける（``_parse_length`` が畳む）．"""
     assert _arrow(_fence(direction="down", height=text)).height.unit == "emu"
+
+
+# ---------------------------------------------------------------- 帯より大きいとき
+
+def test_an_oversized_arrow_is_anchored_at_the_top(tmp_path, capsys):
+    """帯に収まらない大きさは**上端に寄せる**（上の地の文へ食い込ませない）．
+
+    中央のままだと上下**両方**へはみ出す。はみ出す向きを下だけにするのは
+    ``@overflow`` と同じ規約（Issue #146）。
+    """
+    prs = _build(tmp_path, _fence(direction="down", height="12cm"))
+    slide = prs.slides[-1]
+    arrow = _shape(slide)
+    body, = [sh for sh in slide.shapes
+             if sh.is_placeholder and sh.placeholder_format.idx == 1]
+    assert arrow.top >= body.top
+    assert "larger than the band" in capsys.readouterr().err
+
+
+def test_a_fitting_arrow_stays_centred(tmp_path, capsys):
+    """帯に収まるうちは従来どおり中央（見た目を変えない）・警告も出さない．"""
+    prs = _build(tmp_path, _fence(direction="down", height="1cm"))
+    assert "larger than the band" not in capsys.readouterr().err

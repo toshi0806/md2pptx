@@ -11,7 +11,7 @@ pptx を開くまで気づけない。
 結論文の開始位置が約 5.65in——0.34in 重なっていた。
 
 結論文の y は python-pptx から直接は読めない（実際の行組みは PowerPoint がやる）ので、
-**render と同じ規則**——枠の上端から「本文標準サイズ×1.32」の行を積む——で求める。
+**render と同じ規則**——枠の上端から段落 1 行ぶん（行送り＋段落前アキ）を積む——で求める。
 """
 from __future__ import annotations
 
@@ -41,7 +41,9 @@ def _build(tmp_path, src):
     r = render.Renderer(str(theme))
     r.render(parse(src))
     r.save(str(out))
-    return Presentation(str(out)), int(Pt(r._body_font_size()) * 1.32)
+    # 段落 1 行ぶんの高さ．render と同じ規則で数える——行送りに加えて、
+    # テーマの段落前アキ（``spcBef``）も含む（Issue #145）．
+    return Presentation(str(out)), r._para_height(0, r._body_font_size())
 
 
 def _objects(slide):

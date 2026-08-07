@@ -29,7 +29,7 @@ import math
 import os
 import struct
 import sys
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
 from pptx import Presentation
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
@@ -133,6 +133,18 @@ def _read_image_size(path: str) -> tuple[int, int]:
     raise ValueError(f"cannot read image dimensions (png/jpeg only): {path}")
 
 
+class SpaceBefore(NamedTuple):
+    """段落前のアキ 1 つぶん（``a:spcBef``）．
+
+    OOXML は同じ「アキ」を 2 通りで書く——``spcPct`` は**フォントサイズに対する
+    割合**、``spcPts`` は絶対値（pt）．読んだ場所ではサイズが分からないので、
+    どちらなのかを持ったまま返し、pt に直すのは ``Renderer._para_height``．
+    """
+
+    value: float
+    percent: bool
+
+
 class Renderer:
     """IR を pptx へ描画するレンダラ．
 
@@ -197,6 +209,7 @@ class Renderer:
         # マスターの txStyles 由来レベル別サイズ（pt）のキャッシュ（style 名 → 一覧）．
         self._master_levels: dict[str, list[float]] = {}
         self._indent_cache: list[int] | None = None
+        self._spc_cache: list[SpaceBefore] | None = None
 
         # レイアウト解決．title=0 / content=1 / section=2．
         layouts = self.prs.slide_layouts
@@ -374,6 +387,68 @@ class Renderer:
             levels = []
         self._indent_cache = levels
         return levels
+
+    def _body_space_before(self) -> list[SpaceBefore]:
+        """マスター本文スタイルのレベル別の段落前アキ（lvl1 始まり）．
+
+        **帯の高さはここを数えないと足りない**（Issue #145）．cn2026-theme は
+        全レベルに 20% を持ち、30pt の段落なら 0.21cm、4段落で 0.85cm ずれる．
+
+        ``spcPct``（フォントサイズに対する％）は**その場では pt に直せない**ので、
+        ``SpaceBefore`` の ``percent`` を立てて返し、サイズを掛けるのは
+        ``_para_height`` に任せる．``spcPts``（絶対値）はそのまま pt．
+
+        アキを書いていないレベルは**直前のレベルの値を引き継ぐ**．テーマは
+        上位レベルだけ書いて下位を省くことがあり、そこを 0 と読むと深い階層の
+        段落だけ高さが足りなくなる．取得に失敗したら空リスト——呼び出し側が
+        0 を当てる（アキを数えない従来の見積もりに戻るだけ）．
+        """
+        if self._spc_cache is not None:
+            return self._spc_cache
+        levels: list[SpaceBefore] = []
+        try:
+            master = self.prs.slide_masters[0]
+            root = master.element.find(
+                qn("p:txStyles") + "/" + qn("p:bodyStyle"))
+            last = SpaceBefore(0.0, False)
+            if root is not None:
+                for lvl in range(1, 10):
+                    el = root.find(qn("a:lvl%dpPr" % lvl))
+                    spc = el.find(qn("a:spcBef")) if el is not None else None
+                    if spc is not None:
+                        pct = spc.find(qn("a:spcPct"))
+                        pts = spc.find(qn("a:spcPts"))
+                        if pct is not None and pct.get("val"):
+                            last = SpaceBefore(
+                                int(pct.get("val")) / 100000.0, True)
+                        elif pts is not None and pts.get("val"):
+                            last = SpaceBefore(int(pts.get("val")) / 100.0,
+                                               False)
+                        else:
+                            last = SpaceBefore(0.0, False)
+                    levels.append(last)
+        # OOXML の探りは軒並みこの形（_master_style_levels / _layout_level_sizes
+        # と同じ）．テーマの作りは千差万別で、読めなければ既定へ落ちれば済む．
+        except Exception:
+            levels = []
+        self._spc_cache = levels
+        return levels
+
+    def _para_height(self, level: int, size_pt: float) -> int:
+        """段落 1 行ぶんの高さ（EMU）．行送り＋そのレベルの段落前アキ．
+
+        行送りの 1.32 は従来どおり保守的な値．そこへ ``spcBef`` を足す——
+        足さないと帯が上へずれ、図が地の文に食い込む（Issue #145）．
+
+        ``level`` は 0 始まり（``Line.level`` と同じ）．``before`` は pt．
+        """
+        # level は 0 始まり（``Line.level``）、リストは lvl1 始まり——先頭が level 0
+        # に当たるので添字はそのまま。テーマが書いていない深さは末尾で頭打ち。
+        # ``_body_font_levels`` を引くときと同じ数え方（render 全体で揃えてある）。
+        spc = self._body_space_before()
+        raw = spc[min(level, len(spc) - 1)] if spc else SpaceBefore(0.0, False)
+        before = raw.value * size_pt if raw.percent else raw.value
+        return int(Pt(size_pt * 1.32 + before))
 
     def _body_font_levels(self) -> list[float]:
         """マスター本文スタイルのレベル別フォントサイズ（pt）を返す（lvl1 始まり．既定 [18]）．
@@ -1600,13 +1675,13 @@ class Renderer:
         # ここでは描かない——呼び出し元が同じ行列で 1 度描いている．
         for ln in preceding or []:
             sz, n, _ = measure(ln)
-            y += n * int(Pt(sz) * 1.32)
+            y += n * self._para_height(ln.level, sz)
         # 空段落は標準サイズ（帯の計算がそう作っている）．
-        y += blank_paras * int(Pt(self._body_font_size()) * 1.32)
+        y += blank_paras * self._para_height(0, self._body_font_size())
 
         for ln in line_blocks:
             sz, wrapped, ind = measure(ln)
-            line_h = int(Pt(sz) * 1.32)
+            line_h = self._para_height(ln.level, sz)
             if ln.boxed:
                 avail = max(1, avail_full - ind)
                 text = (ln.text or "").replace("\v", " ")
@@ -1659,18 +1734,32 @@ class Renderer:
                            default_size_delta)
 
     def _autofit_scale(self, directives: dict[str, Any]) -> float | None:
-        """@autofit ディレクティブを縮小率へ解釈する（非数値は警告して None）．"""
+        """@autofit ディレクティブを縮小率へ解釈する（不正値は警告して None）．
+
+        返すのは**％の数値そのもの**（``@autofit: 90`` → ``90.0``）で、比ではない．
+        ``fit_body`` の ``scale`` がそのまま％を取るため——比へ直すのは使う側．
+
+        0 以下は受けない——文字が消えるか裏返るかで、どちらも書き手の意図では
+        ありえない．ここで弾いておかないと帯の計算（``shrink``）まで巻き込む．
+        """
         autofit = directives.get("autofit")
         if autofit is None:
             return None
         try:
-            return float(autofit)
+            scale = float(autofit)
         except (TypeError, ValueError):
             sys.stderr.write(
                 f"md2pptx: warning: ignoring non-numeric @autofit value "
                 f"{autofit!r}\n"
             )
             return None
+        if scale <= 0:
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring non-positive @autofit value "
+                f"{autofit!r}\n"
+            )
+            return None
+        return scale
 
     def _apply_autofit(self, tf: TextFrame, scale: float | None,
                        default_autofit: bool) -> None:
@@ -1974,6 +2063,19 @@ class Renderer:
             h = int(eh)
         x = left + (width - w) // 2
         y = top + (height - h) // 2
+        if h > height or w > width:
+            # 帯に収まらない大きさを書かれたとき．**上端（左端）に寄せる**——
+            # 中央のままだと上へも食い込み、導入文に重なる．はみ出す向きを
+            # 下（結論文・罫線側）だけにするのは @overflow と同じ規約
+            # （Issue #146）．黙って重ねずに知らせる．
+            if h > height:
+                y = top
+            if w > width:
+                x = left
+            sys.stderr.write(
+                "md2pptx: warning: the arrow is larger than the band it sits "
+                "in and will overlap the text below (shorten the prose or "
+                "reduce width/height)\n")
         shp = slide.shapes.add_shape(
             shape, Emu(x), Emu(y), Emu(w), Emu(h))
         both = arrow.direction in ("updown", "leftright")
@@ -2146,21 +2248,9 @@ class Renderer:
         if not objects:
             return
 
-        # 表・図スライドの地の文に相対サイズが効くと，帯高計算（_body_font_size
-        # 固定）と食い違い，帯が詰まって結論文が重なりうる（既知の制約．TODO(v2)）．
-        # 判定は _append_lines と同じ実効デルタ（行トークン優先，無ければスライド既定
-        # @body-size）で行う．行 size_delta=None でも @body-size 由来で拡縮する場合を
-        # 取りこぼさないため．0／None（変化なし）は対象外．
-        def _eff_delta(ln: Line) -> int | None:
-            return ln.size_delta if ln.size_delta is not None else default_size_delta
-        # 0／None は「サイズ変化なし」＝帯高（本文標準サイズ前提）と食い違わないので
-        # 対象外．{0} はテーマ既定＝標準サイズそのものなので警告不要．
-        if any(_eff_delta(ln) not in (None, 0) for ln in prose_before + prose_after):
-            sys.stderr.write(
-                "md2pptx: warning: relative font size on body text of a "
-                "table/figure slide may cause layout crowding "
-                "(band height is estimated at the standard body size)\n"
-            )
+        # 相対サイズ（{+1} / @body-size）の警告はここにあったが、**要らなくなった**．
+        # 帯の高さを本文標準サイズ固定で見積もっていたから食い違っていたのであって、
+        # いまは para_h が行ごとの実サイズ（デルタ込み）で数える（Issue #145）．
 
         # 地の文が無ければプレースホルダは使わず，領域全体にオブジェクトを置く．
         if not prose_before and not prose_after:
@@ -2173,17 +2263,34 @@ class Renderer:
         # 地の文あり：プレースホルダに導入文＋空行＋結論文を流して中央帯を確保．
         # 帯と空行数はプレースホルダ矩形から逆算し，地の文＋空行＋結論文が
         # プレースホルダ高を超えないようにする（結論文がスライド外へ出ない）．
-        # TODO(v2): prose の size_delta を行高に反映する（現在は本文標準サイズ固定）．
-        # 導入文を {+2} 等で大きく拡大すると帯が詰まり結論文と重なりうる（既知の制約）．
         bsz = self._body_font_size()
-        line_h = int(Pt(bsz) * 1.32)        # 行間込みの保守的な行高
-        nb, na = len(prose_before), len(prose_after)
+        # 段落の高さは**その段落のレベルのサイズ＋そのレベルの段落前アキ**で数える
+        # （Issue #145）．どの行も lvl1 で数え、``spcBef`` を落としていた頃は
+        # 帯が上へずれ、図が地の文に食い込んでいた．
+        levels = (self._frame_font_levels(body.text_frame) if body is not None
+                  else self._body_font_levels())
+
+        # @autofit は**実際に描かれる字を縮める**ので、帯の計算もそれに合わせる．
+        # 見ていなかった頃は、縮めたぶん空いた場所を帯が使えず、図が結論文へ
+        # 食い込んでいた（Issue #145）．
+        shrink = (scale / 100.0) if scale is not None else 1.0
+
+        def para_h(ln: Line) -> int:
+            d = ln.size_delta if ln.size_delta is not None else default_size_delta
+            base = levels[min(ln.level, len(levels) - 1)] if levels else bsz
+            sz = self._size_from_delta(base, d) * shrink
+            return self._para_height(ln.level, sz)
+
+        before_h = sum(para_h(ln) for ln in prose_before)
+        after_h = sum(para_h(ln) for ln in prose_after)
+        # 帯を埋める空段落は lvl1 の書式（アキ込み）．
+        blank_h = max(1, self._para_height(0, bsz * shrink))
         inset = Pt(4)
-        band_h = height - (nb + na) * line_h - 2 * inset
+        band_h = height - before_h - after_h - 2 * inset
         if band_h < Inches(0.8):
             band_h = Inches(0.8)
-        band_top = top + nb * line_h + inset
-        blanks = max(1, int(band_h / line_h))   # 帯を埋める空行数（超過しない）
+        band_top = top + before_h + inset
+        blanks = max(1, int(band_h / blank_h))   # 帯を埋める空行数（超過しない）
 
         if body is None:
             self._warn_no_body(prose_before + prose_after)
@@ -2216,7 +2323,7 @@ class Renderer:
         # なので帯に使えるのは blanks * line_h - inset まで．そこから
         # 従来どおり Pt(8) を余白として引く．
         _MIN_BAND = Inches(0.8)
-        fits = blanks * line_h - inset - Pt(8)
+        fits = blanks * blank_h - inset - Pt(8)
         obj_h = max(_MIN_BAND, fits)
         # 警告するのは**結論文があるときだけ**——下端に何も無ければ、帯が
         # 最小高まで広がっても重なる相手がいない．
