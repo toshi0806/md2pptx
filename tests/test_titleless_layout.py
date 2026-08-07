@@ -43,14 +43,30 @@ def _fig(tmp_path, name="fig.png"):
 
 
 def _picture(slide):
-    return [sh for sh in slide.shapes if not sh.is_placeholder][0]
+    pics = [sh for sh in slide.shapes if not sh.is_placeholder]
+    assert pics, "図が置かれていない（画像パスの解決に失敗した？）"
+    return pics[0]
 
 
-def _layout_index(prs, name):
+def _layouts(prs):
+    """(タイトルも本文も無いレイアウト, タイトルだけあるレイアウト) の番号を返す．
+
+    **名前では探さない**——``"Blank"`` / ``"Title Only"`` は python-pptx の既定
+    テンプレートの英語名で、テーマや版が変われば変わる。ここで要るのは
+    「タイトル枠があるか」「本文枠があるか」という**構造**そのものなので、
+    プレースホルダを数えて選ぶ。
+    """
+    blank = titled = None
     for i, lay in enumerate(prs.slide_masters[0].slide_layouts):
-        if lay.name == name:
-            return i
-    return None
+        idxs = {ph.placeholder_format.idx for ph in lay.placeholders}
+        has_title, has_body = 0 in idxs, 1 in idxs
+        if not has_title and not has_body and blank is None:
+            blank = i
+        if has_title and not has_body and titled is None:
+            titled = i
+    assert blank is not None, "タイトルも本文も無いレイアウトが見つからない"
+    assert titled is not None, "タイトルだけのレイアウトが見つからない"
+    return blank, titled
 
 
 def _src(layout, img):
@@ -61,9 +77,7 @@ def _src(layout, img):
 def test_a_blank_layout_gives_the_figure_the_top(tmp_path):
     """「白紙」ではタイトルぶんを空けない．"""
     img = _fig(tmp_path)
-    prs = Presentation()
-    blank = _layout_index(prs, "Blank")
-    assert blank is not None, "既定テーマに Blank が無い"
+    blank, _ = _layouts(Presentation())
     out = _build(tmp_path, _src(blank, img))
     pic = _picture(out.slides[-1])
     assert pic.top < Inches(1.0)
@@ -72,9 +86,7 @@ def test_a_blank_layout_gives_the_figure_the_top(tmp_path):
 def test_a_titled_layout_still_reserves_the_top(tmp_path):
     """タイトルのあるレイアウトでは従来どおり空ける（回帰させない）．"""
     img = _fig(tmp_path / "b")
-    prs = Presentation()
-    only = _layout_index(prs, "Title Only")
-    assert only is not None
+    _, only = _layouts(Presentation())
     out = _build(tmp_path / "b", _src(only, img))
     pic = _picture(out.slides[-1])
     assert pic.top >= Inches(1.0)
@@ -82,9 +94,7 @@ def test_a_titled_layout_still_reserves_the_top(tmp_path):
 
 def test_the_figure_grows_on_a_blank_layout(tmp_path):
     """空きが減ったぶん、図は大きくなる．"""
-    prs = Presentation()
-    blank = _layout_index(prs, "Blank")
-    only = _layout_index(prs, "Title Only")
+    blank, only = _layouts(Presentation())
 
     img_a = _fig(tmp_path / "a")
     img_b = _fig(tmp_path / "b")
@@ -95,8 +105,7 @@ def test_the_figure_grows_on_a_blank_layout(tmp_path):
 
 def test_the_figure_stays_on_the_slide(tmp_path):
     img = _fig(tmp_path)
-    prs = Presentation()
-    blank = _layout_index(prs, "Blank")
+    blank, _ = _layouts(Presentation())
     out = _build(tmp_path, _src(blank, img))
     slide = out.slides[-1]
     pic = _picture(slide)
@@ -126,3 +135,14 @@ def test_a_layout_with_a_body_is_unchanged(tmp_path):
               if sh.is_placeholder and sh.placeholder_format.idx == 1]
     assert bodies, "既定レイアウトに本文プレースホルダが無い（前提が崩れている）"
     assert pic.top >= bodies[0].top
+
+
+def test_the_bottom_margin_is_unchanged(tmp_path):
+    """下の余白は 0.6in のまま（上を詰めた影響を下へ波及させない）．"""
+    img = _fig(tmp_path)
+    blank, _ = _layouts(Presentation())
+    out = _build(tmp_path, _src(blank, img))
+    pic = _picture(out.slides[-1])
+    assert out.slide_height - (pic.top + pic.height) >= 0
+    # 帯の下端は SH - 0.6in．図はその中に収まる．
+    assert pic.top + pic.height <= out.slide_height - Inches(0.6) + 1
