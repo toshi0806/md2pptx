@@ -59,6 +59,7 @@ from .ir import (
     ObjectBlock, Seq, Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
+from .parser import _parse_content_line
 from .seq import plan_seq
 from . import workdir
 
@@ -1734,14 +1735,15 @@ class Renderer:
                 self.SH - Inches(2.3))
 
     def _note_to_line(self, text: str) -> Line:
-        """Flow の note 文字列を本文プレースホルダ用の Line へ変換する．
+        """図（Flow / Seq）の note 文字列を本文プレースホルダ用の Line へ変換する．
 
-        行頭マーカー（→ は no_bullet）の最小限の解釈だけ行う．
+        note(top) / note(bottom) は図の一部ではなく**地の文**なので、解釈は
+        本文行と同じでなければならない（Issue #129）．行頭マーカーだけを
+        自前で見ていた頃は ``[語]{red}`` が生の文字で出ていた——行内装飾は
+        本文行が通る ``_parse_content_line`` の中で解決される．
         """
         t = (text or "").strip()
-        if t.startswith("→"):
-            return Line(text=t, kind="plain")
-        return Line(text=t, kind="bullet")
+        return _parse_content_line(t) or Line(text=t, kind="bullet")
 
     def _obj_weight(self, obj: ObjectBlock) -> int:
         """オブジェクト（Table / Flow / Seq / Image）の縦方向の重み（高さ配分用）．"""
@@ -1823,19 +1825,21 @@ class Renderer:
         場合は地の文を捨て，矩形全体にオブジェクトを積む．
         """
         # 地の文（前後）とオブジェクト（表・図）に分ける．
-        # Flow の note(top)/note(bottom) も地の文としてプレースホルダへ回す．
+        # 図（Flow / Seq）の note(top)/note(bottom) も地の文としてプレースホルダ
+        # へ回す．**Seq も同じ扱い**——分岐が Flow 限定だった頃、SYNTAX.md に
+        # 載っている seq の note は丸ごと落ちていた（Issue #129）．
         prose_before: list[Line] = []
         objects: list[ObjectBlock] = []
         prose_after: list[Line] = []
         seen_obj = False
         for b in blocks:
             if is_object_block(b):
-                if isinstance(b, Flow) and b.note_top:
+                if isinstance(b, (Flow, Seq)) and b.note_top:
                     bucket = prose_after if seen_obj else prose_before
                     bucket.append(self._note_to_line(b.note_top))
                 objects.append(b)
                 seen_obj = True
-                if isinstance(b, Flow) and b.note_bottom:
+                if isinstance(b, (Flow, Seq)) and b.note_bottom:
                     prose_after.append(self._note_to_line(b.note_bottom))
             elif isinstance(b, Line):
                 (prose_after if seen_obj else prose_before).append(b)
