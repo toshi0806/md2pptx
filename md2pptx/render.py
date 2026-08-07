@@ -916,6 +916,12 @@ class Renderer:
         for arrow in plan.arrows:
             self.block_arrow(slide, arrow.x1, arrow.y1, arrow.x2, arrow.y2,
                              thick)
+        # 隣り合わないノードを結ぶ線は**細い矢印**で引く（Issue #109）．
+        # 上の塗り矢印はすき間を埋めるための形なので、離れた 2 点を結ぶと
+        # box に食い込む．
+        for ln in plan.lines:
+            self.line(slide, ln.x1, ln.y1, ln.x2, ln.y2,
+                      width_pt=1.5, dashed=ln.dashed, arrow=True)
         for lab in plan.labels:
             r = lab.rect
             self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,

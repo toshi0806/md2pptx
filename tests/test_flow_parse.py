@@ -166,7 +166,9 @@ def test_a_setting_with_an_empty_value_stays_none(key, attr):
 @pytest.mark.parametrize("src, message", [
     ("[unclosed",     "unclosed flow node (missing ']')"),
     ("[A]{unclosed",  "unclosed flow node color (missing '}')"),
-    ("junk",          "invalid flow syntax"),
+    # 裸の語は**ノード名の参照**になった（Issue #109）．知らない名前は
+    # 「文法が違う」ではなく「その名前が無い」と言うほうが直しやすい．
+    ("junk",          "unknown flow node name"),
     ("[A] ~ [B]",     "invalid flow syntax"),
     ("[A] - [B]",     "invalid flow syntax"),   # '-' だけでは矢印にならない
     ("[A] -x- [B]",   "invalid flow syntax"),   # '>' で閉じていない

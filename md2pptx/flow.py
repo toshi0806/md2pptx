@@ -24,7 +24,9 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .ir import Flow, FlowNode, FlowEdge
-from .layout import EMU, PlacedArrow, PlacedText, Rect, emu as _emu
+from .layout import (
+    EMU, PlacedArrow, PlacedLine, PlacedText, Rect, emu as _emu,
+)
 
 
 # 受理する値の集合．型付きなので "not in で弾いた残り" が Literal に絞られる
@@ -42,6 +44,13 @@ _RE_SETTING = re.compile(r"^(direction|caption|note\(top\)|note\(bottom\))\s*:\s
 _RE_NODE = re.compile(r"\[([^\]]*)\](?:\{([\w-]+)\})?")
 # エッジ "->" / "-PR->"．先頭の '-' から '->' まで．
 _RE_EDGE = re.compile(r"-(?:([^>]+?)-)?>")
+# ノード名 "[#pc PC | …]"．**"#" で書く**——"[id: ラベル]" だと
+# "[HTTP: ハイパーテキスト転送プロトコル]" を名前付きと読んでしまう（Issue #109）．
+_RE_NODE_ID = re.compile(r"^#([A-Za-z_][\w-]*)\s+(.*)$", re.S)
+# エッジ行でノードを指す名前（トークン列では _RefTok）．
+_RE_REF = re.compile(r"[A-Za-z_][\w-]*")
+# 段区切り．この行だけで次の段へ移る．
+_RE_ROW_BREAK = re.compile(r"^-{2,}$")
 
 
 # ---------------------------------------------------------------- トークン
@@ -66,8 +75,18 @@ class _EdgeTok:
     label: str | None = None
 
 
+@dataclass(frozen=True)
+class _RefTok:
+    """既に置いたノードを名前で指す（``pc -> srv`` の ``pc``）．
+
+    ``_NodeTok`` と別にしてあるのは**置くのか指すのかが違う**から．同じ型に
+    詰めると ``_build`` が「今つくるのか探すのか」を憶えていないと間違える．
+    """
+    name: str
+
+
 # requires-python が 3.11 なので実行時に評価される ``|`` を使える．
-_Token = _NodeTok | _EdgeTok
+_Token = _NodeTok | _EdgeTok | _RefTok
 
 
 # ---------------------------------------------------------------- パース
@@ -99,8 +118,16 @@ def parse_flow(text: str) -> Flow:
             continue
         body_parts.append(line)
 
-    tokens = _tokenize(" ".join(body_parts))
-    _build(flow, tokens)
+    # **段ごとにトークン化する**（従来は全行を空白で連結していた）．
+    # 段区切りは行の構造そのものなので、連結してしまうと復元できない．
+    rows_of_tokens: list[list[_Token]] = [[]]
+    for line in body_parts:
+        if _RE_ROW_BREAK.match(line):
+            rows_of_tokens.append([])
+            continue
+        rows_of_tokens[-1].extend(_tokenize(line))
+    has_break = len(rows_of_tokens) > 1
+    _build(flow, rows_of_tokens, has_break)
     return flow
 
 
@@ -141,38 +168,77 @@ def _tokenize(s: str) -> list[_Token]:
                 tokens.append(_EdgeTok((m.group(1) or "").strip() or None))
                 i = m.end()
                 continue
+        mr = _RE_REF.match(s, i)
+        if mr:
+            tokens.append(_RefTok(mr.group(0)))
+            i = mr.end()
+            continue
         raise ValueError(
             f"invalid flow syntax near {s[i:i + 30]!r} "
             "(expected '[label | sublabel]' or '->' / '-label->')")
     return tokens
 
 
-def _build(flow: Flow, tokens: list[_Token]) -> None:
-    """トークン列（node / edge の交互）から nodes / edges を構築する．
+def _build(flow: Flow, rows: list[list[_Token]], has_break: bool) -> None:
+    """段ごとのトークン列から nodes / edges / rows を構築する．
 
     エッジは 2 つのノードに挟まれて初めて線になるので，``->`` を読んだ時点では
-    まだ引けない——次のノードが来るまで「保留中の矢印」として持ち越す．
+    まだ引けない——次のノード（か名前）が来るまで「保留中の矢印」として持ち越す．
     相手が現れないまま終われば（``-> [A]`` の先頭や ``[A] ->`` の末尾），
     その矢印は捨てる．
-    """
-    pending: _EdgeTok | None = None
-    prev_idx: int | None = None
 
-    for tok in tokens:
-        if isinstance(tok, _NodeTok):
-            flow.nodes.append(_make_node(tok.label, tok.color))
-            idx = len(flow.nodes) - 1
+    **保留は段をまたがない．** 段の終わりで持ち越すと、書いていない縦の線が
+    生えることになる（段をまたぐ線は名前で明示的に書く）．
+
+    ``has_break`` は原稿に ``--`` があったか．無ければ ``flow.rows`` は空のまま
+    にする——「段の指定なし＝一列」を保ち、従来の原稿の配置を変えないため．
+    """
+    names: dict[str, int] = {}
+
+    def resolve(tok: _NodeTok | _RefTok) -> int:
+        """トークンをノード index にする（``_NodeTok`` は置き、``_RefTok`` は探す）．"""
+        if isinstance(tok, _RefTok):
+            if tok.name not in names:
+                known = ", ".join(sorted(names)) or "(none)"
+                raise ValueError(
+                    f"unknown flow node name: {tok.name!r} (known: {known})")
+            return names[tok.name]
+        node = _make_node(tok.label, tok.color)
+        if node.node_id is not None:
+            if node.node_id in names:
+                raise ValueError(
+                    f"duplicate flow node name: {node.node_id!r}")
+            names[node.node_id] = len(flow.nodes)
+        flow.nodes.append(node)
+        return len(flow.nodes) - 1
+
+    for row in rows:
+        placed: list[int] = []          # この段に**新しく置いた**ノード
+        pending: _EdgeTok | None = None
+        prev_idx: int | None = None
+        for tok in row:
+            if isinstance(tok, _EdgeTok):
+                # ``->`` が続いた場合は上書き（覚えておけるのは直前の 1 本だけ）．
+                pending = tok
+                continue
+            new_node = isinstance(tok, _NodeTok)
+            idx = resolve(tok)
+            if new_node:
+                placed.append(idx)
             if pending is not None and prev_idx is not None:
                 flow.edges.append(
                     FlowEdge(src=prev_idx, dst=idx, label=pending.label))
             prev_idx = idx
             pending = None
-        else:
-            # ``->`` が続いた場合は上書き（覚えておけるのは直前の 1 本だけ）．
-            pending = tok
+        if has_break and placed:
+            flow.rows.append(placed)
 
 
 def _make_node(inner: str, color: str | None) -> FlowNode:
+    node_id: str | None = None
+    mid = _RE_NODE_ID.match(inner.strip())
+    if mid:
+        node_id, inner = mid.group(1), mid.group(2)
     parts = inner.split("|", 1)
     label = parts[0].strip()
     sublabel = parts[1].strip() if len(parts) > 1 else None
@@ -180,7 +246,8 @@ def _make_node(inner: str, color: str | None) -> FlowNode:
         sublabel = None
     kind: Literal["box", "ellipsis"] = (
         "ellipsis" if label in _ELLIPSIS else "box")
-    return FlowNode(label=label, sublabel=sublabel, kind=kind, color=color)
+    return FlowNode(label=label, sublabel=sublabel, kind=kind, color=color,
+                    node_id=node_id)
 
 
 # ---------------------------------------------------------------- 配置プラン
@@ -213,6 +280,9 @@ class FlowPlan:
     boxes: list[PlacedNode] = field(default_factory=list)
     ellipses: list[PlacedText] = field(default_factory=list)
     arrows: list[PlacedArrow] = field(default_factory=list)
+    # 隣り合わないノードを結ぶ細い矢印（Issue #109）．``arrows`` の塗り矢印は
+    # **すき間を埋める**ための形なので、離れた 2 点を結ぶと box に食い込む．
+    lines: list[PlacedLine] = field(default_factory=list)
     labels: list[PlacedText] = field(default_factory=list)
     captions: list[PlacedText] = field(default_factory=list)
 
@@ -234,7 +304,10 @@ def plan_flow(flow: Flow, left: int, top: int, width: int,
     cap_h = _emu(0.5) if flow.caption else 0
     cap_gap = _emu(0.12) if flow.caption else 0
 
-    if flow.direction == "tb":
+    if flow.rows:
+        bottom = _plan_grid(plan, flow, left, top, width, height,
+                            cap_h + cap_gap)
+    elif flow.direction == "tb":
         bottom = _plan_vertical(plan, flow, left, top, width, height,
                                 cap_h + cap_gap)
     else:
@@ -246,6 +319,95 @@ def plan_flow(flow: Flow, left: int, top: int, width: int,
         plan.captions.append(
             PlacedText(flow.caption, Rect(left, cy, width, cap_h)))
     return plan
+
+
+def _plan_grid(plan: FlowPlan, flow: Flow, left: int, top: int,
+               width: int, height: int, reserve: int) -> int:
+    """段（``--`` 区切り）を持つ図を格子に置く（Issue #109）．
+
+    段は上から下へ、段の中は左から右。**列は全段で揃える**——段ごとに幅を
+    変えると、同じ列にあるはずのノードがずれて「格子」に見えない。
+    列数はいちばん要素の多い段に合わせる。
+
+    エッジは 2 通りに描き分ける:
+
+    - **同じ段で隣り合う** → ``arrows``（塗り矢印）．すき間にちょうど収まる形で、
+      一列のフローと同じ見た目になる
+    - **それ以外**（段をまたぐ・飛び越す） → ``lines``（細い矢印）．
+      塗り矢印は「すき間を埋める」ための形なので、離れた 2 点を結ぶと box に食い込む
+
+    戻り値は図の下端（キャプションを置く位置）．
+    """
+    rows = flow.rows
+    ncol = max(len(r) for r in rows)
+    nrow = len(rows)
+    gap_x, gap_y = _emu(0.5), _emu(0.45)
+    avail_w = width - gap_x * (ncol - 1)
+    avail_h = height - reserve - gap_y * (nrow - 1)
+    bw = max(_emu(0.9), min(_emu(2.4), avail_w // ncol))
+    bh = max(_emu(0.5), min(_emu(1.2), avail_h // nrow))
+
+    grid_w = bw * ncol + gap_x * (ncol - 1)
+    grid_h = bh * nrow + gap_y * (nrow - 1)
+    x0 = left + max(0, (width - grid_w) // 2)
+    y0 = top + max(0, (height - reserve - grid_h) // 2)
+
+    rects: dict[int, Rect] = {}
+    for r, row in enumerate(rows):
+        y = y0 + r * (bh + gap_y)
+        for c, idx in enumerate(row):
+            rect = Rect(x0 + c * (bw + gap_x), y, bw, bh)
+            rects[idx] = rect
+            node = flow.nodes[idx]
+            if node.kind == "ellipsis":
+                plan.ellipses.append(PlacedText(node.label, rect))
+            else:
+                plan.boxes.append(PlacedNode(node, rect))
+
+    # 同じ段で隣り合うか（塗り矢印にしてよいか）を引けるようにしておく．
+    pos = {idx: (r, c) for r, row in enumerate(rows) for c, idx in enumerate(row)}
+    for e in flow.edges:
+        a, b = rects.get(e.src), rects.get(e.dst)
+        if a is None or b is None:
+            continue
+        pa, pb = pos.get(e.src), pos.get(e.dst)
+        if pa is None or pb is None:            # 段に載っていないノードは線を引かない
+            continue
+        adjacent = pa[0] == pb[0] and abs(pa[1] - pb[1]) == 1
+        if adjacent:
+            x1 = a.right if pb[1] > pa[1] else a.left
+            x2 = b.left if pb[1] > pa[1] else b.right
+            plan.arrows.append(PlacedArrow(x1, a.center_y, x2, b.center_y))
+            if e.label:
+                lx = min(x1, x2)
+                plan.labels.append(PlacedText(
+                    e.label, Rect(lx, a.center_y - _emu(0.3),
+                                  abs(x2 - x1), _emu(0.28))))
+        else:
+            x1, y1, x2, y2 = _edge_points(a, b)
+            plan.lines.append(PlacedLine(x1, y1, x2, y2))
+            if e.label:
+                plan.labels.append(PlacedText(
+                    e.label, Rect(min(x1, x2), (y1 + y2) // 2 - _emu(0.16),
+                                  max(abs(x2 - x1), _emu(0.8)), _emu(0.28))))
+    return y0 + grid_h
+
+
+def _edge_points(a: Rect, b: Rect) -> tuple[int, int, int, int]:
+    """2 つの矩形を結ぶ線分の端点（互いに向いた辺の中点）を返す．
+
+    中心どうしを結ぶと線が box の中を通ってしまうので、**縦横どちらに離れて
+    いるかで辺を選ぶ**．斜めに離れている場合は離れ方の大きいほうを採る．
+    """
+    dx = b.center_x - a.center_x
+    dy = b.center_y - a.center_y
+    if abs(dy) >= abs(dx):                      # 主に上下に離れている
+        if dy >= 0:
+            return a.center_x, a.bottom, b.center_x, b.top
+        return a.center_x, a.top, b.center_x, b.bottom
+    if dx >= 0:                                 # 主に左右に離れている
+        return a.right, a.center_y, b.left, b.center_y
+    return a.left, a.center_y, b.right, b.center_y
 
 
 def _plan_horizontal(plan: FlowPlan, flow: Flow, left: int, top: int,

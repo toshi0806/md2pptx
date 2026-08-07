@@ -158,12 +158,16 @@ class FlowNode:
         kind: "box"（角丸四角）または "ellipsis"（"…" 単独の省略記号．
             入力記法 `[…]` に対応する活字の省略記号のこと）．
         color: テーマ色名の個別指定（例 "accent6"）．None なら自動割当．
+        node_id: エッジから指すための名前（``[#pc PC]`` 由来）．無ければ None．
+            **``#`` で書くのはラベル中のコロンと区別するため**——``[id: ラベル]``
+            だと ``[HTTP: ハイパーテキスト転送プロトコル]`` を名前付きと読んでしまう．
     """
 
     label: str = ""
     sublabel: str | None = None
     kind: Literal["box", "ellipsis"] = "box"
     color: str | None = None
+    node_id: str | None = None
 
 
 @dataclass
@@ -194,11 +198,15 @@ class Flow:
         caption: 図下キャプション．無ければ None．
         note_top: 図の上に置く注記．無ければ None．
         note_bottom: 図の下に置く注記．無ければ None．
+        rows: 段ごとのノード index（``--`` 区切り由来．DESIGN.md §5.5）．
+            **空なら段の指定なし＝一列**で，従来の原稿はこちらを通る．
+            非空なら ``rows[i]`` が i 段目に並ぶノードの index 列．
     """
 
     direction: Literal["lr", "tb"] = "lr"
     nodes: list[FlowNode] = field(default_factory=list)
     edges: list[FlowEdge] = field(default_factory=list)
+    rows: list[list[int]] = field(default_factory=list)
     caption: str | None = None
     note_top: str | None = None
     note_bottom: str | None = None
