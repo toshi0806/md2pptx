@@ -321,9 +321,16 @@ def plan_flow(flow: Flow, left: int, top: int, width: int,
     return plan
 
 
-# 矢印ラベルの見積もりに使う想定フォントサイズ（pt）．render は本文サイズで
-# 描くので実寸は動くが、**枠を大きめに見積もる**ぶんには害が無い——ラベルは
-# box の上（何も無い場所）に置くので、広げても他とぶつからない．
+# 矢印ラベルの枠を見積もるための想定値．
+#
+# **実寸と合っている必要はない．** render は矢印ラベルを折り返さない設定で描く
+# （``note(wrap=False)``）ので，枠に入りきらなくても文字は割れず，枠の中心に
+# 揃えて置かれるだけ．つまりこの幅が効くのは**どこを中心に置くか**であって，
+# 読めるかどうかではない．実サイズはテーマの本文サイズ（30pt になることもある）
+# で決まり，ここで先回りして知ることはできない．
+#
+# 0.55 は「1 文字ぶんの送り幅 ÷ フォントサイズ」の概算．欧文のプロポーショナル
+# フォントでおよそこの比になる（全角は下の ``units`` で 2 文字ぶんとして数える）．
 _LABEL_PT = 16.0
 _LABEL_H = _emu(0.34)
 
@@ -331,8 +338,9 @@ _LABEL_H = _emu(0.34)
 def _label_width(text: str) -> int:
     """矢印ラベルの想定幅（EMU）．全角は半角の2倍で数える．
 
-    固定幅だと入りきらないラベルが**枠の中で折り返して潰れる**（Issue #111）．
-    "NAMEPREP" が "NAM / EPRE / P" と3行に割れて読めなくなっていた．
+    固定幅だと**中心がずれる**（長いラベルほど左に寄って矢印から離れる）．
+    Issue #111 では折り返しと重なって "NAMEPREP" が "NAM / EPRE / P" と
+    3 行に割れていた．折り返しは render 側で止め，ここでは中心を合わせる．
     """
     units = sum(2 if ord(c) > 0x2E80 else 1 for c in text)
     return int(units * _LABEL_PT * 12700 * 0.55) + _emu(0.12)
@@ -395,7 +403,11 @@ def _plan_grid(plan: FlowPlan, flow: Flow, left: int, top: int,
         if a is None or b is None:
             continue
         pa, pb = pos.get(e.src), pos.get(e.dst)
-        if pa is None or pb is None:            # 段に載っていないノードは線を引かない
+        if pa is None or pb is None:
+            # **構造上ここへは来ない**——``_build`` はノードを置いたら必ず
+            # その段に入れ，段は必ず ``flow.rows`` へ入るので，どのノードも
+            # ちょうど 1 つの段に属する．黙って線を落とすのは避けたい挙動なので，
+            # 万一この不変条件が崩れたときに落ちないための保険として残す．
             continue
         adjacent = pa[0] == pb[0] and abs(pa[1] - pb[1]) == 1
         if adjacent:
