@@ -100,4 +100,4 @@ jobs:
           test -f out.pdf
           pages=$(pdfinfo out.pdf | awk '/^Pages/{print $2}')
           echo "pages=$pages"
-          test "$pages" = "14"
+          test "$pages" = "16"
