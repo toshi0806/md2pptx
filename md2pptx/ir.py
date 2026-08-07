@@ -40,6 +40,9 @@ class Line:
             - "bullet"  : テーマ既定の箇条書き記号（記号は指定せず任せる）．
             - "autonum" : 自動採番（set_autonum 相当）．num_style で形式を指定．
             - "plain"   : 行頭記号なし（no_bullet 相当．結論・補足行など）．
+            - "code"    : コードブロックの 1 行（フェンス由来．DESIGN.md §5.12）．
+                行頭記号を消し等幅フォントで描く．text は原稿のまま
+                （行頭マーカーもサイズトークンも <br> も解釈しない）．
             取りうる値は注釈（Literal）が正．
         num_style: kind=="autonum" のときの採番形式．python-pptx の
             buAutoNum type 値をそのまま使う．
@@ -70,7 +73,7 @@ class Line:
 
     text: str
     level: int = 0
-    kind: Literal["bullet", "autonum", "plain"] = "bullet"
+    kind: Literal["bullet", "autonum", "plain", "code"] = "bullet"
     num_style: str | None = None
     num_color: str | None = None
     num_start: int | None = None

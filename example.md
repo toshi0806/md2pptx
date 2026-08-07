@@ -132,6 +132,18 @@ note(bottom): → テーマを差し替えるだけで見た目が一新でき�
   - テーマで見た目を統一
   - テキスト差分でレビュー可能
 
+### コードブロック：書いたまま等幅で
+<!-- @body-size: -2 -->
+
+フェンスで囲んだ行は行頭マーカーを解釈せず、字下げも空行もそのまま残る
+
+```console
+$ md2pptx example.md --theme OfficeTheme.pptx --pdf
+saved: example.pptx slides: 15
+saved: example.pdf
+```
+
+→ info string は自由（構文強調はしない）。`mono_font:` でフォントを差し替え
 ### 段階表示：@step でアニメーションの代わり
 
 - アニメーションは書かず、1枚分の原稿から複数枚を作る
