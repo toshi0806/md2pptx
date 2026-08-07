@@ -34,6 +34,7 @@ _TABLE = """| 型 | プロトコル | 使う場所 |
 
 
 def _build(tmp_path, src):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     theme = tmp_path / "theme.pptx"
     Presentation().save(str(theme))
     out = tmp_path / "out.pptx"
@@ -49,7 +50,13 @@ def _objects(slide):
 
 
 def _conclusion_top(slide, line_h, needle="結論文"):
-    """結論文の描き始めの y（EMU）．枠の上端＋段落番号×行高．"""
+    """結論文の描き始めの y（EMU）．枠の上端＋段落番号×行高．
+
+    プレースホルダ自身の上マージン（既定 0.05in）は**わざと足さない**。
+    足せば結論文の位置が下がり、この判定は緩くなる。回帰テストとしては
+    厳しいほうへ倒しておきたい——実際の描画はここで求めた位置より
+    わずかに下から始まる。
+    """
     for sh in slide.shapes:
         if not sh.has_text_frame or sh == slide.shapes.title:
             continue
@@ -105,7 +112,12 @@ def test_table_in_a_column_stops_above_the_conclusion(tmp_path):
 # ---------------------------------------------------------------- 削りすぎない
 
 def test_the_band_keeps_most_of_the_frame(tmp_path):
-    """食い込みを直すために帯を削りすぎていない（1行ぶん程度に収まる）．"""
+    """食い込みを直すために帯を削りすぎていない．
+
+    許容は **3行ぶん**。原稿の地の文が導入文と結論文の 2 行あり、そこへ
+    空行数の切り捨てで最大 1 行が加わる（2 + 1）。この修正で減るのはその
+    1 行ぶんだけで、それ以上痩せていたら削りすぎ。
+    """
     prs, line_h = _build(
         tmp_path, _FM + "### 表\n\n導入文\n\n" + _TABLE + "\n→ 結論文\n")
     slide = prs.slides[-1]
@@ -116,10 +128,24 @@ def test_the_band_keeps_most_of_the_frame(tmp_path):
 
 # ---------------------------------------------------------------- overflow
 
-def test_overflow_may_still_extend_below(tmp_path):
-    """``@overflow: true`` は従来どおり下へはみ出せる（この修正の対象外）．"""
-    src = (_FM + "### 表\n<!-- @overflow: true -->\n\n導入文\n\n"
-           + _TABLE + "\n→ 結論文\n")
-    prs, line_h = _build(tmp_path, src)
-    tbl, = _objects(prs.slides[-1])
-    assert tbl.height > 0
+_TALL_TABLE = "| 行 | 値 |\n|:--|:--|\n" + "".join(
+    f"| 行{i} | 値{i} |\n" for i in range(1, 13))
+
+
+def test_overflow_still_extends_below_the_conclusion(tmp_path):
+    """``@overflow: true`` は従来どおり結論文より下まで伸びる（対象外）．
+
+    はみ出しは**指定した人が選んだ挙動**なので、この修正で塞いではいけない。
+    帯に収まらない高さの表で、指定あり／なしの差をそのまま見る。
+    """
+    body_src = "### 表\n{d}\n導入文\n\n" + _TALL_TABLE + "\n→ 結論文\n"
+    plain, line_h = _build(tmp_path / "a", _FM + body_src.format(d=""))
+    over, _ = _build(tmp_path / "b",
+                     _FM + body_src.format(d="<!-- @overflow: true -->\n"))
+
+    plain_tbl, = _objects(plain.slides[-1])
+    over_tbl, = _objects(over.slides[-1])
+    _, concl_top = _conclusion_top(plain.slides[-1], line_h)
+
+    assert plain_tbl.top + plain_tbl.height <= concl_top
+    assert over_tbl.top + over_tbl.height > concl_top
