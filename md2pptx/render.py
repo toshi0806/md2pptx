@@ -387,6 +387,11 @@ class Renderer:
         self._master_levels[style] = levels
         return levels
 
+    def _indent_for(self, level: int) -> int:
+        """そのレベルの左インデント（EMU）．取れなければ 0．"""
+        ind = self._body_indents()
+        return ind[min(level, len(ind) - 1)] if ind else 0
+
     def _body_indents(self) -> list[int]:
         """マスター本文スタイルのレベル別の左インデント（EMU．lvl1 始まり）．
 
@@ -1568,8 +1573,10 @@ class Renderer:
                 tf = body.text_frame
                 self._fill_lines(tf, line_blocks, default_num_color,
                                  default_size_delta)
-                self._apply_autofit(tf, scale, default_autofit)
-                self.draw_line_boxes(s, body, line_blocks, default_size_delta)
+                eff = self._autofit_for(body, line_blocks, scale,
+                                        default_autofit, default_size_delta)
+                self.draw_line_boxes(s, body, line_blocks, default_size_delta,
+                                     shrink=eff)
 
         # 表紙レイアウト（テーマの「タイトル スライド」）には番号を付けない．
         # そのレイアウトを選ぶこと自体が「これは表紙」の宣言なので，
@@ -1659,8 +1666,10 @@ class Renderer:
             if lines:
                 tf = ph.text_frame
                 self._fill_lines(tf, lines, default_num_color, default_size_delta)
-                self._apply_autofit(tf, scale, default_autofit)
-                self.draw_line_boxes(slide, ph, lines, default_size_delta)
+                eff = self._autofit_for(ph, lines, scale, default_autofit,
+                                        default_size_delta)
+                self.draw_line_boxes(slide, ph, lines, default_size_delta,
+                                     shrink=eff)
 
     # ----------------------------------------------------- 描画ユーティリティ
     def _append_lines(self, tf: TextFrame, line_blocks: list[Line], first: bool,
@@ -1731,7 +1740,8 @@ class Renderer:
                         line_blocks: list[Line],
                         default_size_delta: int | None = None,
                         preceding: list[Line] | None = None,
-                        blank_paras: int = 0) -> None:
+                        blank_paras: int = 0,
+                        shrink: float | None = None) -> None:
         """``{box}`` の付いた段落を枠で囲む（Issue #133）．
 
         枠は**段落に重ねて描く**——PowerPoint が実際にどこへ行を置いたかは
@@ -1745,10 +1755,14 @@ class Renderer:
         導入文に ``{+1}`` が付いているだけで結論文側の枠がずれる．
         空段落だけは標準サイズで数える（帯の計算がそう作っているため）．
 
-        **見積もりなので完全ではない**．``@autofit`` で縮小が掛かる枠や、
-        テーマがレベルごとに行間を変えている枠ではずれうる（SYNTAX.md に明記）．
-        ずれても文字は動かない——枠だけが少し外れる．
+        ``shrink`` は枠に効いている縮小率（％．無ければ None）．**これを渡さないと
+        縮んだ枠で位置がずれる**——字だけが小さくなり、枠は元の大きさのまま
+        取り残される（Issue #154）．
+
+        **見積もりなので完全ではない**．テーマがレベルごとに行間を変えている枠では
+        ずれうる（SYNTAX.md に明記）．ずれても文字は動かない——枠だけが少し外れる．
         """
+        k = (shrink / 100.0) if shrink else 1.0
         if not any(ln.boxed for ln in line_blocks):
             return
         tf = ph.text_frame
@@ -1759,9 +1773,7 @@ class Renderer:
             return levels[min(level, len(levels) - 1)] if levels else 18.0
 
         def indent_of(level: int) -> int:
-            if not indents:
-                return 0
-            return indents[min(level, len(indents) - 1)]
+            return indents[min(level, len(indents) - 1)] if indents else 0
 
         # python-pptx の margin_* は未設定でも既定値（EMU）を返すので、
         # そのまま使える（None にはならない）．
@@ -1772,7 +1784,7 @@ class Renderer:
         def measure(ln: Line) -> tuple[float, int, int]:
             """(実効サイズ pt, 折り返し行数, 左インデント EMU) を返す．"""
             d = ln.size_delta if ln.size_delta is not None else default_size_delta
-            sz = self._size_from_delta(size_of(ln.level), d)
+            sz = self._size_from_delta(size_of(ln.level), d) * k
             ind = indent_of(ln.level)
             avail_pt = max(1.0, (avail_full - ind) / 12700.0)
             text = (ln.text or "").replace("\v", " ")
@@ -1786,7 +1798,7 @@ class Renderer:
             sz, n, _ = measure(ln)
             y += self._para_height(ln.level, sz, n)
         # 空段落は標準サイズ（帯の計算がそう作っている）．
-        y += blank_paras * self._para_height(0, self._body_font_size())
+        y += blank_paras * self._para_height(0, self._body_font_size() * k)
 
         for ln in line_blocks:
             sz, wrapped, ind = measure(ln)
@@ -1873,6 +1885,55 @@ class Renderer:
             return None
         return scale
 
+    def _text_height(self, lines: list[Line], levels: list[float],
+                     default_size_delta: int | None, avail_w: int,
+                     shrink: float = 1.0) -> int:
+        """``lines`` を ``avail_w`` の幅へ流したときの総高（EMU）．
+
+        折り返しは ``_text_width_pt`` の概算で数える（`draw_line_boxes` と同じ）．
+        """
+        total = 0
+        for ln in lines:
+            d = ln.size_delta if ln.size_delta is not None else default_size_delta
+            base = levels[min(ln.level, len(levels) - 1)] if levels else 18.0
+            sz = self._size_from_delta(base, d) * shrink
+            ind = self._indent_for(ln.level)
+            avail_pt = max(1.0, (avail_w - ind) / 12700.0)
+            text = (ln.text or "").replace("\v", " ")
+            n = max(1, math.ceil(self._text_width_pt(text, sz) / avail_pt))
+            total += self._para_height(ln.level, sz, n)
+        return total
+
+    def _fit_scale(self, ph: SlidePlaceholder, lines: list[Line],
+                   default_size_delta: int | None) -> float | None:
+        """枠に収めるための縮小率（％）．収まるなら None．
+
+        **``normAutofit`` を置くだけでは何も起きない**（Issue #154）．PowerPoint は
+        自動調整を開いたときに計算し直さず、保存されている ``fontScale`` で描く。
+        だから md2pptx 側で率を出して焼き込む．
+
+        縮めると折り返しが減ってさらに縮むので、数回まわして落ち着かせる．
+        """
+        tf = ph.text_frame
+        avail_h = ph.height - tf.margin_top - tf.margin_bottom
+        avail_w = ph.width - tf.margin_left - tf.margin_right
+        if avail_h <= 0 or avail_w <= 0 or not lines:
+            return None
+        levels = self._frame_font_levels(tf)
+        need = self._text_height(lines, levels, default_size_delta, avail_w)
+        if need <= avail_h:
+            return None
+        scale = avail_h / need
+        for _ in range(3):
+            need = self._text_height(lines, levels, default_size_delta,
+                                     avail_w, scale)
+            if need <= avail_h:
+                break
+            scale *= avail_h / need
+        # 下限は 25%．それ以下まで縮むのは原稿の量がおかしいので、縮めきらずに
+        # 止めて（はみ出しは残る）書き手に気づかせる．
+        return max(25.0, min(100.0, scale * 100.0))
+
     def _apply_autofit(self, tf: TextFrame, scale: float | None,
                        default_autofit: bool) -> None:
         """縮小率指定があれば焼き込み，無ければ既定の自動調整を設定する．"""
@@ -1880,6 +1941,20 @@ class Renderer:
             self.fit_body(tf, scale=scale)
         elif default_autofit:
             self.fit_body(tf)
+
+    def _autofit_for(self, ph: SlidePlaceholder, lines: list[Line],
+                     scale: float | None, default_autofit: bool,
+                     default_size_delta: int | None) -> float | None:
+        """枠に自動調整を設定し、**実際に効く縮小率**を返す．
+
+        戻り値は ``draw_line_boxes`` へ渡す——縮小率を知らないと ``{box}`` の枠が
+        字とずれる（枠だけが元の大きさの位置に取り残される）．
+        """
+        eff = scale
+        if eff is None and default_autofit:
+            eff = self._fit_scale(ph, lines, default_size_delta)
+        self._apply_autofit(ph.text_frame, eff, default_autofit)
+        return eff
 
     def _col_ratios(self, directives: dict[str, Any]) -> list[float] | None:
         """@table-widths ディレクティブ（"45,55" 等）を表の列幅比リストへ解釈する．"""
@@ -2422,12 +2497,17 @@ class Renderer:
                 first = False
             self._append_lines(tf, prose_after, first, default_num_color,
                                default_size_delta, counters)
+            # 帯を持つスライドでは**自分で率を出さない**——空段落が枠を埋めて
+            # いるので「収まっていない」ようには見えず、縮める必要が無い．
+            # 明示の ``@autofit`` はそのまま効き、枠にも同じ率を渡す．
             self._apply_autofit(tf, scale, default_autofit)
             # 枠は導入文と結論文の両方に付けられる．結論文は空段落のぶんだけ
             # 下から始まるので、その数をそのまま渡す（Issue #133）．
-            self.draw_line_boxes(slide, body, prose_before, default_size_delta)
+            self.draw_line_boxes(slide, body, prose_before, default_size_delta,
+                                 shrink=scale)
             self.draw_line_boxes(slide, body, prose_after, default_size_delta,
-                                 preceding=prose_before, blank_paras=blanks)
+                                 preceding=prose_before, blank_paras=blanks,
+                                 shrink=scale)
 
         # 帯の高さは **band_h ではなく空行数から** 求める（Issue #131）．
         # 結論文が描き始められる位置を決めるのは流し込んだ空行の数であって、
