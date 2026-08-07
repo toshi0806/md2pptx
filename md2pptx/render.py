@@ -1952,7 +1952,10 @@ class Renderer:
         horizontal = arrow.direction in ("right", "left", "leftright")
         along = width if horizontal else height     # 矢印が伸びる向きの余地
         across = height if horizontal else width    # それと直交する向きの余地
-        long_ = min(Inches(0.9), max(Inches(0.3), int(along * 0.5)))
+        # 長手は自分の帯の 8 割．**ここを削ると矢印が向きを失う**——2 つ置いて
+        # 帯を分け合うと 1 つあたり 1.8cm ほどしか無く、半分では菱形に見える
+        # （Issue #141）．上限は元の講義スライドの大きさに合わせた．
+        long_ = min(Inches(1.0), max(Inches(0.3), int(along * 0.8)))
         short = min(int(across * 0.9), max(Inches(0.35), int(long_ * 0.75)))
         w, h = (long_, short) if horizontal else (short, long_)
         x = left + (width - w) // 2

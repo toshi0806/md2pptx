@@ -47,6 +47,7 @@
 
 ### 修正
 
+- 矢印を1枚に2つ置くと、どちらも小さすぎて向きが読めませんでした [#142]
 - 「白紙」レイアウトで図だけのスライドを作ると、**上にタイトルぶんの空きが
   残っていました**。タイトルの無いレイアウトでは空けなくなり、図が
   スライドいっぱいに置けます [#140]
@@ -243,3 +244,4 @@
 [#136]: https://github.com/toshi0806/md2pptx/pull/136
 [#139]: https://github.com/toshi0806/md2pptx/pull/139
 [#140]: https://github.com/toshi0806/md2pptx/pull/140
+[#142]: https://github.com/toshi0806/md2pptx/pull/142
