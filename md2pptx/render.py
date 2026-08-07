@@ -476,7 +476,7 @@ class Renderer:
             p.text = blk.text
             return
         p.text = ""
-        prev_seg = blk.spans[0].segment if blk.spans else 0
+        prev_seg = blk.spans[0].segment
         for i, span in enumerate(blk.spans):
             if i and span.segment != prev_seg:
                 self._append_break(p)
@@ -509,6 +509,11 @@ class Renderer:
 
         テーマ色は **RGB へ潰さず** ``theme_color`` で指定する——
         テーマを差し替えたときに追従させたいため．
+
+        ``Span.color`` はパーサが正規化済みだが，ここでも ``parse_color`` を通す．
+        冪等（テーマ色名も "#RRGGBB" もそのまま返る）なうえ，**色名の語彙を知る
+        場所を 1 つに保てる**——先頭の "#" で振り分けると，render が
+        「正規化済みである」という書かれざる前提に依存することになる．
         """
         kind, value = parse_color(name)
         if kind == "theme":

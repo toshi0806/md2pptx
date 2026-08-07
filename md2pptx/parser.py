@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import sys
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import yaml
@@ -878,7 +879,28 @@ _RE_INLINE = re.compile(
 )
 
 
-def _spans_in(text: str, segment: int, base: dict[str, Any]) -> list[Span]:
+@dataclass(frozen=True)
+class _Marks:
+    """``[…]{色}`` や ``**…**`` の内側へ継承する装飾．
+
+    ``dict`` で持つとキーの綴り違いを mypy が拾えない——``Span(**marks)`` は
+    キーワード展開なので，間違えても実行時まで分からない．
+    """
+
+    bold: bool = False
+    mono: bool = False
+    color: str | None = None
+    link: str | None = None
+    script: Literal["sup", "sub"] | None = None
+
+
+def _span(text: str, segment: int, m: _Marks) -> Span:
+    """継承した装飾を載せた Span を作る（フィールドの対応はここ 1 か所）．"""
+    return Span(text=text, segment=segment, bold=m.bold, mono=m.mono,
+                color=m.color, link=m.link, script=m.script)
+
+
+def _spans_in(text: str, segment: int, base: _Marks) -> list[Span]:
     """1 セグメントを Span 列へ分解する（``base`` は外側から継承する装飾）．
 
     ``[…]{色}`` と ``[…](url)`` の中身は**再帰的に解釈する**——
@@ -889,31 +911,28 @@ def _spans_in(text: str, segment: int, base: dict[str, Any]) -> list[Span]:
     pos = 0
     for m in _RE_INLINE.finditer(text):
         if m.start() > pos:
-            out.append(Span(text=text[pos:m.start()], segment=segment, **base))
+            out.append(_span(text[pos:m.start()], segment, base))
         if m.group("bold") is not None:
-            out += _spans_in(m.group("bold"), segment, {**base, "bold": True})
+            out += _spans_in(m.group("bold"), segment, replace(base, bold=True))
         elif m.group("code") is not None:
-            out.append(Span(text=m.group("code"), segment=segment,
-                            **{**base, "mono": True}))
+            out.append(_span(m.group("code"), segment, replace(base, mono=True)))
         elif m.group("url") is not None:
             out += _spans_in(m.group("ltext"), segment,
-                             {**base, "link": m.group("url")})
+                             replace(base, link=m.group("url")))
         elif m.group("color") is not None:
             # 色名はここで**検証して正規化する**（綴り違いは黙って既定色にせず止める）．
             # 正規化しないと "#f00" と "#F00" が別物として IR に入り，render で
             # もう一度同じ文字列を解き直すことになる（Issue #105 のレビュー指摘）．
             kind, value = parse_color(m.group("color"))
             name = value if kind == "theme" else "#" + value
-            out += _spans_in(m.group("ctext"), segment, {**base, "color": name})
+            out += _spans_in(m.group("ctext"), segment, replace(base, color=name))
         elif m.group("sup") is not None:
-            out.append(Span(text=m.group("sup"), segment=segment,
-                            **{**base, "script": "sup"}))
+            out.append(_span(m.group("sup"), segment, replace(base, script="sup")))
         else:
-            out.append(Span(text=m.group("sub"), segment=segment,
-                            **{**base, "script": "sub"}))
+            out.append(_span(m.group("sub"), segment, replace(base, script="sub")))
         pos = m.end()
     if pos < len(text):
-        out.append(Span(text=text[pos:], segment=segment, **base))
+        out.append(_span(text[pos:], segment, base))
     return out
 
 
@@ -930,7 +949,7 @@ def _parse_spans(text: str) -> tuple[str, list[Span]]:
     all_spans: list[Span] = []
     plain: list[str] = []
     for i, seg in enumerate(text.split("\v")):
-        spans = _spans_in(seg, i, {})
+        spans = _spans_in(seg, i, _Marks())
         plain.append("".join(s.text for s in spans))
         all_spans.extend(spans)
     decorated = any(s.bold or s.mono or s.color or s.link or s.script
