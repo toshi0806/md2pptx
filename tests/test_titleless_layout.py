@@ -111,9 +111,14 @@ def test_a_layout_with_a_body_is_unchanged(tmp_path):
 
     図は本文の枠の中に置かれる——`_content_rect` はその枠を返し、
     既定値（この修正で触ったところ）まで落ちない。
+
+    地の文を 1 行入れてあるのは、**図だけのスライドでは本文プレースホルダが
+    消される**ため（地の文が無ければ枠ごと外して図を広く使う既存の動き）。
+    ここで確かめたいのは枠がある場合なので、消えない形にしておく。
     """
     img = _fig(tmp_path)
-    src = (_FM + "### x\n\n```image\nsrc: %s\nwidth: 100%%\n```\n" % img.name)
+    src = (_FM + "### x\n\n- 導入文\n\n```image\nsrc: %s\nwidth: 100%%\n```\n"
+           % img.name)
     out = _build(tmp_path, src)
     slide = out.slides[-1]
     pic = _picture(slide)
