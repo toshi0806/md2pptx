@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # main だけでなく統合ブランチ（feature/**）でも走らせる（Issue #121）．
+    # PR ごとの CI は「その PR の base に対して」通っただけで，**merge した後の
+    # 状態を検証していない**．衝突解消は人が手でやるのでいちばん壊れやすいのに，
+    # そこが誰にも検証されない状態だった．
+    branches: [main, 'feature/**']
   pull_request:
 
 concurrency:
@@ -97,9 +101,20 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libreoffice-impress poppler-utils
       - run: pip install -e .
       - run: md2pptx example.md --theme OfficeTheme.pptx -o out.pptx --pdf-output out.pdf --pdf-converter libreoffice
-      - name: Check the PDF was produced with the expected page count
+      # 期待値は**出力した pptx から引く**（Issue #120）．固定値を書くと，
+      # generate ジョブの枚数と 2 か所を直すことになり，片方を忘れると
+      # いちばん遅いこのジョブだけが後から落ちる（実際に3回落とした）．
+      # ここで見たいのは絶対枚数ではなく「PDF が全スライドを出力できたか」．
+      - name: Check the PDF has one page per slide
         run: |
           test -f out.pdf
+          slides=$(python -c "from pptx import Presentation; print(len(Presentation('out.pptx').slides))")
+          # 取り出せたことを先に確かめる．pdfinfo が成功しても awk が "Pages" を
+          # 見つけられなければ**空のまま終了コード 0** で通るので，set -e では
+          # 捕まらない．空のまま比べると「ページ数が違う」と読めてしまい，
+          # 原因が分かるログにするという目的（#120）が達せられない．
+          test -n "$slides" || { echo "ERROR: could not read the slide count from out.pptx"; exit 1; }
           pages=$(pdfinfo out.pdf | awk '/^Pages/{print $2}')
-          echo "pages=$pages"
-          test "$pages" = "19"
+          test -n "$pages" || { echo "ERROR: could not read the page count from out.pdf"; exit 1; }
+          echo "slides=$slides pages=$pages"
+          test "$pages" = "$slides"
