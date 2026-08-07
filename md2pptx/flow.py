@@ -342,6 +342,9 @@ def _label_width(text: str) -> int:
     Issue #111 では折り返しと重なって "NAMEPREP" が "NAM / EPRE / P" と
     3 行に割れていた．折り返しは render 側で止め，ここでは中心を合わせる．
     """
+    # 0x2E80 より上を全角とみなす．CJK の記号・かな・漢字（U+3000〜）だけでなく、
+    # 全角英数と全角記号（U+FF01〜）も上側に入るので、実用上これで足りる
+    # （"（" U+FF08 も "Ａ" U+FF21 も 2 文字ぶんとして数えられることを確認済み）．
     units = sum(2 if ord(c) > 0x2E80 else 1 for c in text)
     return int(units * _LABEL_PT * 12700 * 0.55) + _emu(0.12)
 
