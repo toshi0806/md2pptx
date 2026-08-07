@@ -1908,8 +1908,16 @@ class Renderer:
                                default_size_delta, counters)
             self._apply_autofit(tf, scale, default_autofit)
 
-        # 結論文との重なりを避けるため帯を少しだけ詰めてオブジェクトを置く．
-        obj_h = max(Inches(0.8), band_h - Pt(8))
+        # 帯の高さは **band_h ではなく空行数から** 求める（Issue #131）．
+        # 結論文が描き始められる位置を決めるのは流し込んだ空行の数であって、
+        # band_h ではない——blanks は int() で切り捨てるので、band_h をそのまま
+        # 使うと最大 1 行ぶん帯のほうが下まで伸び、表が結論文に重なる。
+        # しかも黙って重なる（表は帯高で描かれるので警告の条件に掛からない）。
+        #   結論文の上端 = top + (nb + blanks) * line_h
+        #   帯の上端     = band_top = top + nb * line_h + inset
+        # なので帯に使えるのは blanks * line_h - inset まで．そこから
+        # 従来どおり Pt(8) を余白として引く．
+        obj_h = max(Inches(0.8), blanks * line_h - inset - Pt(8))
         self._stack_objects(slide, objects, left, band_top, width, obj_h, col_ratios,
                             slide_overflow, has_prose_after=bool(prose_after))
 

@@ -37,6 +37,9 @@
 
 ### 修正
 
+- 表や図が**結論文の上に重なる**ことがありました。警告も出ないので、
+  pptx を開くまで気づけない壊れ方でした。表・図を置く帯の高さを、
+  結論文の位置を決めている空行の数から求めるようにしました [#132]
 - 図の `note(top):` / `note(bottom):` で行内装飾が効いていませんでした。
   `[語]{red}` や `**強調**` が記号ごと文字として出ていました。
   地の文なので、本文行と同じ解釈になります [#130]
@@ -222,3 +225,4 @@
 [#126]: https://github.com/toshi0806/md2pptx/pull/126
 [#128]: https://github.com/toshi0806/md2pptx/pull/128
 [#130]: https://github.com/toshi0806/md2pptx/pull/130
+[#132]: https://github.com/toshi0806/md2pptx/pull/132
