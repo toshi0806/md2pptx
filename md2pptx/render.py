@@ -514,21 +514,32 @@ class Renderer:
         self._spc_cache = levels
         return levels
 
-    def _para_height(self, level: int, size_pt: float) -> int:
-        """段落 1 行ぶんの高さ（EMU）．行送り＋そのレベルの段落前アキ．
+    @staticmethod
+    def _line_height(size_pt: float) -> int:
+        """文字 1 行ぶんの高さ（EMU）．行送りの 1.32 は従来どおり保守的な値．"""
+        return int(Pt(size_pt * 1.32))
 
-        行送りの 1.32 は従来どおり保守的な値．そこへ ``spcBef`` を足す——
-        足さないと帯が上へずれ、図が地の文に食い込む（Issue #145）．
+    def _space_before(self, level: int, size_pt: float) -> int:
+        """そのレベルの段落前アキ（EMU）．
 
-        ``level`` は 0 始まり（``Line.level`` と同じ）．``before`` は pt．
+        ``level`` は 0 始まり（``Line.level``）、``_body_space_before`` のリストは
+        lvl1 始まり——先頭が level 0 に当たるので添字はそのまま。テーマが書いて
+        いない深さは末尾で頭打ち。``_body_font_levels`` を引くときと同じ数え方
+        （render 全体で揃えてある）。
         """
-        # level は 0 始まり（``Line.level``）、リストは lvl1 始まり——先頭が level 0
-        # に当たるので添字はそのまま。テーマが書いていない深さは末尾で頭打ち。
-        # ``_body_font_levels`` を引くときと同じ数え方（render 全体で揃えてある）。
         spc = self._body_space_before()
         raw = spc[min(level, len(spc) - 1)] if spc else SpaceBefore(0.0, False)
-        before = raw.value * size_pt if raw.percent else raw.value
-        return int(Pt(size_pt * 1.32 + before))
+        return int(Pt(raw.value * size_pt if raw.percent else raw.value))
+
+    def _para_height(self, level: int, size_pt: float, lines: int = 1) -> int:
+        """段落 1 つぶんの高さ（EMU）．行の高さ × 行数 ＋ 段落前アキ．
+
+        アキを足さないと帯が上へずれ、図が地の文に食い込む（Issue #145）。
+        **アキは段落に 1 回だけ**——折り返した行ごとに足すと、2 行の項目を囲む
+        ``{box}`` が 1 行ぶん下へ伸びて次の項目に掛かる（Issue #150）。
+        """
+        return lines * self._line_height(size_pt) + self._space_before(
+            level, size_pt)
 
     def _body_font_levels(self) -> list[float]:
         """マスター本文スタイルのレベル別フォントサイズ（pt）を返す（lvl1 始まり．既定 [18]）．
@@ -1761,13 +1772,13 @@ class Renderer:
         # ここでは描かない——呼び出し元が同じ行列で 1 度描いている．
         for ln in preceding or []:
             sz, n, _ = measure(ln)
-            y += n * self._para_height(ln.level, sz)
+            y += self._para_height(ln.level, sz, n)
         # 空段落は標準サイズ（帯の計算がそう作っている）．
         y += blank_paras * self._para_height(0, self._body_font_size())
 
         for ln in line_blocks:
             sz, wrapped, ind = measure(ln)
-            line_h = self._para_height(ln.level, sz)
+            para_h = self._para_height(ln.level, sz, wrapped)
             if ln.boxed:
                 avail = max(1, avail_full - ind)
                 text = (ln.text or "").replace("\v", " ")
@@ -1778,9 +1789,12 @@ class Renderer:
                 bl = max(0, ph.left + pad_l + ind - gap)
                 w = min(int(self._text_width_pt(text, sz) * 12700) + 2 * gap,
                         ph.left + ph.width - bl)
-                self.line_box(slide, bl, y, max(w, int(avail * 0.2)),
-                              wrapped * line_h, ln.box_color)
-            y += wrapped * line_h
+                # 枠は**アキを含めない**——アキは段落の上に空く隙間で、字の入る
+                # ところではない．囲むのは字のほうだけ（Issue #150）．
+                self.line_box(slide, bl, y + self._space_before(ln.level, sz),
+                              max(w, int(avail * 0.2)),
+                              wrapped * self._line_height(sz), ln.box_color)
+            y += para_h
 
     def line_box(self, slide: PptxSlide, left: int, top: int, w: int, h: int,
                  color: str | None = None) -> Shape:
