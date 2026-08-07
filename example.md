@@ -140,6 +140,7 @@ lifelines: クライアント, サーバ
 サーバ -> クライアント: SYN+ACK
 クライアント -> サーバ: ACK
 caption: 時間は上から下へ流れる
+note(bottom): → `note(top)` / `note(bottom)` は地の文なので[行内装飾が効く]{accent2}
 ```
 
 ### 行内装飾：語の単位で強調・色・等幅

@@ -37,6 +37,11 @@
 
 ### 修正
 
+- 図の `note(top):` / `note(bottom):` で行内装飾が効いていませんでした。
+  `[語]{red}` や `**強調**` が記号ごと文字として出ていました。
+  地の文なので、本文行と同じ解釈になります [#130]
+- ` ```seq ` の `note(top):` / `note(bottom):` が出力に入っていませんでした。
+  記法としては受け付けるのに、スライドには何も出ない状態でした [#130]
 - フロー図の矢印ラベルが枠の中で折り返して潰れていました。`NAMEPREP` が
   `NAM / EPRE / P` と3行に割れて読めない状態でした。ラベルの枠を文字数に
   合わせて広げ、折り返さないようにしました [#123]
@@ -216,3 +221,4 @@
 [#124]: https://github.com/toshi0806/md2pptx/pull/124
 [#126]: https://github.com/toshi0806/md2pptx/pull/126
 [#128]: https://github.com/toshi0806/md2pptx/pull/128
+[#130]: https://github.com/toshi0806/md2pptx/pull/130
