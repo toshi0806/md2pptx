@@ -2001,7 +2001,10 @@ class Renderer:
         そこを既定値で埋める．両端に矢じりのある形はその既定だと**箱いっぱいの
         菱形**になり、矢印に見えない（Issue #143）．
         """
-        av = shp._element.spPr.find(qn("a:prstGeom")).find(qn("a:avLst"))
+        geom = shp._element.spPr.find(qn("a:prstGeom"))
+        av = geom.find(qn("a:avLst")) if geom is not None else None
+        if av is None:
+            return          # プリセット図形でなければ調整値そのものが無い
         for name, val in adj.items():
             gd = av.makeelement(qn("a:gd"), {"name": name,
                                              "fmla": f"val {val}"})

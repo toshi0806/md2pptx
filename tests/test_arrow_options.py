@@ -188,3 +188,15 @@ def test_a_single_headed_arrow_uses_a_bigger_head(tmp_path):
     gds = shp._element.spPr.find(qn("a:prstGeom")).find(qn("a:avLst"))
     got = {gd.get("name"): gd.get("fmla") for gd in gds}
     assert got == {"adj1": "val 50000", "adj2": "val 25000"}
+
+
+def test_setting_adj_on_a_shape_without_a_preset_is_a_no_op(tmp_path):
+    """プリセット図形でなければ調整値は書かない（落ちない）．"""
+    from pptx.util import Emu
+    theme = tmp_path / "theme.pptx"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    Presentation().save(str(theme))
+    r = render.Renderer(str(theme))
+    slide = r.prs.slides.add_slide(r.prs.slide_layouts[6])
+    box = slide.shapes.add_textbox(Emu(0), Emu(0), Emu(1000), Emu(1000))
+    r._set_shape_adj(box, {"adj1": 50000})       # 例外にならない
