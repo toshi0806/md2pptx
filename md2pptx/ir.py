@@ -91,6 +91,10 @@ class Line:
             ×1.125（拡大）/ ÷1.125（縮小）する（render が実サイズへ換算）．
             None ならスライド既定（@body-size）に従う＝未指定．0 で「テーマ既定
             に固定（スライド既定を無効化）」を表す．絶対 pt は持たない（テーマ委譲）．
+        boxed: その段落を枠で囲む（行頭の ``{box}`` 由来．DESIGN.md §5.14）．
+            囲むのは **run ではなく段落**で，折り返しても枠は 1 つ．
+        box_color: 枠線の色（``{box:blue}`` 由来）．None ならテーマのアクセント色．
+            色名の語彙は行内装飾と同じ（テーマ色名／CSS の色名／16進）．
         spans: 行内装飾を解釈した run の列（DESIGN.md §5.13）．**空なら装飾なし**で，
             render は text を 1 つの run として書く（従来の経路）．非空なら
             連結した文字列が text と一致する（text は装飾記号を除いた素のテキスト）．
@@ -112,6 +116,8 @@ class Line:
     size_delta: int | None = None
     seg_deltas: list[int | None] = field(default_factory=list)
     spans: list[Span] = field(default_factory=list)
+    boxed: bool = False
+    box_color: str | None = None
 
     def __post_init__(self) -> None:
         # 不変条件：seg_deltas は text のセグメント数と同じ長さで，[0] は None．
