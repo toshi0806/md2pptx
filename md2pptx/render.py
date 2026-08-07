@@ -838,11 +838,18 @@ class Renderer:
     def note(self, slide: PptxSlide, l: int, t: int, w: int, h: int, text: str,
              size: float, tc: MSO_THEME_COLOR | None = None, bold: bool = False,
              align: PP_ALIGN = PP_ALIGN.LEFT,
-             anchor: MSO_ANCHOR | None = None) -> Shape:
-        """注記用テキストボックスを描く（キャプション・矢印ラベル・省略記号）．"""
+             anchor: MSO_ANCHOR | None = None, wrap: bool = True) -> Shape:
+        """注記用テキストボックスを描く（キャプション・矢印ラベル・省略記号）．
+
+        ``wrap=False`` は折り返さず、左右の余白も取らない．矢印ラベルのように
+        **短くて折れては困る**文字に使う——枠に収まらないと単語の途中で割れて
+        読めなくなる（Issue #111）．はみ出す先は box の上の何も無い場所なので害が無い．
+        """
         tb = slide.shapes.add_textbox(Emu(l), Emu(t), Emu(w), Emu(h))
         tf = tb.text_frame
-        tf.word_wrap = True
+        tf.word_wrap = wrap
+        if not wrap:
+            tf.margin_left = tf.margin_right = 0
         if anchor is not None:
             tf.vertical_anchor = anchor
         pa = tf.paragraphs[0]
@@ -916,10 +923,18 @@ class Renderer:
         for arrow in plan.arrows:
             self.block_arrow(slide, arrow.x1, arrow.y1, arrow.x2, arrow.y2,
                              thick)
+        # 隣り合わないノードを結ぶ線は**細い矢印**で引く（Issue #109）．
+        # 上の塗り矢印はすき間を埋めるための形なので、離れた 2 点を結ぶと
+        # box に食い込む．
+        for ln in plan.lines:
+            self.line(slide, ln.x1, ln.y1, ln.x2, ln.y2,
+                      width_pt=1.5, dashed=ln.dashed, arrow=True)
         for lab in plan.labels:
+            # 矢印ラベルは**折り返さない**．短い語なので、折れると単語の途中で
+            # 割れて読めなくなる（"NAMEPREP" が "NAM / EPRE / P" になっていた）．
             r = lab.rect
             self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
-                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER)
+                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER, wrap=False)
         for cap in plan.captions:
             # 図に付くのは caption だけ（note_top / note_bottom は地の文なので
             # 本文プレースホルダ側で描く——plan にも入っていない）．
