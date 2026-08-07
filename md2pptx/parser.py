@@ -22,13 +22,14 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 
 from .ir import (
     CONTENT_LAYOUT, SECTION_LAYOUT, TITLE_LAYOUT, Align, Block, Crop, Deck,
-    Arrow, Flow, Image, Length, Line, Slide, Span, Table, TitleSlide,
+    ARROW_DIRECTIONS, Arrow, ArrowDirection, Flow, Image, Length, Line, Slide,
+    Span, Table, TitleSlide,
 )
 from .colors import parse_color
 from .flow import parse_flow as _parse_flow
@@ -47,10 +48,6 @@ CIRCLED_DIGITS = "".join(chr(c) for c in range(0x2460, 0x2474))
 
 # 矢印（結論・補足行の目印）．no_bullet 相当の plain 段落になる．
 ARROW = "→"
-
-# **その字だけの行**を大きな下向き矢印にする（§5.15）．横向きを入れないのは、
-# カラム間の矢印が `@col: arrow` の仕事だから——同じことを 2 通りで書けるようにしない．
-DOWN_ARROWS = ("↓", "⇓")
 
 # 行頭マーカーの正規表現（インデント除去後の文字列に対して評価する）．
 _RE_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
@@ -491,16 +488,6 @@ def _parse_body(body: str, body_offset: int = 0,
             i += 1
             continue
 
-        # --- 矢印 1 文字だけの行 → 大きな下向き矢印（§5.15）----
-        # **矢印のほかに文字が無い行**だけを図形にする．"→ 結論" は従来どおり
-        # 地の文（行頭記号なし）で，既存の書き方とぶつからない．
-        if stripped in DOWN_ARROWS:
-            s = ensure_slide()
-            target = s.columns[-1] if s.columns else s.blocks
-            target.append(Arrow())
-            i += 1
-            continue
-
         # --- 段階の区切り（アニメーションの代替）→ 段を1つ刻む（§5.11）----
         if _RE_STEP.match(stripped):
             s = ensure_slide()
@@ -536,7 +523,9 @@ def _parse_body(body: str, body_offset: int = 0,
                 raise ValueError(
                     f"unclosed code fence at line {lineno}: "
                     f"{stripped!r} (add a closing ```)")
-            if info == "flow":
+            if info == "arrow":
+                add_block(_parse_arrow_block("\n".join(buf)))
+            elif info == "flow":
                 add_block(_parse_flow("\n".join(buf)))
             elif info == "seq":
                 add_block(_parse_seq("\n".join(buf)))
@@ -871,6 +860,42 @@ def _parse_image_block(text: str) -> Image:
         raise ValueError("image block requires 'src:'")
     _validate_image(img)
     return img
+
+
+def _parse_arrow_block(text: str) -> Arrow:
+    """``` ```arrow ``` ブロックを Arrow へ解釈する（§5.15）．
+
+    受けるキーは ``direction:`` だけ．**必須**——向きの無い矢印は描きようが無い．
+    知らないキー・知らない向きはタイポとみなしてエラーで止める（他のフェンスと同じ）．
+
+    同じキーを 2 回書いたら**後に書いたほうが残る**．``` ```image ``` と同じ扱いで、
+    フェンスの中のキーはどれもそう動く（ここだけエラーにすると規則が二重になる）．
+    """
+    direction: str | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if ":" not in line:
+            raise ValueError(
+                f"arrow block: expected 'direction: …', got {line!r}")
+        k, v = line.split(":", 1)
+        k, v = k.strip().lower(), v.strip().lower()
+        if k != "direction":
+            raise ValueError(
+                f"arrow block: unknown key {k!r} (only 'direction')")
+        if v not in ARROW_DIRECTIONS:
+            raise ValueError(
+                f"arrow block: unknown direction {v!r} "
+                f"({' | '.join(ARROW_DIRECTIONS)})")
+        direction = v
+    if direction is None:
+        raise ValueError(
+            "arrow block requires 'direction:' "
+            f"({' | '.join(ARROW_DIRECTIONS)})")
+    # direction は上で ARROW_DIRECTIONS に含まれることを確かめてあるが、
+    # mypy は str から Literal への絞り込みを追えない．
+    return Arrow(direction=cast(ArrowDirection, direction))
 
 
 def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:

@@ -392,19 +392,26 @@ class Image:
     overflow: bool | None = None
 
 
+ArrowDirection = Literal["down", "up", "right", "left", "updown", "leftright"]
+
+# 実行時の検証用（parser がタイポを止めるのに使う）．型注釈と別に並べると必ずずれる．
+ARROW_DIRECTIONS: tuple[str, ...] = get_args(ArrowDirection)
+
+
 @dataclass
 class Arrow:
-    """本文の流れを示す大きな矢印（``↓`` だけの行．DESIGN.md §5.15）．
+    """本文の流れを示す大きな矢印（``` ```arrow ``` フェンス．DESIGN.md §5.15）．
 
     **オブジェクトブロックにしてある**——地の文として段落位置を見積もるより，
     帯（``_stack_objects``）に座標を決めさせるほうが確実で，
     導入文と結論文の間に置くという使い方がそのまま表せる．
 
     Attributes:
-        direction: 向き．いまは下向きだけ（横向きはカラム区切りの仕事）．
+        direction: 向き．``down`` / ``up`` / ``right`` / ``left`` /
+            ``updown`` / ``leftright``．
     """
 
-    direction: Literal["down"] = "down"
+    direction: ArrowDirection = "down"
 
 
 # 帯（中央領域）へ座標配置するブロック．地の文（Line）と違い，本文プレースホルダ
