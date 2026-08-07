@@ -147,9 +147,9 @@ note(bottom): → 下の注記
 結論文
 """
     prs = _build(tmp_path, src)
-    texts = [t for t in _texts(prs.slides[-1])
-             if t in ("導入文", "上の注記", "→ 下の注記", "結論文")]
-    assert texts == ["導入文", "上の注記", "→ 下の注記", "結論文"]
+    # 絞り込まずに全段落と突き合わせる。帯を埋める空段落は _paragraphs が
+    # 落としているので、残るのは地の文だけ。
+    assert _texts(prs.slides[-1]) == ["導入文", "上の注記", "→ 下の注記", "結論文"]
 
 
 # ------------------------------------------------------- 従来の挙動
@@ -166,6 +166,9 @@ def test_arrow_note_has_no_bullet(tmp_path, src):
             continue
         for p in sh.text_frame.paragraphs:
             if p.text == "→ 結論":
+                # python-pptx に「箇条書き記号の有無」の公開 API は無い
+                # （ParagraphFormat に bullet が無く、buNone は段落プロパティの
+                # XML 要素）。tests/test_layout_primitives.py と同じく XML を見る。
                 assert "buNone" in p._p.xml
                 return
     pytest.fail("→ の note が見つからない")
