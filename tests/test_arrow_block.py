@@ -177,3 +177,20 @@ def test_a_repeated_key_takes_the_last_value():
     arrow, = [b for b in _blocks(
         "```arrow\ndirection: down\ndirection: up\n```") if isinstance(b, Arrow)]
     assert arrow.direction == "up"
+
+
+def test_two_arrows_stay_readable(tmp_path):
+    """帯を分け合っても、矢印が正方形（＝向きの読めない形）にならない．
+
+    #139 で長手の比率を落としたとき、2 つ置いた版が 0.89×0.89cm になり
+    ``updown`` が菱形に見えていた（Issue #141）。
+    """
+    src = (_FM + "### x\n\n- A\n  - a\n\n" + _fence("updown") + "\n\n- B\n  - b\n\n"
+           + _fence("down") + "\n\n→ C\n")
+    prs = _build(tmp_path, src)
+    slide = prs.slides[-1]
+    # ここで置くのは**縦向きだけ**なので「高さ＞幅」で見る．横向きを足すなら
+    # 向きごとに条件を分けること（長手がどちらかは render が決める）．
+    for kind in (MSO_SHAPE.UP_DOWN_ARROW, MSO_SHAPE.DOWN_ARROW):
+        arrow, = _shapes(slide, kind)
+        assert arrow.height > arrow.width * 1.2, f"{kind} が正方形に近い"
