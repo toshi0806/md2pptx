@@ -6,10 +6,11 @@
 小さく見積もると**図が地の文に重なる**。cn2026-01 p.17 で 0.27cm 足りず、
 矢印が4行目に食い込んでいた。
 
-取りこぼしは2つ。
+取りこぼしは3つ。
 
 1. テーマの**段落前アキ**（`spcBef`）を数えていない
 2. どの行も lvl1 のサイズで数えている（実際はレベルごとに違う）
+3. `@autofit` の縮小を見ていない（描かれる字は縮むのに帯は縮まない前提だった）
 """
 from __future__ import annotations
 
@@ -81,14 +82,20 @@ def _arrow_top(prs):
 
 
 def _text_bottom(prs, sizes=(3000, 2600, 2200), spc_pct=0):
-    """地の文4段落が実際に占める高さの下端（EMU）を、OOXML の規則で数える．"""
+    """地の文4段落が実際に占める高さの下端（EMU）を、OOXML の規則で数える．
+
+    ここは `render._para_height` を**呼ばない**——同じ関数で答え合わせをしても
+    何も確かめたことにならない。行送り 1.32 と `spcBef` の規則から独立に数える。
+    pt のまま足してから最後に 1 度だけ EMU へ直すのは、段落ごとに丸めると
+    `_para_height` 側との差が積み上がるため。
+    """
     slide = prs.slides[-1]
     body = _body(slide)
-    y = body.top + body.text_frame.margin_top
+    pt = 0.0
     for lvl in (0, 1, 1, 1):
-        pt = sizes[lvl] / 100.0
-        y += Pt(pt * 1.32) + Pt(pt * spc_pct / 100000.0)
-    return y
+        sz = sizes[lvl] / 100.0
+        pt += sz * 1.32 + sz * spc_pct / 100000.0
+    return body.top + body.text_frame.margin_top + Pt(pt)
 
 
 # ---------------------------------------------------------------- spcBef

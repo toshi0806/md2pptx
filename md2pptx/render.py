@@ -29,7 +29,7 @@ import math
 import os
 import struct
 import sys
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
 from pptx import Presentation
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
@@ -133,6 +133,18 @@ def _read_image_size(path: str) -> tuple[int, int]:
     raise ValueError(f"cannot read image dimensions (png/jpeg only): {path}")
 
 
+class SpaceBefore(NamedTuple):
+    """段落前のアキ 1 つぶん（``a:spcBef``）．
+
+    OOXML は同じ「アキ」を 2 通りで書く——``spcPct`` は**フォントサイズに対する
+    割合**、``spcPts`` は絶対値（pt）．読んだ場所ではサイズが分からないので、
+    どちらなのかを持ったまま返し、pt に直すのは ``Renderer._para_height``．
+    """
+
+    value: float
+    percent: bool
+
+
 class Renderer:
     """IR を pptx へ描画するレンダラ．
 
@@ -197,7 +209,7 @@ class Renderer:
         # マスターの txStyles 由来レベル別サイズ（pt）のキャッシュ（style 名 → 一覧）．
         self._master_levels: dict[str, list[float]] = {}
         self._indent_cache: list[int] | None = None
-        self._spc_cache: list[float] | None = None
+        self._spc_cache: list[SpaceBefore] | None = None
 
         # レイアウト解決．title=0 / content=1 / section=2．
         layouts = self.prs.slide_layouts
@@ -376,25 +388,29 @@ class Renderer:
         self._indent_cache = levels
         return levels
 
-    def _body_space_before(self) -> list[float]:
-        """マスター本文スタイルのレベル別の段落前アキ（pt．lvl1 始まり）．
+    def _body_space_before(self) -> list[SpaceBefore]:
+        """マスター本文スタイルのレベル別の段落前アキ（lvl1 始まり）．
 
         **帯の高さはここを数えないと足りない**（Issue #145）．cn2026-theme は
         全レベルに 20% を持ち、30pt の段落なら 0.21cm、4段落で 0.85cm ずれる．
 
-        ``spcPct``（フォントサイズに対する％．千分率）と ``spcPts``（絶対値．
-        1/100 pt）の両方を受ける．``spcPct`` は**その場ではサイズが分からない**ので、
-        pt ではなく倍率として返し、呼び出し側がサイズを掛ける——負の値は
-        「％である」印にしている（OOXML に負のアキは無い）．
+        ``spcPct``（フォントサイズに対する％）は**その場では pt に直せない**ので、
+        ``SpaceBefore`` の ``percent`` を立てて返し、サイズを掛けるのは
+        ``_para_height`` に任せる．``spcPts``（絶対値）はそのまま pt．
+
+        アキを書いていないレベルは**直前のレベルの値を引き継ぐ**．テーマは
+        上位レベルだけ書いて下位を省くことがあり、そこを 0 と読むと深い階層の
+        段落だけ高さが足りなくなる．取得に失敗したら空リスト——呼び出し側が
+        0 を当てる（アキを数えない従来の見積もりに戻るだけ）．
         """
         if self._spc_cache is not None:
             return self._spc_cache
-        levels: list[float] = []
+        levels: list[SpaceBefore] = []
         try:
             master = self.prs.slide_masters[0]
             root = master.element.find(
                 qn("p:txStyles") + "/" + qn("p:bodyStyle"))
-            last = 0.0
+            last = SpaceBefore(0.0, False)
             if root is not None:
                 for lvl in range(1, 10):
                     el = root.find(qn("a:lvl%dpPr" % lvl))
@@ -403,12 +419,16 @@ class Renderer:
                         pct = spc.find(qn("a:spcPct"))
                         pts = spc.find(qn("a:spcPts"))
                         if pct is not None and pct.get("val"):
-                            last = -int(pct.get("val")) / 100000.0
+                            last = SpaceBefore(
+                                int(pct.get("val")) / 100000.0, True)
                         elif pts is not None and pts.get("val"):
-                            last = int(pts.get("val")) / 100.0
+                            last = SpaceBefore(int(pts.get("val")) / 100.0,
+                                               False)
                         else:
-                            last = 0.0
+                            last = SpaceBefore(0.0, False)
                     levels.append(last)
+        # OOXML の探りは軒並みこの形（_master_style_levels / _layout_level_sizes
+        # と同じ）．テーマの作りは千差万別で、読めなければ既定へ落ちれば済む．
         except Exception:
             levels = []
         self._spc_cache = levels
@@ -421,8 +441,8 @@ class Renderer:
         足さないと帯が上へずれ、図が地の文に食い込む（Issue #145）．
         """
         spc = self._body_space_before()
-        raw = spc[min(level, len(spc) - 1)] if spc else 0.0
-        before = -raw * size_pt if raw < 0 else raw      # 負＝％
+        raw = spc[min(level, len(spc) - 1)] if spc else SpaceBefore(0.0, False)
+        before = raw.value * size_pt if raw.percent else raw.value
         return int(Pt(size_pt * 1.32 + before))
 
     def _body_font_levels(self) -> list[float]:
