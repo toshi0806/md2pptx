@@ -40,6 +40,9 @@ def _paragraphs(slide):
     note は本文へ流れる地の文なので、見に行く先は本文プレースホルダ 1 つに絞る。
     スライド上の全シェイプを舐めると、タイトルや図の中のラベルが混ざるうえ、
     並び順が ``slide.shapes``（XML の順序）に左右されて順序検証の意味が薄れる。
+
+    ここで使う原稿はどれも単一カラムなので、タイトル以外のプレースホルダは
+    本文の 1 つだけ（多カラムなら最初のカラムを返す）。
     """
     for sh in slide.shapes:
         if not sh.has_text_frame or sh == slide.shapes.title:
@@ -173,6 +176,11 @@ def test_marker_only_note_makes_no_paragraph(tmp_path, src):
     """段落にならない note は**行を作らない**（本文行と同じ）．
 
     空段落を足すと地の文が 1 行ぶん増え、帯が詰まって図と結論文が近づく。
+
+    使う値は ``①``。実測すると ``parse_content_line`` が None を返すのは
+    **丸数字だけの行**と ``{+1}`` のようなサイズトークンだけの行の 2 つで、
+    紛らわしい近縁の書き方は**どれも Line になる**——``1.`` は続く空白が無いので
+    採番と見なされず本文 "1." に、``-`` は意図的な空段落（Issue #82）になる。
     """
     prs = _build(tmp_path, src.format(top="上", bottom="①"))
     texts = _texts(prs.slides[-1])
