@@ -909,22 +909,31 @@ def _parse_content_line(raw: str) -> Line | None:
         delta, text = _split_size(s[2:].strip())
         return _mk_bullet(text, delta)
 
+    # 採番行は**書かれていた番号を捨てない**（Issue #107）．render がリストの
+    # 先頭の行だけ開始番号として使う——PowerPoint の自動採番はプレースホルダごとに
+    # 1 から数え直すので，開始番号を渡せないと 2 カラムに割った採番リストの
+    # 右カラムが 1. に戻る．先頭だけ効かせるのは CommonMark と同じ規則で，
+    # "1. 1. 1." と書けば 1・2・3 になる従来の書き方もそのまま動く．
+
     # 連番："1. 2. 3." → arabicPeriod
     m = _RE_ORDERED.match(s)
     if m:
         delta, text = _split_size(m.group(2).strip())
-        return _mk(text, kind="autonum", num_style="arabicPeriod", size_delta=delta)
+        return _mk(text, kind="autonum", num_style="arabicPeriod",
+                   num_start=int(m.group(1)), size_delta=delta)
 
     # 丸括弧："(1) (2)" → arabicParenBoth（"(1)" 表記を忠実に再現）
     m = _RE_PAREN.match(s)
     if m:
         delta, text = _split_size(m.group(2).strip())
-        return _mk(text, kind="autonum", num_style="arabicParenBoth", size_delta=delta)
+        return _mk(text, kind="autonum", num_style="arabicParenBoth",
+                   num_start=int(m.group(1)), size_delta=delta)
 
     # 丸数字："①②③ …" → circleNumDbPlain（番号文字は除去）
     if s[0] in CIRCLED_DIGITS:
         delta, text = _split_size(s[1:].lstrip())
-        return _mk(text, kind="autonum", num_style="circleNumDbPlain", size_delta=delta)
+        return _mk(text, kind="autonum", num_style="circleNumDbPlain",
+                   num_start=CIRCLED_DIGITS.index(s[0]) + 1, size_delta=delta)
 
     # 矢印："→ …" → 行頭記号なし（no_bullet 相当）．"→" は本文に残す
     # （結論・補足行の視覚的な導線として表示する）．トークンは "→" の後ろに置く．
