@@ -30,7 +30,7 @@ from md2pptx import render
 
 
 def _theme(tmp_path, spc_pct=None, spc_pts=None, size=3000):
-    tmp_path.mkdir(parents=True, exist_ok=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)   # サブディレクトリを渡すため
     prs = Presentation()
     body = prs.slide_masters[0].element.find(
         qn("p:txStyles") + "/" + qn("p:bodyStyle"))
@@ -66,7 +66,7 @@ def _pt(emu):
 
 @pytest.mark.parametrize("size", [30.0, 26.0, 22.0, 18.0])
 def test_a_line_is_1_20_times_the_font(tmp_path, size):
-    r = _r(tmp_path)
+    r = _r(tmp_path / str(size))
     assert _pt(r._line_height(size)) == pytest.approx(size * 1.20, abs=0.05)
 
 

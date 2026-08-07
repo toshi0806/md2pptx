@@ -521,10 +521,10 @@ class Renderer:
     # （枠が段落の下半分から次の項目へ掛かっていた）．
     _LINE = 1.20
 
-    @staticmethod
-    def _line_height(size_pt: float) -> int:
+    @classmethod
+    def _line_height(cls, size_pt: float) -> int:
         """文字 1 行ぶんの高さ（EMU）．"""
-        return int(Pt(size_pt * Renderer._LINE))
+        return int(Pt(size_pt * cls._LINE))
 
     def _space_before(self, level: int, size_pt: float) -> int:
         """そのレベルの段落前アキ（EMU）．
@@ -2166,9 +2166,8 @@ class Renderer:
         # 短手には下限（0.35in）を置くが、**長手の 0.8 倍を超えさせない**——
         # 帯が薄いと下限のほうが勝って正方形に近づき、向きが読めなくなる
         # （Issue #141 と同じ症状が、下限の側から出る）．
-        short = min(int(across * 0.9),
-                    max(Inches(0.35), int(long_ * 0.75)),
-                    int(long_ * 0.8))
+        floor = min(max(Inches(0.35), int(long_ * 0.75)), int(long_ * 0.8))
+        short = min(int(across * 0.9), floor)
         w, h = (long_, short) if horizontal else (short, long_)
         # 明示した大きさは**上限を超えてよい**——書いた人がそう決めたということ
         # （層をまたぐ 1.5×7.6cm の矢印は自動では書けない．Issue #143）．
