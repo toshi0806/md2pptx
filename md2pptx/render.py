@@ -439,6 +439,8 @@ class Renderer:
 
         行送りの 1.32 は従来どおり保守的な値．そこへ ``spcBef`` を足す——
         足さないと帯が上へずれ、図が地の文に食い込む（Issue #145）．
+
+        ``level`` は 0 始まり（``Line.level`` と同じ）．``before`` は pt．
         """
         # level は 0 始まり（``Line.level``）、リストは lvl1 始まり——先頭が level 0
         # に当たるので添字はそのまま。テーマが書いていない深さは末尾で頭打ち。
@@ -1733,6 +1735,9 @@ class Renderer:
 
     def _autofit_scale(self, directives: dict[str, Any]) -> float | None:
         """@autofit ディレクティブを縮小率へ解釈する（不正値は警告して None）．
+
+        返すのは**％の数値そのもの**（``@autofit: 90`` → ``90.0``）で、比ではない．
+        ``fit_body`` の ``scale`` がそのまま％を取るため——比へ直すのは使う側．
 
         0 以下は受けない——文字が消えるか裏返るかで、どちらも書き手の意図では
         ありえない．ここで弾いておかないと帯の計算（``shrink``）まで巻き込む．

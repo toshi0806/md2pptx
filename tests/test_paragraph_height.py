@@ -34,7 +34,9 @@ def _theme(tmp_path, spc_pct=None, spc_pts=None, sizes=(3000, 2600, 2200)):
         qn("p:txStyles") + "/" + qn("p:bodyStyle"))
     for lvl, sz in enumerate(sizes, start=1):
         el = body.find(qn(f"a:lvl{lvl}pPr"))
-        assert el is not None
+        assert el is not None, (
+            f"python-pptx の既定テーマに lvl{lvl}pPr が無い"
+            "（このヘルパーの前提が崩れている．テスト本体の失敗ではない）")
         for tag in ("a:spcBef", "a:defRPr"):
             old = el.find(qn(tag))
             if old is not None:
@@ -92,7 +94,7 @@ def _text_bottom(prs, sizes=(3000, 2600, 2200), spc_pct=0):
     slide = prs.slides[-1]
     body = _body(slide)
     pt = 0.0
-    for lvl in (0, 1, 1, 1):
+    for lvl in (0, 1, 1, 1):        # _SRC の A(lvl0) と a1/a2/a3(lvl1)
         sz = sizes[lvl] / 100.0        # sz 属性は 1/100 pt
         # spcPct は千分率の％（20000 = 20%）なので、割合にするには 100000 で割る
         pt += sz * 1.32 + sz * spc_pct / 100000.0
