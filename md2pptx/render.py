@@ -56,9 +56,10 @@ from pptx.text.text import TextFrame
 from .colors import parse_color
 from .ir import (
     TITLE_LAYOUT, Block, Crop, Deck, Flow, Image, Length, Line, is_object_block,
-    ObjectBlock, Slide, Table, TitleSlide,
+    ObjectBlock, Seq, Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
+from .seq import plan_seq
 from . import workdir
 
 if TYPE_CHECKING:
@@ -1121,6 +1122,46 @@ class Renderer:
             return length.value / 100.0 * base_emu
         return float(length.value)
 
+    def render_seq(self, slide: PptxSlide, seq: Seq, left: int, top: int,
+                   width: int, height: int) -> None:
+        """シーケンス図（ラダー図）を矩形領域へ描く（Issue #110）．
+
+        座標は ``plan_seq`` が EMU で出し終えているので、ここは図形を置くだけ．
+        ライフラインは**矢尻の無い縦線**、メッセージは**矢尻付きの横線**で、
+        描き分けは ``PlacedLine`` と ``PlacedArrow`` の型がそのまま指示になる．
+        """
+        plan = plan_seq(seq, left, top, width, height)
+        if not plan.heads:
+            return
+        bsz = self._body_font_size()
+        for i, head in enumerate(plan.heads):
+            # 頭は**塗り箱ではなく折り返さない文字**にする．box() は枠の高さを
+            # 固定して文字を折るので、「クライアント」のような長い名前が
+            # 縦に潰れて読めなくなる（実 PowerPoint で確認）．
+            r = head.rect
+            self.note(slide, r.left, r.top, r.width, r.height, head.text, bsz,
+                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER,
+                      anchor=MSO_ANCHOR.MIDDLE, wrap=False)
+        for ln in plan.lines:
+            # ライフラインは細く目立たせない——主役は矢印のほう．
+            self.line(slide, ln.x1, ln.y1, ln.x2, ln.y2,
+                      width_pt=1.0, dashed=ln.dashed)
+        for ar in plan.arrows:
+            self.line(slide, ar.x1, ar.y1, ar.x2, ar.y2,
+                      width_pt=1.75, arrow=True)
+        for lab in plan.labels:
+            r = lab.rect
+            self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
+                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER, wrap=False)
+        for nt in plan.notes:
+            r = nt.rect
+            self.note(slide, r.left, r.top, r.width, r.height, nt.text, bsz,
+                      tc=self.TX, align=PP_ALIGN.LEFT, wrap=False)
+        for cap in plan.captions:
+            r = cap.rect
+            self.note(slide, r.left, r.top, r.width, r.height, cap.text, bsz,
+                      tc=self.TX, align=PP_ALIGN.CENTER)
+
     def render_image(self, slide: PptxSlide, img: Image, left: int, top: int,
                      width: int, seg_h: int, overflow: bool | None = None,
                      has_prose_after: bool = False) -> Picture:
@@ -1703,9 +1744,12 @@ class Renderer:
         return Line(text=t, kind="bullet")
 
     def _obj_weight(self, obj: ObjectBlock) -> int:
-        """オブジェクト（Table / Flow / Image）の縦方向の重み（高さ配分用）．"""
+        """オブジェクト（Table / Flow / Seq / Image）の縦方向の重み（高さ配分用）．"""
         if isinstance(obj, Flow):
             return max(4, len(obj.nodes) + 2)
+        if isinstance(obj, Seq):
+            # ラダー図は**やりとりの本数**で背が決まる（横幅は人数で決まる）．
+            return max(4, len(obj.messages) + 2)
         if isinstance(obj, Image):
             # 画像は帯を広めに確保（キャプションぶんを少し足す）．細かな大きさは
             # width/height でセグメント内に調整する．
@@ -1732,6 +1776,8 @@ class Renderer:
             seg_h = int(avail * w / total)
             if isinstance(obj, Flow):
                 self.render_flow(slide, obj, left, y, width, seg_h)
+            elif isinstance(obj, Seq):
+                self.render_seq(slide, obj, left, y, width, seg_h)
             elif isinstance(obj, Image):
                 eff = obj.overflow if obj.overflow is not None else slide_overflow
                 self.render_image(slide, obj, left, y, width, seg_h,

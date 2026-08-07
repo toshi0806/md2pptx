@@ -219,6 +219,60 @@ class Flow:
 
 
 @dataclass
+class SeqMessage:
+    """シーケンス図の1本の矢印（``A -> B: ラベル`` 由来．DESIGN.md §5.14）．
+
+    Attributes:
+        src: 始点ライフラインの index（``Seq.lifelines`` 内）．
+        dst: 終点ライフラインの index．
+        label: 矢印に添える文字．無ければ None．
+    """
+
+    src: int = 0
+    dst: int = 0
+    label: str | None = None
+
+
+@dataclass
+class SeqNote:
+    """シーケンス図の中の注記（``note: …`` 由来）．
+
+    Attributes:
+        text: 注記の文字．
+        after: **何本目の矢印の後ろか**（0 なら最初の矢印より前）．
+            時間軸上の位置を「本数」で持つ——座標は plan_seq が決めるので、
+            IR が高さを知る必要はない．
+    """
+
+    text: str = ""
+    after: int = 0
+
+
+@dataclass
+class Seq:
+    """シーケンス図ブロック（```seq フェンス由来．DESIGN.md §5.14）．
+
+    時間軸を持つので flow の格子（Issue #109）では表現できない．
+    プロトコルの往復（TCP handshake・HTTP・SMTP など）がこれに当たる．
+
+    Attributes:
+        lifelines: 登場人物の名前（左から右の並び順）．
+        messages: やりとり（書いた順＝上から下の時間順）．
+        notes: 図の中の注記．
+        caption: 図下キャプション．無ければ None．
+        note_top: 図の上に置く注記（地の文）．無ければ None．
+        note_bottom: 図の下に置く注記（地の文）．無ければ None．
+    """
+
+    lifelines: list[str] = field(default_factory=list)
+    messages: list[SeqMessage] = field(default_factory=list)
+    notes: list[SeqNote] = field(default_factory=list)
+    caption: str | None = None
+    note_top: str | None = None
+    note_bottom: str | None = None
+
+
+@dataclass
 class Length:
     """埋め込みサイズの 1 次元（画像の width / height）．
 
@@ -284,9 +338,9 @@ class Image:
 
 
 # 帯（中央領域）へ座標配置するブロック．地の文（Line）と違い，本文プレースホルダ
-# ではなく矩形に直接置かれる．render の _stack_objects / _obj_weight はこの 3 種
-# だけを扱う（Line を渡すと属性が無く落ちる）．
-ObjectBlock = Table | Flow | Image
+# ではなく矩形に直接置かれる．render の _stack_objects / _obj_weight はこれらを
+# 扱う（Line を渡すと属性が無く落ちる）．
+ObjectBlock = Table | Flow | Image | Seq
 
 # 実行時の判定用（``isinstance`` に渡せる形）．**ObjectBlock を増やしたら
 # ここだけ直せばよい**——render は 5 か所でこの判定をするので，型注釈と別に

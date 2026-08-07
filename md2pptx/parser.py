@@ -32,6 +32,7 @@ from .ir import (
 )
 from .colors import parse_color
 from .flow import parse_flow as _parse_flow
+from .seq import parse_seq as _parse_seq
 
 
 # ---------------------------------------------------------------- 定数
@@ -493,6 +494,8 @@ def _parse_body(body: str, body_offset: int = 0,
                     f"{stripped!r} (add a closing ```)")
             if info == "flow":
                 add_block(_parse_flow("\n".join(buf)))
+            elif info == "seq":
+                add_block(_parse_seq("\n".join(buf)))
             elif info == "image":
                 add_block(_parse_image_block("\n".join(buf)))
             elif info in ("note", "notes"):
