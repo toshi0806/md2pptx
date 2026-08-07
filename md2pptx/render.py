@@ -196,6 +196,7 @@ class Renderer:
         }
         # マスターの txStyles 由来レベル別サイズ（pt）のキャッシュ（style 名 → 一覧）．
         self._master_levels: dict[str, list[float]] = {}
+        self._indent_cache: list[int] | None = None
 
         # レイアウト解決．title=0 / content=1 / section=2．
         layouts = self.prs.slide_layouts
@@ -342,6 +343,31 @@ class Renderer:
         except Exception:
             pass
         self._master_levels[style] = levels
+        return levels
+
+    def _body_indents(self) -> list[int]:
+        """マスター本文スタイルのレベル別の左インデント（EMU．lvl1 始まり）．
+
+        ``{box}`` の枠を文字の始まりに合わせるために要る（Issue #133）．
+        取れなければ空リストを返し，呼び出し側が 0 を当てる——枠が少し左へ出るだけで、
+        位置の見積もりそのものは壊れない．
+        """
+        if self._indent_cache is not None:
+            return self._indent_cache
+        levels: list[int] = []
+        try:
+            master = self.prs.slide_masters[0]
+            root = master.element.find(
+                qn("p:txStyles") + "/" + qn("p:bodyStyle"))
+            if root is not None:
+                for lvl in range(1, 10):
+                    el = root.find(qn("a:lvl%dpPr" % lvl))
+                    if el is None:
+                        break
+                    levels.append(int(el.get("marL") or 0))
+        except Exception:
+            levels = []
+        self._indent_cache = levels
         return levels
 
     def _body_font_levels(self) -> list[float]:
@@ -1352,6 +1378,7 @@ class Renderer:
                 self._fill_lines(tf, line_blocks, default_num_color,
                                  default_size_delta)
                 self._apply_autofit(tf, scale, default_autofit)
+                self.draw_line_boxes(s, body, line_blocks, default_size_delta)
 
         # 表紙レイアウト（テーマの「タイトル スライド」）には番号を付けない．
         # そのレイアウトを選ぶこと自体が「これは表紙」の宣言なので，
@@ -1442,6 +1469,7 @@ class Renderer:
                 tf = ph.text_frame
                 self._fill_lines(tf, lines, default_num_color, default_size_delta)
                 self._apply_autofit(tf, scale, default_autofit)
+                self.draw_line_boxes(slide, ph, lines, default_size_delta)
 
     # ----------------------------------------------------- 描画ユーティリティ
     def _append_lines(self, tf: TextFrame, line_blocks: list[Line], first: bool,
@@ -1507,6 +1535,94 @@ class Renderer:
                 p, blk.seg_deltas, levels[min(blk.level, len(levels) - 1)],
                 [s.segment for s in blk.spans] if blk.spans else None)
         return first
+
+    def draw_line_boxes(self, slide: PptxSlide, ph: SlidePlaceholder,
+                        line_blocks: list[Line],
+                        default_size_delta: int | None = None,
+                        start_para: int = 0,
+                        skip_after: int = 0) -> None:
+        """``{box}`` の付いた段落を枠で囲む（Issue #133）．
+
+        枠は**段落に重ねて描く**——PowerPoint が実際にどこへ行を置いたかは
+        pptx を書く側からは分からないので、``_render_stacked_into`` の帯計算と
+        **同じ見積もり**（枠の上端から「その行のサイズ × 1.32」を積む）で位置を出す．
+        折り返しの行数も ``_text_width_pt`` で見積もり、2 行になる項目を 1 つの枠で囲む．
+
+        ``start_para`` は、この行列がプレースホルダの何段落目から始まるか．
+        ``skip_after`` は途中に挟まる空段落の数（表・図スライドで帯を空ける行）．
+        どちらも呼び出し側が持っている値をそのまま渡す．
+
+        **見積もりなので完全ではない**．``@autofit`` で縮小が掛かる枠や、
+        テーマがレベルごとに行間を変えている枠ではずれうる（SYNTAX.md に明記）．
+        ずれても文字は動かない——枠だけが少し外れる．
+        """
+        if not any(ln.boxed for ln in line_blocks):
+            return
+        tf = ph.text_frame
+        levels = self._frame_font_levels(tf)
+        indents = self._body_indents()
+
+        def size_of(level: int) -> float:
+            return levels[min(level, len(levels) - 1)] if levels else 18.0
+
+        def indent_of(level: int) -> int:
+            if not indents:
+                return 0
+            return indents[min(level, len(indents) - 1)]
+
+        # 枠の内側の余白（プレースホルダの既定）．python-pptx は未設定なら None を
+        # 返さず既定値を返すので、そのまま使える．
+        pad_l = tf.margin_left or 0
+        pad_r = tf.margin_right or 0
+        y = ph.top + (tf.margin_top or 0)
+        # 先行する段落（別の呼び出しで書かれたぶん）と空段落を飛ばす．
+        # 高さは本文標準サイズで数える——帯計算と同じ前提に揃える．
+        std_h = int(Pt(self._body_font_size()) * 1.32)
+        y += (start_para + skip_after) * std_h
+
+        for ln in line_blocks:
+            delta = ln.size_delta if ln.size_delta is not None else default_size_delta
+            sz = self._size_from_delta(size_of(ln.level), delta)
+            line_h = int(Pt(sz) * 1.32)
+            left = ph.left + pad_l + indent_of(ln.level)
+            avail = max(Emu(1), ph.width - pad_l - pad_r - indent_of(ln.level))
+            avail_pt = avail / 12700.0
+            text = (ln.text or "").replace("\v", "")
+            wrapped = max(1, math.ceil(
+                self._text_width_pt(text, sz) / avail_pt)) if avail_pt > 0 else 1
+            if ln.boxed:
+                # 枠は文字幅に合わせる（1 行に収まる短い項目まで枠が伸びると、
+                # 「ここだけ囲んでいる」ことが伝わらない）．左右に少し余白を取る．
+                gap = int(Pt(sz) * 0.35)
+                w = min(avail + gap,
+                        int(self._text_width_pt(text, sz) * 12700) + 2 * gap)
+                self.line_box(slide, left - gap, y, max(w, int(avail * 0.2)),
+                              wrapped * line_h, ln.box_color)
+            y += wrapped * line_h
+
+    def line_box(self, slide: PptxSlide, l: int, t: int, w: int, h: int,
+                 color: str | None = None) -> Shape:
+        """段落を囲む枠（塗りつぶし無しの角丸四角）を描く．
+
+        塗りつぶさないのは、下に文字があるため．色の既定はテーマのアクセント色で、
+        ``{box:blue}`` のように指定があればそちらを使う（語彙は行内装飾と共通）．
+        """
+        shp = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Emu(l), Emu(t), Emu(w), Emu(h))
+        shp.fill.background()
+        if color:
+            kind, value = parse_color(color)
+            if kind == "theme":
+                shp.line.color.theme_color = self._theme_map[value]
+            else:
+                shp.line.color.rgb = RGBColor.from_string(value)
+        else:
+            shp.line.color.theme_color = self.A2
+        shp.line.width = Pt(1.5)
+        shp.shadow.inherit = False
+        # 図形に文字は入れない（文字はプレースホルダ側にある）．
+        shp.text_frame.word_wrap = False
+        return shp
 
     def _fill_lines(self, tf: TextFrame, line_blocks: list[Line],
                     default_num_color: str | None,
@@ -1907,6 +2023,11 @@ class Renderer:
             self._append_lines(tf, prose_after, first, default_num_color,
                                default_size_delta, counters)
             self._apply_autofit(tf, scale, default_autofit)
+            # 枠は導入文と結論文の両方に付けられる．結論文は空段落のぶんだけ
+            # 下から始まるので、その数をそのまま渡す（Issue #133）．
+            self.draw_line_boxes(slide, body, prose_before, default_size_delta)
+            self.draw_line_boxes(slide, body, prose_after, default_size_delta,
+                                 start_para=nb, skip_after=blanks)
 
         # 帯の高さは **band_h ではなく空行数から** 求める（Issue #131）．
         # 結論文が描き始められる位置を決めるのは流し込んだ空行の数であって、

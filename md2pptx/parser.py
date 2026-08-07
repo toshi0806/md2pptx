@@ -69,6 +69,8 @@ _RE_BR = re.compile(r"\s*<br\s*/?>\s*")
 # 相対フォントサイズトークン．マーカー直後・本文直前の "{+1}"/"{-2}"/"{0}"．
 # 符号は省略可（"{2}" は "+2" と同義）．render がテーマ基準で実サイズへ換算する．
 _RE_SIZE = re.compile(r"^\{\s*([+-]?\d+)\s*\}\s*(.*)$")
+_RE_BOX = re.compile(r"^\{\s*box\s*(?::\s*([^}\s]+)\s*)?\}\s*(.*)$",
+                     re.IGNORECASE)
 
 # 整数として解釈するディレクティブキー（正規化後の名前）．
 # body_size はスライド既定の相対フォントサイズ段数（@body-size）．
@@ -916,6 +918,39 @@ def _split_size(content: str) -> tuple[int | None, str]:
     return None, content
 
 
+def _split_tokens(content: str) -> tuple[int | None, bool, str | None, str]:
+    """本文先頭の行レベルトークンを剥がして (段数, 枠, 枠の色, 残りの本文) を返す．
+
+    置き場は 1 か所（行頭マーカーの直後）で、``{+1}`` と ``{box}`` の**どちらが先でも
+    受ける**——書く側に順序を覚えさせる理由が無い。同じトークンを 2 回書いても
+    最後の値が残るだけで、エラーにはしない。
+
+    知らない綴り（``{boxx}``）は**本文として残す**。``{+x}`` が今そうなっているのと
+    同じ扱いで、行頭トークンだけディレクティブ流のエラーにすると規則が二重になる
+    （SYNTAX.md にその旨を書いてある）。
+    """
+    delta: int | None = None
+    boxed = False
+    color: str | None = None
+    while True:
+        m = _RE_SIZE.match(content)
+        if m:
+            delta = int(m.group(1))
+            content = m.group(2).strip()
+            continue
+        m = _RE_BOX.match(content)
+        if m:
+            boxed = True
+            if m.group(1):
+                # 綴りの誤りはここで止める——色名は行内装飾と同じ語彙で、
+                # 黙って既定色に落ちると「指定したのに変わらない」になる．
+                parse_color(m.group(1))
+                color = m.group(1)
+            content = m.group(2).strip()
+            continue
+        return delta, boxed, color, content
+
+
 def _split_br(text: str) -> tuple[str, list[int | None]]:
     """<br> を行内改行（\\v）へ変換し，各セグメント先頭のサイズトークンを剥がす．
 
@@ -1066,7 +1101,8 @@ def parse_content_line(raw: str) -> Line | None:
                      spans=spans, **kw)
                 if text else None)
 
-    def _mk_bullet(text: str, size_delta: int | None) -> Line:
+    def _mk_bullet(text: str, size_delta: int | None,
+                   boxed: bool = False, box_color: str | None = None) -> Line:
         """箇条書き行を Line にする．**本文が空でも段落を作る**（Issue #82）．
 
         マーカーだけの行は「1 行空ける」指示として使う．表紙の著者欄やセクション扉の
@@ -1080,8 +1116,9 @@ def parse_content_line(raw: str) -> Line | None:
         """
         body, seg_deltas = _split_br(text)
         body, spans = _parse_spans(body)
-        return Line(text=body, level=level, kind="bullet",
-                    size_delta=size_delta, seg_deltas=seg_deltas, spans=spans)
+        return Line(text=body, level=level, kind="bullet", boxed=boxed,
+                    box_color=box_color, size_delta=size_delta,
+                    seg_deltas=seg_deltas, spans=spans)
 
     # マーカーだけの行 → 空行（Issue #82）．**末尾に空白が無い形を必ず拾うこと**
     # ——多くのエディタは保存時に行末空白を除去するので，"- " しか受けないと空行
@@ -1093,8 +1130,8 @@ def parse_content_line(raw: str) -> Line | None:
 
     # 通常箇条書き："- " / "* "
     if s.startswith("- ") or s.startswith("* "):
-        delta, text = _split_size(s[2:].strip())
-        return _mk_bullet(text, delta)
+        delta, boxed, box_color, text = _split_tokens(s[2:].strip())
+        return _mk_bullet(text, delta, boxed, box_color)
 
     # 採番行は**書かれていた番号を捨てない**（Issue #107）．render がリストの
     # 先頭の行だけ開始番号として使う——PowerPoint の自動採番はプレースホルダごとに
@@ -1105,37 +1142,42 @@ def parse_content_line(raw: str) -> Line | None:
     # 連番："1. 2. 3." → arabicPeriod
     m = _RE_ORDERED.match(s)
     if m:
-        delta, text = _split_size(m.group(2).strip())
+        delta, boxed, box_color, text = _split_tokens(m.group(2).strip())
         return _mk(text, kind="autonum", num_style="arabicPeriod",
-                   num_start=int(m.group(1)), size_delta=delta)
+                   num_start=int(m.group(1)), size_delta=delta, boxed=boxed,
+                   box_color=box_color)
 
     # 丸括弧："(1) (2)" → arabicParenBoth（"(1)" 表記を忠実に再現）
     m = _RE_PAREN.match(s)
     if m:
-        delta, text = _split_size(m.group(2).strip())
+        delta, boxed, box_color, text = _split_tokens(m.group(2).strip())
         return _mk(text, kind="autonum", num_style="arabicParenBoth",
-                   num_start=int(m.group(1)), size_delta=delta)
+                   num_start=int(m.group(1)), size_delta=delta, boxed=boxed,
+                   box_color=box_color)
 
     # 丸数字："①②③ …" → circleNumDbPlain（番号文字は除去）
     if s[0] in CIRCLED_DIGITS:
-        delta, text = _split_size(s[1:].lstrip())
+        delta, boxed, box_color, text = _split_tokens(s[1:].lstrip())
         return _mk(text, kind="autonum", num_style="circleNumDbPlain",
-                   num_start=CIRCLED_DIGITS.index(s[0]) + 1, size_delta=delta)
+                   num_start=CIRCLED_DIGITS.index(s[0]) + 1, size_delta=delta,
+                   boxed=boxed, box_color=box_color)
 
     # 矢印："→ …" → 行頭記号なし（no_bullet 相当）．"→" は本文に残す
     # （結論・補足行の視覚的な導線として表示する）．トークンは "→" の後ろに置く．
     # 他の行種と同様，"→ 本文" へ空白を正規化する（トークン有無で挙動を変えない）．
     if s.startswith(ARROW):
-        delta, rest = _split_size(s[len(ARROW):].lstrip())
+        delta, boxed, box_color, rest = _split_tokens(s[len(ARROW):].lstrip())
         text = f"{ARROW} {rest}" if rest else ARROW
         text, seg_deltas = _split_br(text)
         text, spans = _parse_spans(text)
         return Line(text=text, level=level, kind="plain", size_delta=delta,
-                    seg_deltas=seg_deltas, spans=spans)
+                    seg_deltas=seg_deltas, spans=spans, boxed=boxed,
+                    box_color=box_color)
 
     # 上記以外 → 既定の箇条書き（インデントに応じたレベル）
-    delta, text = _split_size(s)
-    return _mk(text, kind="bullet", size_delta=delta)
+    delta, boxed, box_color, text = _split_tokens(s)
+    return _mk(text, kind="bullet", size_delta=delta, boxed=boxed,
+               box_color=box_color)
 
 
 # ---------------------------------------------------------------- 自己検証
