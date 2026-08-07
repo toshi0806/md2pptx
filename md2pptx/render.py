@@ -1908,8 +1908,28 @@ class Renderer:
                                default_size_delta, counters)
             self._apply_autofit(tf, scale, default_autofit)
 
-        # 結論文との重なりを避けるため帯を少しだけ詰めてオブジェクトを置く．
-        obj_h = max(Inches(0.8), band_h - Pt(8))
+        # 帯の高さは **band_h ではなく空行数から** 求める（Issue #131）．
+        # 結論文が描き始められる位置を決めるのは流し込んだ空行の数であって、
+        # band_h ではない——blanks は int() で切り捨てるので、band_h をそのまま
+        # 使うと最大 1 行ぶん帯のほうが下まで伸び、表が結論文に重なる。
+        # しかも黙って重なる（表は帯高で描かれるので警告の条件に掛からない）。
+        #   結論文の上端 = top + (nb + blanks) * line_h
+        #   帯の上端     = band_top = top + nb * line_h + inset
+        # なので帯に使えるのは blanks * line_h - inset まで．そこから
+        # 従来どおり Pt(8) を余白として引く．
+        _MIN_BAND = Inches(0.8)
+        fits = blanks * line_h - inset - Pt(8)
+        obj_h = max(_MIN_BAND, fits)
+        # 警告するのは**結論文があるときだけ**——下端に何も無ければ、帯が
+        # 最小高まで広がっても重なる相手がいない．
+        if prose_after and fits < _MIN_BAND:
+            # 最小高（0.8in）に張り付くのは、地の文が枠をほぼ埋めて空行が
+            # 1 行しか取れないとき．図を読める大きさに保つため下限は残すが、
+            # その結果として結論文へ食い込む——**黙って重ねない**（Issue #131）．
+            sys.stderr.write(
+                "md2pptx: warning: too much body text for a table/figure "
+                "slide; the band hit its minimum height and may overlap the "
+                "concluding text (shorten the prose or split the slide)\n")
         self._stack_objects(slide, objects, left, band_top, width, obj_h, col_ratios,
                             slide_overflow, has_prose_after=bool(prose_after))
 
