@@ -97,6 +97,19 @@ def test_line_can_be_dashed_and_arrowed(tmp_path):
     assert "tailEnd" in xml
 
 
+def test_the_arrow_head_lands_on_the_end_point(tmp_path):
+    """矢じりが付くのは**終点**（``x2, y2`` 側）．
+
+    OOXML では ``a:headEnd`` が始点、``a:tailEnd`` が終点の装飾。取り違えると
+    矢印が逆を向くが、**線としては正しく引けてしまう**ので気づきにくい
+    （実 LibreOffice で右向きに出ることを目視でも確認した）。
+    """
+    r, slide = _slide(tmp_path)
+    xml = r.line(slide, 0, 0, emu(2), 0, arrow=True)._element.xml
+    assert "tailEnd" in xml
+    assert "headEnd" not in xml
+
+
 def test_a_plain_line_has_neither(tmp_path):
     """既定は実線・矢尻なし（ライフラインはこちら）．"""
     r, slide = _slide(tmp_path)
