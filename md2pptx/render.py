@@ -1929,6 +1929,12 @@ class Renderer:
 
     # ``` ```arrow ``` の向き → OOXML の図形．型注釈（ir.ArrowDirection）と
     # 別に並べているので、**向きを増やしたらここも足す**（テストが先に落ちる）．
+    # 矢じりと軸の比率（OOXML の ``a:avLst``）．**書かないと PowerPoint の既定に
+    # 落ち、両端に矢じりのある形（updown / leftright）は箱いっぱいの菱形になる**．
+    # 値は元の講義スライドと同じ——軸 50%、矢じりは片側 25%・両側なら 20%．
+    _ARROW_ADJ = {"adj1": 50000, "adj2": 25000}
+    _ARROW_ADJ_BOTH = {"adj1": 50000, "adj2": 20000}
+
     _ARROW_SHAPES = {
         "down": MSO_SHAPE.DOWN_ARROW,
         "up": MSO_SHAPE.UP_ARROW,
@@ -1958,16 +1964,55 @@ class Renderer:
         long_ = min(Inches(1.0), max(Inches(0.3), int(along * 0.8)))
         short = min(int(across * 0.9), max(Inches(0.35), int(long_ * 0.75)))
         w, h = (long_, short) if horizontal else (short, long_)
+        # 明示した大きさは**上限を超えてよい**——書いた人がそう決めたということ
+        # （層をまたぐ 1.5×7.6cm の矢印は自動では書けない．Issue #143）．
+        ew = self._resolve_len(arrow.width, width)
+        eh = self._resolve_len(arrow.height, height)
+        if ew is not None:
+            w = int(ew)
+        if eh is not None:
+            h = int(eh)
         x = left + (width - w) // 2
         y = top + (height - h) // 2
         shp = slide.shapes.add_shape(
             shape, Emu(x), Emu(y), Emu(w), Emu(h))
+        both = arrow.direction in ("updown", "leftright")
+        self._set_shape_adj(shp, self._ARROW_ADJ_BOTH if both
+                            else self._ARROW_ADJ)
         shp.fill.solid()
-        shp.fill.fore_color.theme_color = self.GOLD
+        if arrow.color:
+            kind, value = parse_color(arrow.color)
+            if kind == "theme":
+                shp.fill.fore_color.theme_color = self._theme_map[value]
+            else:
+                shp.fill.fore_color.rgb = RGBColor.from_string(value)
+        else:
+            shp.fill.fore_color.theme_color = self.GOLD
         shp.line.fill.background()
         shp.shadow.inherit = False
         shp.text_frame.word_wrap = False
         return shp
+
+    @staticmethod
+    def _set_shape_adj(shp: Shape, adj: dict[str, int]) -> None:
+        """図形の調整値（``a:avLst/a:gd``）を書き込む．
+
+        python-pptx は ``add_shape`` で空の ``avLst`` しか作らず、PowerPoint は
+        そこを既定値で埋める．両端に矢じりのある形はその既定だと**箱いっぱいの
+        菱形**になり、矢印に見えない（Issue #143）．
+        """
+        geom = shp._element.spPr.find(qn("a:prstGeom"))
+        av = geom.find(qn("a:avLst")) if geom is not None else None
+        if av is None:
+            return          # プリセット図形でなければ調整値そのものが無い
+        # **既にある調整値は捨ててから書く**．2 回呼んでも同じ結果になるように
+        # ——同名の ``a:gd`` が並ぶと、どちらが効くかは実装依存になる．
+        for old in list(av.findall(qn("a:gd"))):
+            av.remove(old)
+        for name, val in adj.items():
+            gd = av.makeelement(qn("a:gd"), {"name": name,
+                                             "fmla": f"val {val}"})
+            av.append(gd)
 
     def draw_column_arrow(self, slide: PptxSlide, ncols: int) -> Shape | None:
         """カラムとカラムのすき間に、右向きの大きな矢印を描く（``@col: arrow``）．
@@ -1999,6 +2044,7 @@ class Renderer:
         y = a.top + int(a.height * 0.12)
         shp = slide.shapes.add_shape(
             MSO_SHAPE.RIGHT_ARROW, Emu(x), Emu(y), Emu(w), Emu(h))
+        self._set_shape_adj(shp, self._ARROW_ADJ)
         shp.fill.solid()
         shp.fill.fore_color.theme_color = self.GOLD
         shp.line.fill.background()
