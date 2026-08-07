@@ -596,7 +596,7 @@ def _parse_body(body: str, body_offset: int = 0,
             continue
 
         # --- 本文行 → Line ---------------------------------------
-        line = _parse_content_line(raw)
+        line = parse_content_line(raw)
         if line is not None:
             add_block(line)
         i += 1
@@ -1026,8 +1026,12 @@ def _parse_spans(text: str) -> tuple[str, list[Span]]:
     return "\v".join(plain), (all_spans if decorated else [])
 
 
-def _parse_content_line(raw: str) -> Line | None:
+def parse_content_line(raw: str) -> Line | None:
     """1 行を行頭マーカー規則（DESIGN.md §5.3）に従って Line へ変換する．
+
+    **公開関数**．図の note(top)/note(bottom) を地の文として解釈するため
+    render からも呼ぶ（Issue #129）——本文行と同じ解釈でなければならず、
+    行頭マーカーの判定を二重に持つと必ずずれる．
 
     インデント（半角スペース 2 つ＝1 レベル）でネスト深さを決める．
 

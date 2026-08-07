@@ -59,7 +59,7 @@ from .ir import (
     ObjectBlock, Seq, Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
-from .parser import _parse_content_line
+from .parser import parse_content_line
 from .seq import plan_seq
 from . import workdir
 
@@ -1740,10 +1740,10 @@ class Renderer:
         note(top) / note(bottom) は図の一部ではなく**地の文**なので、解釈は
         本文行と同じでなければならない（Issue #129）．行頭マーカーだけを
         自前で見ていた頃は ``[語]{red}`` が生の文字で出ていた——行内装飾は
-        本文行が通る ``_parse_content_line`` の中で解決される．
+        本文行が通る ``parse_content_line`` の中で解決される．
         """
         t = (text or "").strip()
-        return _parse_content_line(t) or Line(text=t, kind="bullet")
+        return parse_content_line(t) or Line(text=t, kind="bullet")
 
     def _obj_weight(self, obj: ObjectBlock) -> int:
         """オブジェクト（Table / Flow / Seq / Image）の縦方向の重み（高さ配分用）．"""

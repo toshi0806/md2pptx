@@ -35,10 +35,13 @@ def _build(tmp_path, src):
 
 
 def _paragraphs(slide):
-    """スライド上の全テキストフレームの段落を (text, runs) で返す．"""
+    """スライドの**タイトル以外**のテキストフレームの段落を (text, runs) で返す．
+
+    タイトルを外すのは、見出しと同じ文字列を note に書いたときに取り違えないため．
+    """
     out = []
     for sh in slide.shapes:
-        if not sh.has_text_frame:
+        if not sh.has_text_frame or sh == slide.shapes.title:
             continue
         for p in sh.text_frame.paragraphs:
             if p.text.strip():
