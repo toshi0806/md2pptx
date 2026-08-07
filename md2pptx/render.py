@@ -360,11 +360,15 @@ class Renderer:
             root = master.element.find(
                 qn("p:txStyles") + "/" + qn("p:bodyStyle"))
             if root is not None:
+                # レベルが飛んでいても打ち切らない．テーマが lvl2 だけ書かない
+                # ことはありうるので、欠けたレベルは**直前の値で埋める**
+                # （0 に落とすと、そのレベルだけ枠が左へ飛び出す）．
+                last = 0
                 for lvl in range(1, 10):
                     el = root.find(qn("a:lvl%dpPr" % lvl))
-                    if el is None:
-                        break
-                    levels.append(int(el.get("marL") or 0))
+                    if el is not None and el.get("marL") is not None:
+                        last = int(el.get("marL"))
+                    levels.append(last)
         except Exception:
             levels = []
         self._indent_cache = levels
@@ -1539,8 +1543,8 @@ class Renderer:
     def draw_line_boxes(self, slide: PptxSlide, ph: SlidePlaceholder,
                         line_blocks: list[Line],
                         default_size_delta: int | None = None,
-                        start_para: int = 0,
-                        skip_after: int = 0) -> None:
+                        preceding: list[Line] | None = None,
+                        blank_paras: int = 0) -> None:
         """``{box}`` の付いた段落を枠で囲む（Issue #133）．
 
         枠は**段落に重ねて描く**——PowerPoint が実際にどこへ行を置いたかは
@@ -1548,9 +1552,11 @@ class Renderer:
         **同じ見積もり**（枠の上端から「その行のサイズ × 1.32」を積む）で位置を出す．
         折り返しの行数も ``_text_width_pt`` で見積もり、2 行になる項目を 1 つの枠で囲む．
 
-        ``start_para`` は、この行列がプレースホルダの何段落目から始まるか．
-        ``skip_after`` は途中に挟まる空段落の数（表・図スライドで帯を空ける行）．
-        どちらも呼び出し側が持っている値をそのまま渡す．
+        ``preceding`` は同じ枠へ先に書かれた行（表・図スライドの導入文）、
+        ``blank_paras`` はその後ろに挟まる空段落の数（帯を空ける行）．
+        **先行ぶんも行ごとのサイズで積む**——一律に本文標準サイズで数えると、
+        導入文に ``{+1}`` が付いているだけで結論文側の枠がずれる．
+        空段落だけは標準サイズで数える（帯の計算がそう作っているため）．
 
         **見積もりなので完全ではない**．``@autofit`` で縮小が掛かる枠や、
         テーマがレベルごとに行間を変えている枠ではずれうる（SYNTAX.md に明記）．
@@ -1570,33 +1576,43 @@ class Renderer:
                 return 0
             return indents[min(level, len(indents) - 1)]
 
-        # 枠の内側の余白（プレースホルダの既定）．python-pptx は未設定なら None を
-        # 返さず既定値を返すので、そのまま使える．
-        pad_l = tf.margin_left or 0
-        pad_r = tf.margin_right or 0
-        y = ph.top + (tf.margin_top or 0)
-        # 先行する段落（別の呼び出しで書かれたぶん）と空段落を飛ばす．
-        # 高さは本文標準サイズで数える——帯計算と同じ前提に揃える．
-        std_h = int(Pt(self._body_font_size()) * 1.32)
-        y += (start_para + skip_after) * std_h
+        # python-pptx の margin_* は未設定でも既定値（EMU）を返すので、
+        # そのまま使える（None にはならない）．
+        pad_l = tf.margin_left
+        pad_r = tf.margin_right
+        avail_full = max(1, ph.width - pad_l - pad_r)
+
+        def measure(ln: Line) -> tuple[float, int, int]:
+            """(実効サイズ pt, 折り返し行数, 左インデント EMU) を返す．"""
+            d = ln.size_delta if ln.size_delta is not None else default_size_delta
+            sz = self._size_from_delta(size_of(ln.level), d)
+            ind = indent_of(ln.level)
+            avail_pt = max(1.0, (avail_full - ind) / 12700.0)
+            text = (ln.text or "").replace("\v", " ")
+            n = max(1, math.ceil(self._text_width_pt(text, sz) / avail_pt))
+            return sz, n, ind
+
+        y = ph.top + tf.margin_top
+        for ln in preceding or []:
+            sz, n, _ = measure(ln)
+            y += n * int(Pt(sz) * 1.32)
+        # 空段落は標準サイズ（帯の計算がそう作っている）．
+        y += blank_paras * int(Pt(self._body_font_size()) * 1.32)
 
         for ln in line_blocks:
-            delta = ln.size_delta if ln.size_delta is not None else default_size_delta
-            sz = self._size_from_delta(size_of(ln.level), delta)
+            sz, wrapped, ind = measure(ln)
             line_h = int(Pt(sz) * 1.32)
-            left = ph.left + pad_l + indent_of(ln.level)
-            avail = max(Emu(1), ph.width - pad_l - pad_r - indent_of(ln.level))
-            avail_pt = avail / 12700.0
-            text = (ln.text or "").replace("\v", "")
-            wrapped = max(1, math.ceil(
-                self._text_width_pt(text, sz) / avail_pt)) if avail_pt > 0 else 1
             if ln.boxed:
+                avail = avail_full - ind
+                text = (ln.text or "").replace("\v", " ")
                 # 枠は文字幅に合わせる（1 行に収まる短い項目まで枠が伸びると、
                 # 「ここだけ囲んでいる」ことが伝わらない）．左右に少し余白を取る．
                 gap = int(Pt(sz) * 0.35)
-                w = min(avail + gap,
-                        int(self._text_width_pt(text, sz) * 12700) + 2 * gap)
-                self.line_box(slide, left - gap, y, max(w, int(avail * 0.2)),
+                # 左へ食み出しても**スライドの外へは出さない**．
+                bl = max(0, ph.left + pad_l + ind - gap)
+                w = min(int(self._text_width_pt(text, sz) * 12700) + 2 * gap,
+                        ph.left + ph.width - bl)
+                self.line_box(slide, bl, y, max(w, int(avail * 0.2)),
                               wrapped * line_h, ln.box_color)
             y += wrapped * line_h
 
@@ -2027,7 +2043,7 @@ class Renderer:
             # 下から始まるので、その数をそのまま渡す（Issue #133）．
             self.draw_line_boxes(slide, body, prose_before, default_size_delta)
             self.draw_line_boxes(slide, body, prose_after, default_size_delta,
-                                 start_para=nb, skip_after=blanks)
+                                 preceding=prose_before, blank_paras=blanks)
 
         # 帯の高さは **band_h ではなく空行数から** 求める（Issue #131）．
         # 結論文が描き始められる位置を決めるのは流し込んだ空行の数であって、

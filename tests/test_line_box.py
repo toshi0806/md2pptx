@@ -190,3 +190,25 @@ def test_without_a_colour_the_theme_decides(tmp_path):
     box, = _boxes(prs.slides[-1])
     assert box.line.color.type is not None
     assert box.line.color.theme_color is not None
+
+
+# ---------------------------------------------------------------- 端の扱い
+
+def test_the_frame_never_leaves_the_slide(tmp_path):
+    """左へ余白を取っても、スライドの外（負の座標）へは出さない．"""
+    prs = _build(tmp_path, _FM + "### x\n\n- {box} 囲む行\n")
+    box, = _boxes(prs.slides[-1])
+    assert box.left >= 0
+    assert box.left + box.width <= prs.slide_width
+
+
+def test_a_size_token_above_shifts_the_frame(tmp_path):
+    """先行する行が大きいと、その下の枠もそのぶん下がる．
+
+    先行ぶんを一律の本文標準サイズで数えていると、ここがずれる。
+    """
+    plain = _build(tmp_path / "a", _FM + "### x\n\n- 上の行\n- {box} 囲む行\n")
+    big = _build(tmp_path / "b", _FM + "### x\n\n- {+3} 上の行\n- {box} 囲む行\n")
+    a, = _boxes(plain.slides[-1])
+    b, = _boxes(big.slides[-1])
+    assert b.top > a.top
