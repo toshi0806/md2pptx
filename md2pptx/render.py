@@ -32,9 +32,10 @@ import sys
 from typing import TYPE_CHECKING, Any, Callable
 
 from pptx import Presentation
+from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
 from pptx.enum.dml import MSO_THEME_COLOR
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 # python-pptx の Slide は ir.Slide と名前がぶつかる．**外来のほうに印を付ける**
@@ -44,6 +45,7 @@ from pptx.util import Emu, Inches, Pt
 # 注釈にはクラスのほうが要る．
 from pptx.presentation import Presentation as PptxPresentation
 from pptx.shapes.autoshape import Shape
+from pptx.shapes.connector import Connector
 from pptx.shapes.graphfrm import GraphicFrame
 from pptx.shapes.picture import Picture
 from pptx.shapes.placeholder import SlidePlaceholder
@@ -51,8 +53,8 @@ from pptx.slide import Slide as PptxSlide, SlideLayout
 from pptx.text.text import TextFrame
 
 from .ir import (
-    TITLE_LAYOUT, Block, Crop, Deck, Flow, Image, Length, Line, ObjectBlock,
-    Slide, Table, TitleSlide,
+    TITLE_LAYOUT, Block, Crop, Deck, Flow, Image, Length, Line, is_object_block,
+    ObjectBlock, Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
 from . import workdir
@@ -233,9 +235,18 @@ class Renderer:
                 return
 
     def set_autonum(self, p: _Paragraph, fmt: str = "arabicPeriod",
-                    color: str | None = None) -> None:
+                    color: str | None = None, start: int | None = None) -> None:
         """段落の行頭記号を自動採番（1. 2. 3. …）に切り替える（enumerate 相当）．
-           color にテーマ色名（例 "tx1"）を渡すと採番記号の色を指定する．"""
+
+        color にテーマ色名（例 "tx1"）を渡すと採番記号の色を指定する．
+        start を渡すとその番号から数え始める（buAutoNum の startAt）．
+        PowerPoint の自動採番は**プレースホルダごとに 1 から数え直す**ので，
+        2 カラムに割った採番リストの続きを右カラムで書くにはこれが要る（Issue #107）．
+
+        **呼び出し側は採番段落すべてに start を渡す．** PowerPoint は startAt の
+        付いた段落の**次から数え直す**ので，先頭にだけ渡すと "8. 1. 2. 3. …" になる．
+        番号を数えるのは ``_append_lines`` の ``counters``．
+        """
         pPr = p._p.get_or_add_pPr()
         if color:
             for tag in ("a:buClrTx", "a:buClr"):
@@ -245,7 +256,10 @@ class Renderer:
             buClr = pPr.makeelement(qn("a:buClr"), {})
             buClr.append(buClr.makeelement(qn("a:schemeClr"), {"val": color}))
             pPr.insert(0, buClr)  # buClr は採番記号より前に置く
-        bu = pPr.makeelement(qn("a:buAutoNum"), {"type": fmt})
+        attrs = {"type": fmt}
+        if start is not None:
+            attrs["startAt"] = str(start)
+        bu = pPr.makeelement(qn("a:buAutoNum"), attrs)
         for tag in ("a:buChar", "a:buNone", "a:buAutoNum"):
             el = pPr.find(qn(tag))
             if el is not None:
@@ -680,6 +694,32 @@ class Renderer:
                 if ssize is not None:
                     r.font.size = Pt(ssize)
         return shp
+
+    def line(self, slide: PptxSlide, x1: int, y1: int, x2: int, y2: int,
+             color: MSO_THEME_COLOR | None = None, width_pt: float = 1.0,
+             dashed: bool = False, arrow: bool = False) -> Connector:
+        """2 点を結ぶ線を引く（Issue #108）．
+
+        ``block_arrow`` はノード間の**すき間に収まる塗り矢印**で，box に食い込ませない
+        ための道具．こちらは任意の 2 点を結ぶ細い線で，シーケンス図のライフライン
+        （縦線）やメッセージ（斜めの矢印）のように**すき間ではなく図の骨格**を描くのに使う．
+
+        ``arrow`` を立てると終点に矢じりが付き，``dashed`` で破線になる
+        （時間の経過や省略を表す線に使う）．色はテーマ任せ（既定は本文色）．
+        """
+        conn = slide.shapes.add_connector(
+            MSO_CONNECTOR.STRAIGHT, Emu(int(x1)), Emu(int(y1)),
+            Emu(int(x2)), Emu(int(y2)))
+        conn.line.color.theme_color = color or self.TX
+        conn.line.width = Pt(width_pt)
+        if dashed:
+            conn.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+        if arrow:
+            # 矢じりは python-pptx に API が無いので ``a:ln`` へ直接書く．
+            ln = conn.line._get_or_add_ln()
+            ln.append(ln.makeelement(qn("a:tailEnd"),
+                                     {"type": "triangle", "w": "med", "len": "med"}))
+        return conn
 
     def block_arrow(self, slide: PptxSlide, x1: int, y1: int, x2: int, y2: int,
                     thickness: int,
@@ -1142,7 +1182,7 @@ class Renderer:
             self._render_columns(s, slide.columns, default_num_color, scale,
                                  default_autofit, default_size_delta,
                                  self._col_ratios(directives), slide_overflow)
-        elif any(isinstance(b, (Table, Flow, Image)) for b in blocks):
+        elif any(is_object_block(b) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
                                  self._col_ratios(directives), default_size_delta,
                                  slide_overflow)
@@ -1215,7 +1255,7 @@ class Renderer:
             ph = self._find_placeholder(slide, ci + 1)
             if ph is None:
                 continue  # レイアウトに該当プレースホルダが無ければスキップ
-            if any(isinstance(b, (Table, Flow, Image)) for b in col_blocks):
+            if any(is_object_block(b) for b in col_blocks):
                 # カラム矩形へ表・図をスタック配置．継承ジオメトリはレイアウトで補う．
                 # 通常 layout 3 は idx1/idx2 のジオメトリを持つため，解決失敗はテーマ
                 # 異常時のみ．その場合は本文領域へフォールバックする（表が消えるより，
@@ -1250,7 +1290,8 @@ class Renderer:
     # ----------------------------------------------------- 描画ユーティリティ
     def _append_lines(self, tf: TextFrame, line_blocks: list[Line], first: bool,
                       default_num_color: str | None,
-                      default_size_delta: int | None = None) -> bool:
+                      default_size_delta: int | None = None,
+                      counters: dict[tuple[int, str], int] | None = None) -> bool:
         """Line 列を text_frame に段落として追記する（採番／no_bullet を適用）．
 
         first=True なら最初の 1 行は既存の paragraphs[0] を使う．残りの行を
@@ -1259,7 +1300,19 @@ class Renderer:
         相対サイズは行の size_delta を優先し，None の行はスライド既定
         （default_size_delta，@body-size 由来）を継承する．基点は tf の枠が
         実際に持つ既定サイズで，枠ごとに 1 度だけ解決する（Issue #83）．
+
+        counters は (level, 形式) ごとの次の番号（Issue #107）．**全ての採番段落に
+        番号を明示して書く**——PowerPoint は startAt の付いた段落の**次から数え直す**
+        ので，先頭にだけ書くと 8. の次が 1. に戻る．番号はここで数えて渡す．
+        原稿の番号は**リストの先頭の行だけ**を種にし，以降は 1 ずつ増やす
+        （CommonMark と同じ規則．"1. 1. 1." と書けば 1・2・3 になる）．
+        **同じ枠へ 2 回以上追記する呼び出し側は，この辞書を自分で作って渡す**．
+        図表スライドでは地の文が帯の上下に分かれて同じ枠へ 2 回追記されるので，
+        渡さないと結論文側の番号が 1 に戻る．1 回で流し込む経路（``_fill_lines``）は
+        渡さなくてよく，そのとき既定の ``None`` が枠ごとに新しい辞書になる．
         """
+        if counters is None:
+            counters = {}
         levels = self._frame_font_levels(tf)
         for blk in line_blocks:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
@@ -1269,7 +1322,12 @@ class Renderer:
             if blk.kind == "autonum":
                 fmt = blk.num_style or "arabicPeriod"
                 color = blk.num_color or default_num_color
-                self.set_autonum(p, fmt, color=color)
+                key = (blk.level, fmt)
+                num = counters.get(key)
+                if num is None:                     # そのリストの先頭の行
+                    num = blk.num_start if blk.num_start is not None else 1
+                counters[key] = num + 1
+                self.set_autonum(p, fmt, color=color, start=num)
             elif blk.kind == "plain":
                 self.no_bullet(p)
             elif blk.kind == "code":
@@ -1610,7 +1668,7 @@ class Renderer:
         prose_after: list[Line] = []
         seen_obj = False
         for b in blocks:
-            if isinstance(b, (Table, Flow, Image)):
+            if is_object_block(b):
                 if isinstance(b, Flow) and b.note_top:
                     bucket = prose_after if seen_obj else prose_before
                     bucket.append(self._note_to_line(b.note_top))
@@ -1666,13 +1724,16 @@ class Renderer:
             self._warn_no_body(prose_before + prose_after)
         else:
             tf = body.text_frame
+            # 採番の状態は 2 回の追記で共有する——同じ枠なので，結論文で
+            # 数え直すと番号が 1 に戻る（Issue #107）．
+            counters: dict[tuple[int, str], int] = {}
             first = self._append_lines(tf, prose_before, True, default_num_color,
-                                       default_size_delta)
+                                       default_size_delta, counters)
             for _ in range(blanks):
                 p = tf.paragraphs[0] if first else tf.add_paragraph()
                 first = False
             self._append_lines(tf, prose_after, first, default_num_color,
-                               default_size_delta)
+                               default_size_delta, counters)
             self._apply_autofit(tf, scale, default_autofit)
 
         # 結論文との重なりを避けるため帯を少しだけ詰めてオブジェクトを置く．

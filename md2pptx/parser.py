@@ -52,6 +52,8 @@ _RE_PAREN = re.compile(r"^\(\s*(\d+)\s*\)\s+(.*)$")  # (1) (2) …（arabicParen
 _RE_DIRECTIVE = re.compile(r"^<!--\s*@([\w-]+)\s*:\s*(.*?)\s*-->$")
 # カラム区切り（「2つのコンテンツ」レイアウト）．値を取らない指示．
 _RE_COL = re.compile(r"^<!--\s*@col\s*-->$")
+# 段階の区切り（アニメーションの代替．§5.11）．同じく値を取らない．
+_RE_STEP = re.compile(r"^<!--\s*@step\s*-->$")
 # 表紙（テーマの「タイトル スライド」レイアウト）．同じく値を取らない．
 _RE_TITLE_SLIDE = re.compile(r"^<!--\s*@title-slide\s*-->$")
 # 1 行 HTML コメント（ディレクティブ以外のメモ等．無視する）．
@@ -333,6 +335,11 @@ def _parse_body(body: str, body_offset: int = 0,
     slides: list[Slide] = []
     current: Slide | None = None
     title_notes: list[str] = []
+    # 現在のスライドの段階区切り（@step）．各要素は「その時点での各カラムの
+    # ブロック数」．**切り出しはスライドを閉じるときにまとめて行う**——@step の
+    # 位置で即座にスナップショットを取ると，その後に書いた @layout や ```note が
+    # 前の段に入らず，「どこに書いたか」で結果が変わってしまう（§5.11）．
+    step_marks: list[list[int]] = []
 
     def ensure_slide() -> Slide:
         """直前にスライド開始マーカーが無いまま本文が来た場合のフォールバック．"""
@@ -345,6 +352,18 @@ def _parse_body(body: str, body_offset: int = 0,
         """ブロックを現在のカラム（多カラム時）または blocks へ追加する．"""
         s = ensure_slide()
         (s.columns[-1] if s.columns else s.blocks).append(b)
+
+    def flush() -> None:
+        """現在のスライドを（段があれば展開して）slides へ移す．
+
+        ``slides`` に ``nonlocal`` が要らないのは ``extend`` するだけで
+        束縛し直さないため（``current`` と ``step_marks`` は代入するので要る）．
+        """
+        nonlocal current, step_marks
+        if current is not None:
+            slides.extend(_expand_steps(current, step_marks))
+        current = None
+        step_marks = []
 
     lines = body.split("\n")
     n = len(lines)
@@ -387,8 +406,7 @@ def _parse_body(body: str, body_offset: int = 0,
                         f"a second title slide at line {lineno}: {stripped!r} "
                         f"(a deck has one; if this is a section divider, "
                         f"write 'syntax: 0' in the front matter or use '##')")
-            if current is not None:
-                slides.append(current)
+            flush()
             current = Slide(title=htext or None, title_deltas=title_deltas,
                             layout=headings[level])
             i += 1
@@ -397,8 +415,7 @@ def _parse_body(body: str, body_offset: int = 0,
         if stripped == "---":
             # 水平線 → タイトルなしスライドを明示的に開始．**非推奨**（Issue #92）．
             _warn_deprecated_rule(lineno)
-            if current is not None:
-                slides.append(current)
+            flush()
             current = Slide()
             i += 1
             continue
@@ -434,6 +451,14 @@ def _parse_body(body: str, body_offset: int = 0,
                 s.columns = [s.blocks, []]   # 既存ブロックを左カラムへ
             else:
                 s.columns.append([])
+            i += 1
+            continue
+
+        # --- 段階の区切り（アニメーションの代替）→ 段を1つ刻む（§5.11）----
+        if _RE_STEP.match(stripped):
+            s = ensure_slide()
+            cols = s.columns if s.columns else [s.blocks]
+            step_marks.append([len(c) for c in cols])
             i += 1
             continue
 
@@ -541,10 +566,49 @@ def _parse_body(body: str, body_offset: int = 0,
             add_block(line)
         i += 1
 
-    if current is not None:
-        slides.append(current)
+    flush()
 
     return slides, ("\n".join(title_notes) if title_notes else None)
+
+
+def _expand_steps(slide: Slide, marks: list[list[int]]) -> list[Slide]:
+    """段階の区切り（@step）を持つスライドを、積み上がる複数枚へ展開する．
+
+    marks の各要素は「その区切りの時点での各カラムのブロック数」．**最終段は
+    slide そのもの**で、それより前の段は各カラムを先頭から切り出した写しになる．
+
+    段はどれも**最終的なカラム構成**で描く．カラム区切りより前の段だけ単一カラムに
+    すると、レイアウトが段ごとに変わって行頭の位置が動いてしまう．そのため
+    marks が短い（＝その時点で存在しなかった）カラムは空として補う．
+
+    タイトル・レイアウト・ディレクティブは全段で同じ．発表者ノートは最終段だけに
+    残す——段の集まりで 1 つの話なので、発表者ビューに同じ原稿が何度も出ても
+    読みにくいだけ．
+    """
+    if not marks:
+        return [slide]
+    # ``Slide.columns`` は**空リストが「単一カラム」の意味**（``None`` は取らない）．
+    # parser の add_block も ``s.columns[-1] if s.columns else s.blocks`` と
+    # 同じ判定をしており，ここだけ ``is not None`` にすると食い違う．
+    cols = slide.columns if slide.columns else [slide.blocks]
+    out: list[Slide] = []
+    for mark in marks:
+        counts = list(mark) + [0] * (len(cols) - len(mark))
+        sliced = [list(c[:k]) for c, k in zip(cols, counts)]
+        # 浅いコピーで足りる——``title_deltas`` は ``int | None``，
+        # ``directives`` の値は ``int | str | bool`` で，どれも不変
+        # （``ir.Slide`` の注釈が正）．``blocks`` は下でスライスした新しいリスト．
+        step = Slide(title=slide.title,
+                     title_deltas=list(slide.title_deltas),
+                     layout=slide.layout,
+                     directives=dict(slide.directives))
+        if slide.columns:
+            step.columns = sliced
+        else:
+            step.blocks = sliced[0]
+        out.append(step)
+    out.append(slide)
+    return out
 
 
 def _split_row(s: str) -> list[str]:
@@ -864,22 +928,31 @@ def _parse_content_line(raw: str) -> Line | None:
         delta, text = _split_size(s[2:].strip())
         return _mk_bullet(text, delta)
 
+    # 採番行は**書かれていた番号を捨てない**（Issue #107）．render がリストの
+    # 先頭の行だけ開始番号として使う——PowerPoint の自動採番はプレースホルダごとに
+    # 1 から数え直すので，開始番号を渡せないと 2 カラムに割った採番リストの
+    # 右カラムが 1. に戻る．先頭だけ効かせるのは CommonMark と同じ規則で，
+    # "1. 1. 1." と書けば 1・2・3 になる従来の書き方もそのまま動く．
+
     # 連番："1. 2. 3." → arabicPeriod
     m = _RE_ORDERED.match(s)
     if m:
         delta, text = _split_size(m.group(2).strip())
-        return _mk(text, kind="autonum", num_style="arabicPeriod", size_delta=delta)
+        return _mk(text, kind="autonum", num_style="arabicPeriod",
+                   num_start=int(m.group(1)), size_delta=delta)
 
     # 丸括弧："(1) (2)" → arabicParenBoth（"(1)" 表記を忠実に再現）
     m = _RE_PAREN.match(s)
     if m:
         delta, text = _split_size(m.group(2).strip())
-        return _mk(text, kind="autonum", num_style="arabicParenBoth", size_delta=delta)
+        return _mk(text, kind="autonum", num_style="arabicParenBoth",
+                   num_start=int(m.group(1)), size_delta=delta)
 
     # 丸数字："①②③ …" → circleNumDbPlain（番号文字は除去）
     if s[0] in CIRCLED_DIGITS:
         delta, text = _split_size(s[1:].lstrip())
-        return _mk(text, kind="autonum", num_style="circleNumDbPlain", size_delta=delta)
+        return _mk(text, kind="autonum", num_style="circleNumDbPlain",
+                   num_start=CIRCLED_DIGITS.index(s[0]) + 1, size_delta=delta)
 
     # 矢印："→ …" → 行頭記号なし（no_bullet 相当）．"→" は本文に残す
     # （結論・補足行の視覚的な導線として表示する）．トークンは "→" の後ろに置く．
