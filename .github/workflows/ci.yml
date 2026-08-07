@@ -109,6 +109,12 @@ jobs:
         run: |
           test -f out.pdf
           slides=$(python -c "from pptx import Presentation; print(len(Presentation('out.pptx').slides))")
+          # 取り出せたことを先に確かめる．pdfinfo が成功しても awk が "Pages" を
+          # 見つけられなければ**空のまま終了コード 0** で通るので，set -e では
+          # 捕まらない．空のまま比べると「ページ数が違う」と読めてしまい，
+          # 原因が分かるログにするという目的（#120）が達せられない．
+          test -n "$slides" || { echo "ERROR: could not read the slide count from out.pptx"; exit 1; }
           pages=$(pdfinfo out.pdf | awk '/^Pages/{print $2}')
+          test -n "$pages" || { echo "ERROR: could not read the page count from out.pdf"; exit 1; }
           echo "slides=$slides pages=$pages"
           test "$pages" = "$slides"
