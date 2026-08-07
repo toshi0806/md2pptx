@@ -142,3 +142,29 @@ def test_a_trailing_separator_does_not_make_an_empty_row():
     """末尾の ``--`` で空の段を作らない（原稿の書き癖を素通しする）．"""
     f = parse_flow("[a]\n--\n[b]\n--\n")
     assert f.rows == [[0], [1]]
+
+
+# ---------------------------------------------------------------- ラベルの幅
+
+def test_a_long_edge_label_gets_a_wide_enough_box():
+    """矢印ラベルの枠は文字数に応じて広がる（Issue #111）．
+
+    固定幅だと入りきらないラベルが**枠の中で折り返して潰れる**。
+    "NAMEPREP" が "NAM / EPRE / P" と3行に割れて読めなくなっていた。
+    """
+    short = plan_flow(parse_flow("[a] -x-> [b]"), 0, 0, emu(10), emu(5))
+    long_ = plan_flow(parse_flow("[a] -NAMEPREP-> [b]"), 0, 0, emu(10), emu(5))
+    assert long_.labels[0].rect.width > short.labels[0].rect.width
+
+
+def test_a_full_width_label_is_counted_as_double():
+    """全角は半角の2倍で数える（同じ文字数でも和文のほうが広い）．"""
+    ja = plan_flow(parse_flow("[a] -物理媒体-> [b]"), 0, 0, emu(10), emu(5))
+    en = plan_flow(parse_flow("[a] -abcde-> [b]"), 0, 0, emu(10), emu(5))
+    assert ja.labels[0].rect.width > en.labels[0].rect.width
+
+
+def test_the_label_sits_above_the_boxes():
+    """ラベルは box の上に置く（はみ出しても何にもぶつからない場所）．"""
+    plan = plan_flow(parse_flow("[a] -NAMEPREP-> [b]"), 0, 0, emu(10), emu(5))
+    assert plan.labels[0].rect.bottom <= plan.boxes[0].rect.top

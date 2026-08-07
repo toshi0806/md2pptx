@@ -321,6 +321,30 @@ def plan_flow(flow: Flow, left: int, top: int, width: int,
     return plan
 
 
+# 矢印ラベルの見積もりに使う想定フォントサイズ（pt）．render は本文サイズで
+# 描くので実寸は動くが、**枠を大きめに見積もる**ぶんには害が無い——ラベルは
+# box の上（何も無い場所）に置くので、広げても他とぶつからない．
+_LABEL_PT = 16.0
+_LABEL_H = _emu(0.34)
+
+
+def _label_width(text: str) -> int:
+    """矢印ラベルの想定幅（EMU）．全角は半角の2倍で数える．
+
+    固定幅だと入りきらないラベルが**枠の中で折り返して潰れる**（Issue #111）．
+    "NAMEPREP" が "NAM / EPRE / P" と3行に割れて読めなくなっていた．
+    """
+    units = sum(2 if ord(c) > 0x2E80 else 1 for c in text)
+    return int(units * _LABEL_PT * 12700 * 0.55) + _emu(0.12)
+
+
+def _label_rect(text: str, center_x: int, bottom_y: int) -> Rect:
+    """矢印ラベルを box の上へ、文字が入る幅で置く．"""
+    w = max(_emu(0.5), _label_width(text))
+    return Rect(center_x - w // 2, bottom_y - _LABEL_H - _emu(0.04),
+                w, _LABEL_H)
+
+
 def _plan_grid(plan: FlowPlan, flow: Flow, left: int, top: int,
                width: int, height: int, reserve: int) -> int:
     """段（``--`` 区切り）を持つ図を格子に置く（Issue #109）．
@@ -379,17 +403,15 @@ def _plan_grid(plan: FlowPlan, flow: Flow, left: int, top: int,
             x2 = b.left if pb[1] > pa[1] else b.right
             plan.arrows.append(PlacedArrow(x1, a.center_y, x2, b.center_y))
             if e.label:
-                lx = min(x1, x2)
                 plan.labels.append(PlacedText(
-                    e.label, Rect(lx, a.center_y - _emu(0.3),
-                                  abs(x2 - x1), _emu(0.28))))
+                    e.label, _label_rect(e.label, (x1 + x2) // 2, a.top)))
         else:
             x1, y1, x2, y2 = _edge_points(a, b)
             plan.lines.append(PlacedLine(x1, y1, x2, y2))
             if e.label:
                 plan.labels.append(PlacedText(
-                    e.label, Rect(min(x1, x2), (y1 + y2) // 2 - _emu(0.16),
-                                  max(abs(x2 - x1), _emu(0.8)), _emu(0.28))))
+                    e.label, _label_rect(e.label, (x1 + x2) // 2,
+                                         (y1 + y2) // 2 + _LABEL_H // 2)))
     return y0 + grid_h
 
 
@@ -456,8 +478,7 @@ def _plan_horizontal(plan: FlowPlan, flow: Flow, left: int, top: int,
         plan.arrows.append(PlacedArrow(a.right, ay, b.left, ay))
         if e.label:
             mx = (a.right + b.left) // 2
-            plan.labels.append(PlacedText(e.label, Rect(
-                mx - _emu(0.5), by - _emu(0.5), _emu(1.0), _emu(0.45))))
+            plan.labels.append(PlacedText(e.label, _label_rect(e.label, mx, by)))
     return by + bh
 
 
@@ -501,7 +522,9 @@ def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
         cx = a.center_x
         plan.arrows.append(PlacedArrow(cx, a.bottom, cx, b.top))
         if e.label:
+            # 縦並びではラベルを矢印の**右横**に置く（上下は box で埋まっている）．
             my = (a.bottom + b.top) // 2
-            plan.labels.append(PlacedText(e.label, Rect(
-                cx + _emu(0.2), my - _emu(0.22), _emu(1.2), _emu(0.45))))
+            r = _label_rect(e.label, cx, my + _LABEL_H // 2)
+            plan.labels.append(PlacedText(
+                e.label, Rect(cx + _emu(0.18), r.top, r.width, r.height)))
     return starty + total
