@@ -24,9 +24,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .ir import Flow, FlowNode, FlowEdge
-from .layout import (
-    EMU, PlacedArrow, PlacedNode, PlacedText, Rect, emu as _emu,
-)
+from .layout import EMU, PlacedArrow, PlacedText, Rect, emu as _emu
 
 
 # 受理する値の集合．型付きなので "not in で弾いた残り" が Literal に絞られる
@@ -190,6 +188,17 @@ def _make_node(inner: str, color: str | None) -> FlowNode:
 # 描画指示（座標はすべて EMU 整数）．render はこれを読んで図形を置くだけで，
 # 位置の計算はここで終わっている．
 #
+@dataclass(frozen=True)
+class PlacedNode:
+    """角丸四角ノード．色・サブラベルを持つので ``node`` ごと渡す．
+
+    **``layout.py`` ではなくここに置く**——``FlowNode`` を抱えており flow 固有だから．
+    共通の入れ物に 1 つの DSL の型を持ち込むと、次の DSL が再利用できずに詰む．
+    """
+    node: FlowNode
+    rect: Rect
+
+
 @dataclass
 class FlowPlan:
     """図ひとつぶんの配置．

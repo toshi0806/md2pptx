@@ -6,8 +6,10 @@ flow / seq などの図 DSL は「DSL を解釈して IR にする」と「IR �
 置いて座標を出す」を分け、**座標計算まで純 Python（EMU 整数）で完結**させる。
 python-pptx を持ち込まないので、図の配置は pptx を書かずに試せる。
 
-このモジュールはその共通部分——単位換算と、置いた結果を表す入れ物だけを持つ。
-図ごとの並べ方（何をどこに置くか）は各 DSL のモジュールが決める。
+このモジュールはその共通部分——単位換算と、**どの DSL にも依存しない**幾何だけを持つ。
+図ごとの並べ方（何をどこに置くか）も、その DSL 固有のノードを抱える入れ物
+（flow の ``PlacedNode`` など）も、各 DSL のモジュールが持つ。
+ここに 1 つの DSL の型を持ち込むと、次の DSL がそれを再利用できずに詰む。
 
 **位置を名前で持つ。** 位置で持つと取り違えても誰も気づかない——幅と高さを
 入れ替えても、右端と下端を取り違えても、型としては同じ整数で通ってしまい、
@@ -16,8 +18,6 @@ python-pptx を持ち込まないので、図の配置は pptx を書かずに�
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from .ir import FlowNode
 
 EMU = 914400  # 1 インチ = 914400 EMU
 
@@ -50,13 +50,6 @@ class Rect:
     @property
     def center_y(self) -> int:
         return self.top + self.height // 2
-
-
-@dataclass(frozen=True)
-class PlacedNode:
-    """角丸四角ノード．色・サブラベルを持つので ``node`` ごと渡す．"""
-    node: FlowNode
-    rect: Rect
 
 
 @dataclass(frozen=True)

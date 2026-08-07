@@ -250,7 +250,6 @@ def is_object_block(b: "Block") -> TypeGuard[ObjectBlock]:
     return isinstance(b, OBJECT_BLOCKS)
 
 
-
 @dataclass
 class Slide:
     """1 枚のコンテンツスライド．
