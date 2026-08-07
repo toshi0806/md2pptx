@@ -342,7 +342,13 @@ def _parse_body(body: str, body_offset: int = 0,
     # ブロック数」．**切り出しはスライドを閉じるときにまとめて行う**——@step の
     # 位置で即座にスナップショットを取ると，その後に書いた @layout や ```note が
     # 前の段に入らず，「どこに書いたか」で結果が変わってしまう（§5.11）．
-    step_marks: list[list[int]] = []
+    # 各要素は (各カラムのブロック数, 途中まで見せる図の位置 or None)．
+    # 後者は図の中の @step（Issue #125）用で ``(カラム番号, 単位数)``．
+    # ブロック境界だけでは図の内部で切れないので、
+    # 「このカラムの最後のブロックだけ途中まで」を表せるようにしてある．
+    # **カラム番号を持つ**のは、左右どちらにも図があるとき「最初に見つかった図」
+    # では取り違えるため（左の図が常に選ばれてしまう）．
+    step_marks: list[tuple[list[int], tuple[int, int] | None]] = []
 
     def ensure_slide() -> Slide:
         """直前にスライド開始マーカーが無いまま本文が来た場合のフォールバック．"""
@@ -352,9 +358,21 @@ def _parse_body(body: str, body_offset: int = 0,
         return current
 
     def add_block(b: Block) -> None:
-        """ブロックを現在のカラム（多カラム時）または blocks へ追加する．"""
+        """ブロックを現在のカラム（多カラム時）または blocks へ追加する．
+
+        図が**中に段階を持って**いれば（``Flow.steps`` / ``Seq.steps``）、
+        その数だけスライドの段を刻む（Issue #125）．最後の段は図の全体なので
+        刻まない——``_expand_steps`` が最終段としてスライド本体を使う．
+        """
         s = ensure_slide()
         (s.columns[-1] if s.columns else s.blocks).append(b)
+        steps = getattr(b, "steps", None)
+        if steps:
+            cols = s.columns if s.columns else [s.blocks]
+            counts = [len(c) for c in cols]
+            ci = len(s.columns) - 1 if s.columns else 0
+            for n in steps:
+                step_marks.append((list(counts), (ci, n)))
 
     def flush() -> None:
         """現在のスライドを（段があれば展開して）slides へ移す．
@@ -461,7 +479,7 @@ def _parse_body(body: str, body_offset: int = 0,
         if _RE_STEP.match(stripped):
             s = ensure_slide()
             cols = s.columns if s.columns else [s.blocks]
-            step_marks.append([len(c) for c in cols])
+            step_marks.append(([len(c) for c in cols], None))
             i += 1
             continue
 
@@ -588,11 +606,22 @@ def _parse_body(body: str, body_offset: int = 0,
     return slides, ("\n".join(title_notes) if title_notes else None)
 
 
-def _expand_steps(slide: Slide, marks: list[list[int]]) -> list[Slide]:
+def _expand_steps(
+        slide: Slide,
+        marks: list[tuple[list[int], tuple[int, int] | None]]) -> list[Slide]:
     """段階の区切り（@step）を持つスライドを、積み上がる複数枚へ展開する．
 
-    marks の各要素は「その区切りの時点での各カラムのブロック数」．**最終段は
-    slide そのもの**で、それより前の段は各カラムを先頭から切り出した写しになる．
+    marks の各要素は (その区切りの時点での各カラムのブロック数,
+    途中まで見せる図の位置 or None)．**最終段は slide そのもの**で、それより前の
+    段は各カラムを先頭から切り出した写しになる．
+
+    2 つめの値は**図の中の段階**（Issue #125）で ``(カラム番号, 単位数)``．
+    ブロック境界だけでは図の内部で切れないので、そのカラムの最後のブロックを
+    ``upto(n)`` で途中まで（矢印 n 本目まで・ノード n 個目まで）に差し替える．
+    地の文は従来どおり累積したまま、**図だけがその段階の姿になる**．
+
+    **カラム番号を持つ**のは、左右どちらにも図があるとき「最初に見つかった図」
+    では取り違えるため（左の図が常に選ばれてしまう）．
 
     段はどれも**最終的なカラム構成**で描く．カラム区切りより前の段だけ単一カラムに
     すると、レイアウトが段ごとに変わって行頭の位置が動いてしまう．そのため
@@ -609,9 +638,15 @@ def _expand_steps(slide: Slide, marks: list[list[int]]) -> list[Slide]:
     # 同じ判定をしており，ここだけ ``is not None`` にすると食い違う．
     cols = slide.columns if slide.columns else [slide.blocks]
     out: list[Slide] = []
-    for mark in marks:
+    for mark, partial in marks:
         counts = list(mark) + [0] * (len(cols) - len(mark))
         sliced = [list(c[:k]) for c, k in zip(cols, counts)]
+        if partial is not None:
+            ci, n = partial
+            if ci < len(sliced) and sliced[ci]:
+                last = sliced[ci][-1]
+                if hasattr(last, "upto"):
+                    sliced[ci][-1] = last.upto(n)
         # 浅いコピーで足りる——``title_deltas`` は ``int | None``，
         # ``directives`` の値は ``int | str | bool`` で，どれも不変
         # （``ir.Slide`` の注釈が正）．``blocks`` は下でスライスした新しいリスト．
