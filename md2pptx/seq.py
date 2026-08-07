@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """シーケンス図 DSL（``` ```seq ``` ブロック）のパーサ＋レイアウタ（md2pptx）．
 
-DESIGN.md §5.14 の DSL を解釈して ir.Seq へ変換する ``parse_seq`` と，
+DESIGN.md §5.5.1 の DSL を解釈して ir.Seq へ変換する ``parse_seq`` と，
 描画用の座標プラン（純粋な EMU 計算）を返す ``plan_seq`` を提供する．
 python-pptx には依存しない（描画は render.py の責務）——``flow.py`` と同じ形．
 

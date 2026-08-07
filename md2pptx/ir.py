@@ -91,7 +91,7 @@ class Line:
             ×1.125（拡大）/ ÷1.125（縮小）する（render が実サイズへ換算）．
             None ならスライド既定（@body-size）に従う＝未指定．0 で「テーマ既定
             に固定（スライド既定を無効化）」を表す．絶対 pt は持たない（テーマ委譲）．
-        boxed: その段落を枠で囲む（行頭の ``{box}`` 由来．DESIGN.md §5.14）．
+        boxed: その段落を枠で囲む（行頭の ``{box}`` 由来．DESIGN.md §5.15）．
             囲むのは **run ではなく段落**で，折り返しても枠は 1 つ．
         box_color: 枠線の色（``{box:blue}`` 由来）．None ならテーマのアクセント色．
             色名の語彙は行内装飾と同じ（テーマ色名／CSS の色名／16進）．
@@ -210,7 +210,7 @@ class Flow:
         caption: 図下キャプション．無ければ None．
         note_top: 図の上に置く注記．無ければ None．
         note_bottom: 図の下に置く注記．無ければ None．
-        steps: 図の中の ``@step`` で切った時点の**ノード数**（DESIGN.md §5.15）．
+        steps: 図の中の ``@step`` で切った時点の**ノード数**（DESIGN.md §5.14）．
             空なら図の中に段階は無い．parser がスライドの段へ展開するときに使う．
         rows: 段ごとのノード index（``--`` 区切り由来．DESIGN.md §5.5）．
             **空なら段の指定なし＝一列**で，従来の原稿はこちらを通る．
@@ -247,7 +247,7 @@ class Flow:
 
 @dataclass
 class SeqMessage:
-    """シーケンス図の1本の矢印（``A -> B: ラベル`` 由来．DESIGN.md §5.14）．
+    """シーケンス図の1本の矢印（``A -> B: ラベル`` 由来．DESIGN.md §5.5.1）．
 
     Attributes:
         src: 始点ライフラインの index（``Seq.lifelines`` 内）．
@@ -283,7 +283,7 @@ class SeqNote:
 
 @dataclass
 class Seq:
-    """シーケンス図ブロック（```seq フェンス由来．DESIGN.md §5.14）．
+    """シーケンス図ブロック（```seq フェンス由来．DESIGN.md §5.5.1）．
 
     時間軸を持つので flow の格子（Issue #109）では表現できない．
     プロトコルの往復（TCP handshake・HTTP・SMTP など）がこれに当たる．
@@ -295,7 +295,7 @@ class Seq:
         caption: 図下キャプション．無ければ None．
         note_top: 図の上に置く注記（地の文）．無ければ None．
         note_bottom: 図の下に置く注記（地の文）．無ければ None．
-        steps: 図の中の ``@step`` で切った時点の**メッセージ数**（DESIGN.md §5.15）．
+        steps: 図の中の ``@step`` で切った時点の**メッセージ数**（DESIGN.md §5.14）．
             空なら図の中に段階は無い．
     """
 
@@ -400,7 +400,7 @@ ARROW_DIRECTIONS: tuple[str, ...] = get_args(ArrowDirection)
 
 @dataclass
 class Arrow:
-    """本文の流れを示す大きな矢印（``` ```arrow ``` フェンス．DESIGN.md §5.15）．
+    """本文の流れを示す大きな矢印（``` ```arrow ``` フェンス．DESIGN.md §5.16）．
 
     **オブジェクトブロックにしてある**——地の文として段落位置を見積もるより，
     帯（``_stack_objects``）に座標を決めさせるほうが確実で，
