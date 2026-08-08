@@ -197,14 +197,15 @@ def test_a_wrapped_intro_pushes_the_band_down(tmp_path):
     intro = "とても長い導入文の続きです" * 4      # 全角52字
     short = _FM + "### x\n\n- 短い導入\n\n" + _TABLE + "\n→ 結論\n"
     long_ = _FM + "### x\n\n- " + intro + "\n\n" + _TABLE + "\n→ 結論\n"
-    a, ra = _build(tmp_path / "a", short)
-    b, rb = _build(tmp_path / "b", long_)
+    a, _ = _build(tmp_path / "a", short)
+    b, _ = _build(tmp_path / "b", long_)
+    r = render.Renderer(str(tmp_path / "b" / "theme.pptx"))
     # 前提：長いほうが本当に折り返している（既定テンプレートの本文枠は
     # 8.5in ≈ 612pt、lvl1 は 18pt なので 30字ほどで折り返る）
     body, = [sh for sh in b.slides[-1].shapes
              if sh.is_placeholder and sh.placeholder_format.idx == 1]
     tf = body.text_frame
     avail_pt = (body.width - tf.margin_left - tf.margin_right) / 12700.0
-    assert rb._wrapped_lines(intro, rb._body_font_size(), avail_pt) > 1, \
+    assert r._wrapped_lines(intro, r._body_font_size(), avail_pt) > 1, \
         "前提が崩れた（導入文が折り返らない）"
     assert _only_object(b.slides[-1]).top > _only_object(a.slides[-1]).top
