@@ -237,8 +237,9 @@ def test_the_frame_is_lifted_off_the_line_box(tmp_path):
     """枠は行の箱より少し上に出す．
 
     PowerPoint は行の箱の中で字を上寄りに置き、下に descent ぶんの空きを残す。
-    行の箱にそのまま合わせると、字に対して枠が下がって見える（実測で
-    上 4.8pt / 下 11pt）。
+    行の箱にそのまま合わせると、字に対して枠が下がって見える——**枠線（3pt）を
+    字と数えないように色で分けて**測ると、30pt の行で上 2.9pt / 下 8.6pt だった
+    （Issue #164）。
     """
     prs = _build(tmp_path, _FM + "### x\n\n- {box} 囲む行\n")
     slide = prs.slides[-1]
@@ -249,7 +250,9 @@ def test_the_frame_is_lifted_off_the_line_box(tmp_path):
     line_top = (body.top + body.text_frame.margin_top
                 + r._space_before(0, sz))
     assert box.top < line_top                      # 持ち上がっている
-    assert line_top - box.top < r._line_height(sz) // 4   # 上げすぎない
+    # 上げすぎない．境目は**字の高さの半分**——字は行の箱の 7 割ほどを占めるので
+    # 行の 0.35。これを超えると今度は枠が上へ寄る。
+    assert line_top - box.top < r._line_height(sz) * 0.35
 
 
 def test_the_frame_stays_inside_the_body_after_the_lift(tmp_path):
