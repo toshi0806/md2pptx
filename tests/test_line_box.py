@@ -250,8 +250,8 @@ def test_the_frame_is_lifted_off_the_line_box(tmp_path):
     line_top = (body.top + body.text_frame.margin_top
                 + r._space_before(0, sz))
     assert box.top < line_top                      # 持ち上がっている
-    assert line_top - box.top < r._line_height(sz) // 4   # 上げすぎない
-    # 字の高さ（行の箱の 7 割ほど）の半分は超えない——超えると今度は上へ寄る
+    # 上げすぎない．境目は**字の高さの半分**——字は行の箱の 7 割ほどを占めるので
+    # 行の 0.35。これを超えると今度は枠が上へ寄る。
     assert line_top - box.top < r._line_height(sz) * 0.35
 
 
