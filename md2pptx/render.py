@@ -2532,9 +2532,13 @@ class Renderer:
         # 折り返しは**プレースホルダの幅**で数える（Issue #158）．1 行ずつと
         # 決めつけていた頃は、導入文が折り返すとそのぶん帯が上へずれ、
         # 結論文が下の罫線を越えていた（cn2026-02 p.34）．
-        tf_w = body.width if body is not None else width
         if body is not None:
-            tf_w -= body.text_frame.margin_left + body.text_frame.margin_right
+            tf = body.text_frame
+            tf_w = body.width - tf.margin_left - tf.margin_right
+        else:
+            # 枠が無ければ地の文も描かれない（``_warn_no_body``）ので、ここは
+            # 帯の見積もりが 0 除算しないための置きにすぎない．
+            tf_w = width
 
         def para_h(ln: Line) -> int:
             d = ln.size_delta if ln.size_delta is not None else default_size_delta
