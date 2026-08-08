@@ -124,6 +124,10 @@ def test_table_in_a_column_stops_above_the_conclusion(tmp_path):
     _assert_above(prs.slides[-1], line_h)
 
 
+_TALL_TABLE = "| 行 | 値 |\n|:--|:--|\n" + "".join(
+    f"| 行{i} | 値{i} |\n" for i in range(1, 13))
+
+
 # ---------------------------------------------------------------- 削りすぎない
 
 def test_the_band_keeps_most_of_the_frame(tmp_path):
@@ -132,9 +136,12 @@ def test_the_band_keeps_most_of_the_frame(tmp_path):
     許容は **3行ぶん**。原稿の地の文が導入文と結論文の 2 行あり、そこへ
     空行数の切り捨てで最大 1 行が加わる（2 + 1）。この修正で減るのはその
     1 行ぶんだけで、それ以上痩せていたら削りすぎ。
+
+    帯の高さは**帯いっぱいになる表**で測る。短い表は帯を埋めない（#165）ので、
+    表の高さを帯の高さの代わりに使えるのは、収まりきらない表だけ。
     """
     prs, line_h = _build(
-        tmp_path, _FM + "### 表\n\n導入文\n\n" + _TABLE + "\n→ 結論文\n")
+        tmp_path, _FM + "### 表\n\n導入文\n\n" + _TALL_TABLE + "\n→ 結論文\n")
     slide = prs.slides[-1]
     tbl = _only_object(slide)
     body, _ = _body_of(slide)
@@ -142,10 +149,6 @@ def test_the_band_keeps_most_of_the_frame(tmp_path):
 
 
 # ---------------------------------------------------------------- overflow
-
-_TALL_TABLE = "| 行 | 値 |\n|:--|:--|\n" + "".join(
-    f"| 行{i} | 値{i} |\n" for i in range(1, 13))
-
 
 def test_overflow_still_extends_below_the_conclusion(tmp_path):
     """``@overflow: true`` は従来どおり結論文より下まで伸びる（対象外）．
@@ -209,3 +212,51 @@ def test_a_wrapped_intro_pushes_the_band_down(tmp_path):
     assert r._wrapped_lines(intro, r._body_font_size(), avail_pt) > 1, \
         "前提が崩れた（導入文が折り返らない）"
     assert _only_object(b.slides[-1]).top > _only_object(a.slides[-1]).top
+
+
+# --------------------------------------------- 短い表を引き伸ばさない（#165）
+
+def test_a_short_table_is_not_stretched(tmp_path):
+    """行数の少ない表は、帯いっぱいに広げない．
+
+    ``add_table`` に帯の高さをそのまま渡すと、PowerPoint がそれを行へ配分して
+    1 行が 2.5cm ほどになる（cn2026-05 p.17）。
+    """
+    src = _FM + "### x\n\n| a | b |\n|:--|:--|\n| 1 | 2 |\n"
+    prs, line_h = _build(tmp_path, src)
+    tbl = _only_object(prs.slides[-1])
+    # 見出し＋データの 2 行しかない。1 行が本文標準サイズの 2 倍を超えたら
+    # 広げすぎ——帯いっぱいに広げると 1 行 2.5cm 級（本文の 4〜5 倍）になる。
+    assert tbl.height < 2 * (2 * line_h)
+
+
+def test_a_short_table_is_centred_in_its_band(tmp_path):
+    """余った空きは上下へ均等に——帯の上端に貼りつけない．"""
+    src = _FM + "### x\n\n- 導入\n\n| a | b |\n|:--|:--|\n| 1 | 2 |\n\n→ 結論\n"
+    prs, line_h = _build(tmp_path, src)
+    slide = prs.slides[-1]
+    tbl = _only_object(slide)
+    body, = [sh for sh in slide.shapes
+             if sh.is_placeholder and sh.placeholder_format.idx == 1]
+    # 前提：導入文も結論文も 1 行に収まっている（折り返すと下の式が合わない）
+    r = render.Renderer(str(tmp_path / "theme.pptx"))
+    tf = body.text_frame
+    avail_pt = (body.width - tf.margin_left - tf.margin_right) / 12700.0
+    for t in ("導入", "→ 結論"):
+        assert r._wrapped_lines(t, r._body_font_size(), avail_pt) == 1, \
+            f"前提が崩れた（{t} が折り返す）"
+    above = tbl.top - (body.top + line_h)          # 導入文の下から表の上まで
+    below = (body.top + body.height) - (tbl.top + tbl.height) - line_h
+    assert above > 0 and below > 0
+    assert abs(above - below) < line_h
+
+
+def test_a_tall_table_still_uses_the_whole_band(tmp_path):
+    """帯に収まらない表は従来どおり（回帰させない）．"""
+    rows = "".join(f"| {i} | {i} |\n" for i in range(14))
+    src = _FM + "### x\n\n| a | b |\n|:--|:--|\n" + rows
+    prs, _ = _build(tmp_path, src)
+    slide = prs.slides[-1]
+    tbl = _only_object(slide)
+    body_h = max(sh.height for sh in slide.shapes if sh.is_placeholder)
+    assert tbl.height > body_h * 0.8
