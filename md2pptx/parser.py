@@ -562,8 +562,14 @@ def _parse_body(body: str, body_offset: int = 0,
                     body_lines.pop(0)
                 while body_lines and not body_lines[-1].strip():
                     body_lines.pop()
+                # ``color`` と書いたフェンスだけ ``[語]{色}`` を解釈する
+                # （既定は「書いたまま」．Issue #162）．
+                colored = "color" in info.split()
                 for text in body_lines:
-                    add_block(Line(text=text, kind="code"))
+                    spans: list[Span] = []
+                    if colored:
+                        text, spans = _code_color_spans(text)
+                    add_block(Line(text=text, kind="code", spans=spans))
             i = j + 1  # 閉じフェンスの次へ
             continue
 
@@ -1104,6 +1110,40 @@ def _spans_in(text: str, segment: int, base: _Marks) -> list[Span]:
     if pos < len(text):
         out.append(_span(text[pos:], segment, base))
     return out
+
+
+# 等幅ブロックの中で受ける記法は ``[語]{色}`` **だけ**（Issue #162）．
+_RE_CODE_COLOR = re.compile(r"\[(?P<ctext>[^\[\]]*)\]\{(?P<color>[^{}]+)\}")
+
+
+def _code_color_spans(text: str) -> tuple[str, list[Span]]:
+    """コード行の ``[語]{色}`` だけを解釈して (素のテキスト, Span 列) を返す．
+
+    **色名として解決できない ``{…}`` は文字のまま残す**——``[133.69.130.4]{n}``
+    のようなふつうの角括弧はコードにふつうに現れる．壊さないほうが大事．
+
+    ``**強調**`` や `` `等幅` `` は解釈しない．もう等幅なので意味が無く、
+    「書いたまま出る」という約束を色以外では守れる．
+    """
+    out: list[Span] = []
+    pos = 0
+    for m in _RE_CODE_COLOR.finditer(text):
+        try:
+            kind, value = parse_color(m.group("color"))
+        except Exception:
+            # 色名でないなら、ただの角括弧．**``pos`` は進めない**——飛ばした
+            # ぶんは「次のマッチまでの地の文」か末尾でそのまま拾われる．
+            continue
+        if m.start() > pos:
+            out.append(Span(text=text[pos:m.start()], segment=0))
+        name = value if kind == "theme" else "#" + value
+        out.append(Span(text=m.group("ctext"), segment=0, color=name))
+        pos = m.end()
+    if not any(s.color for s in out):
+        return text, []                 # 色がひとつも無ければ従来どおり
+    if pos < len(text):
+        out.append(Span(text=text[pos:], segment=0))
+    return "".join(s.text for s in out), out
 
 
 def _parse_spans(text: str) -> tuple[str, list[Span]]:
