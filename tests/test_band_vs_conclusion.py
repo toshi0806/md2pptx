@@ -184,3 +184,19 @@ def test_no_minimum_warning_for_an_ordinary_slide(tmp_path, capsys):
     """ふつうの分量では警告しない（出しすぎると読まれなくなる）．"""
     _build(tmp_path, _FM + "### 表\n\n導入文\n\n" + _TABLE + "\n→ 結論文\n")
     assert "band hit its minimum height" not in capsys.readouterr().err
+
+
+# ------------------------------------------------------- 折り返す地の文（#158）
+
+def test_a_wrapped_intro_pushes_the_band_down(tmp_path):
+    """導入文が折り返したら、そのぶん帯が下がる（結論文がはみ出さない）．
+
+    帯の高さを「地の文は1行ずつ」で数えていた頃は、折り返した1行ぶん帯が
+    上へずれ、結論文が下の罫線を越えていた（cn2026-02 p.34）。
+    """
+    short = _FM + "### x\n\n- 短い導入\n\n" + _TABLE + "\n→ 結論\n"
+    long_ = (_FM + "### x\n\n- " + "とても長い導入文の続きです" * 4
+             + "\n\n" + _TABLE + "\n→ 結論\n")
+    a, _ = _build(tmp_path / "a", short)
+    b, _ = _build(tmp_path / "b", long_)
+    assert _only_object(b.slides[-1]).top > _only_object(a.slides[-1]).top
