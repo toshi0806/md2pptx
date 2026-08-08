@@ -131,9 +131,10 @@ def test_a_borderline_caption_is_counted_as_wrapping(tmp_path):
     size = r._caption_size()
     # 使える幅を少しだけ超える文字列を作る（許容幅 5% の内側に収まる長さ）
     import math
-    unit = r._text_width_pt("あ", size)
-    # ``ceil`` で必ず幅を超えさせる（``int`` の切り捨てだと超えないことがある）
-    text = "あ" * math.ceil(avail_pt * 1.02 / unit)
+    # 半角で作る——全角は 1 文字が使える幅の 4% ほどあり、粒が粗すぎて
+    # 「0〜5% 超過」の帯に着地させられない
+    unit = r._text_width_pt("a", size)
+    text = "a" * math.ceil(avail_pt * 1.01 / unit)
     w = r._text_width_pt(text, size)
     assert avail_pt < w <= avail_pt * 1.05, "前提が崩れた（狙った幅にならない）"
     assert r._wrapped_lines(text, size, avail_pt) == 1, "前提が崩れた（許容幅が効かない）"
