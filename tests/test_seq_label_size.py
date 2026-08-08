@@ -85,6 +85,7 @@ def test_the_text_is_not_drawn_larger_than_the_plan_assumes(tmp_path):
 def test_a_small_body_theme_is_unchanged(tmp_path):
     """本文が小さいテーマでは従来どおり本文サイズで描く（回帰させない）．"""
     prs, _ = _build(tmp_path / "s", _SRC, size=1200)
+    assert _sizes(prs), "図のテキストが無い（前提が崩れている）"
     assert max(_sizes(prs)) == Pt(12.0)
 
 
@@ -109,5 +110,10 @@ def test_the_note_fits_the_box_it_was_planned_for(tmp_path):
             if "MTU" in sh.text_frame.text]
     assert note, "注記が見つからない"
     sh = note[0]
-    size = max(rr.font.size for p in sh.text_frame.paragraphs for rr in p.runs)
-    assert r._text_width_pt(sh.text_frame.text, size / 12700) <= sh.width / 12700
+    sizes = [rr.font.size for p in sh.text_frame.paragraphs for rr in p.runs
+             if rr.font.size is not None]
+    assert sizes, "文字の大きさが設定されていない（前提が崩れている）"
+    # 幅の見積もりは md2pptx 自身のもの（`_text_width_pt`）を使う．plan が
+    # 使っているのと同じ物差しで測らないと、確かめたことにならない。
+    assert r._text_width_pt(sh.text_frame.text, max(sizes) / 12700) \
+        <= sh.width / 12700

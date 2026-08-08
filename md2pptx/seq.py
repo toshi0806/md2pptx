@@ -54,7 +54,7 @@ _ROW_MAX = _emu(0.80)         # 同・最大（少ないときに間延びさせ
 # **render もこの大きさで描くこと**——本文標準サイズで描くと、本文の大きい
 # テーマでは見積もりの倍近い字が入り、``wrap=False`` の注記がスライドの外へ
 # 出る（Issue #167）．外から使うので公開名も置く．
-_LABEL_PT = LABEL_PT = 16.0
+LABEL_PT = 16.0
 
 
 @dataclass
@@ -168,7 +168,7 @@ def _label_width(text: str) -> int:
     # 全角英数と全角記号（U+FF01〜）も上側に入るので、実用上これで足りる
     # （"（" U+FF08 も "Ａ" U+FF21 も 2 文字ぶんとして数えられることを確認済み）．
     units = sum(2 if ord(c) > 0x2E80 else 1 for c in text)
-    return int(units * _LABEL_PT * 12700 * 0.55) + _emu(0.12)
+    return int(units * LABEL_PT * 12700 * 0.55) + _emu(0.12)
 
 
 def plan_seq(seq: Seq, left: int, top: int, width: int, height: int) -> SeqPlan:
