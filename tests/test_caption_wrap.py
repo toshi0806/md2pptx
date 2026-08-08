@@ -115,3 +115,28 @@ def test_no_caption_gives_the_figure_everything(tmp_path):
     plain = Presentation(str(out))
     withcap, _ = _build(tmp_path / "c", _SHORT)
     assert _pic(plain).height > _pic(withcap).height
+
+
+def test_a_borderline_caption_is_counted_as_wrapping(tmp_path):
+    """幅ぎりぎりのキャプションは「折り返す」側に数える．
+
+    折り返し判定の許容幅（``_WRAP_SLACK``）は ``{box}`` のために「折り返さない」
+    へ倒してある。キャプションは**逆向き**——1 行多く取っても図が少し小さく
+    なるだけだが、足りないと 2 行目が罫線の下へ出る（Issue #169）。
+    """
+    prs, r = _build(tmp_path, _SHORT)
+    cap = _caption(prs)
+    tf = cap.text_frame
+    avail_pt = (cap.width - tf.margin_left - tf.margin_right) / 12700.0
+    size = r._caption_size()
+    # 使える幅を少しだけ超える文字列を作る（許容幅 5% の内側に収まる長さ）
+    import math
+    # 半角で作る——全角は 1 文字が使える幅の 4% ほどあり、粒が粗すぎて
+    # 「0〜5% 超過」の帯に着地させられない
+    unit = r._text_width_pt("a", size)
+    text = "a" * math.ceil(avail_pt * 1.01 / unit)
+    w = r._text_width_pt(text, size)
+    assert avail_pt < w <= avail_pt * 1.05, "前提が崩れた（狙った幅にならない）"
+    assert r._wrapped_lines(text, size, avail_pt) == 1, "前提が崩れた（許容幅が効かない）"
+    assert r._wrapped_lines(text, size, avail_pt, slack=1.0) == 2
+    assert r._caption_height(text, cap.width) >= 2 * r._line_height(size)
