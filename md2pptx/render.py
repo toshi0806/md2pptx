@@ -841,6 +841,10 @@ class Renderer:
         w = 0.0
         for ch in text or "":
             c = ord(ch)
+            # 0x2E80（CJK 部首補助の先頭）より前は半角として扱う．ここには
+            # ギリシャ文字や記号（U+2600〜 など）も入り、フォントによっては
+            # 全角で出るが、講義スライドで使うのは ASCII がほとんどなので
+            # この境目のままにしてある（**概算**．Issue #156）．
             if c <= 0x2E80:
                 w += font_pt * 0.55         # 半角
             elif _KANA_MIN <= c <= _KANA_MAX:
