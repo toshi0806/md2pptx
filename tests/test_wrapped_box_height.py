@@ -112,7 +112,8 @@ def test_the_next_box_is_not_pushed_down(tmp_path):
              if sh.is_placeholder and sh.placeholder_format.idx == 1]
     top = (body.top + body.text_frame.margin_top
            + r._para_height(0, sz, 2)      # 折り返して2行になった上の項目
-           + r._space_before(0, sz))       # 囲む項目そのものの段落前アキ
+           + r._space_before(0, sz)        # 囲む項目そのものの段落前アキ
+           - int(r._line_height(sz) * r._BOX_LIFT))   # 字に合わせた持ち上げ
     assert box.top == pytest.approx(top, abs=Pt(2))
 
 

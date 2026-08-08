@@ -229,3 +229,31 @@ def test_a_size_token_above_shifts_the_frame(tmp_path):
     a, = _boxes(plain.slides[-1])
     b, = _boxes(big.slides[-1])
     assert b.top > a.top
+
+
+# ------------------------------------------------ 字に対する上下（Issue #160）
+
+def test_the_frame_is_lifted_off_the_line_box(tmp_path):
+    """枠は行の箱より少し上に出す．
+
+    PowerPoint は行の箱の中で字を上寄りに置き、下に descent ぶんの空きを残す。
+    行の箱にそのまま合わせると、字に対して枠が下がって見える（実測で
+    上 4.8pt / 下 11pt）。
+    """
+    prs = _build(tmp_path, _FM + "### x\n\n- {box} 囲む行\n")
+    slide = prs.slides[-1]
+    box, = _boxes(slide)
+    body = _body(slide)
+    r = render.Renderer(str(tmp_path / "theme.pptx"))
+    sz = r._body_font_size()
+    line_top = (body.top + body.text_frame.margin_top
+                + r._space_before(0, sz))
+    assert box.top < line_top                      # 持ち上がっている
+    assert line_top - box.top < r._line_height(sz) // 4   # 上げすぎない
+
+
+def test_the_frame_never_leaves_the_top_of_the_slide(tmp_path):
+    """持ち上げても負の座標にはしない．"""
+    prs = _build(tmp_path, _FM + "### x\n\n- {box} 囲む行\n")
+    box, = _boxes(prs.slides[-1])
+    assert box.top >= 0
