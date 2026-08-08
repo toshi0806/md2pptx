@@ -62,7 +62,7 @@ from .ir import (
 )
 from .flow import FlowNode, plan_flow
 from .parser import parse_content_line
-from .seq import plan_seq
+from .seq import LABEL_PT as SEQ_LABEL_PT, plan_seq
 from . import workdir
 
 if TYPE_CHECKING:
@@ -1430,7 +1430,11 @@ class Renderer:
         plan = plan_seq(seq, left, top, width, height)
         if not plan.heads:
             return
-        bsz = self._body_font_size()
+        # **plan が前提にしている大きさで描く**（Issue #167）．箱の位置も幅も
+        # ``seq.LABEL_PT`` で見積もられているので、本文標準サイズで描くと
+        # 本文の大きいテーマでは字が箱に入らず、``wrap=False`` の注記が
+        # スライドの外へ出る．本文が小さいテーマでは従来どおり本文サイズ．
+        bsz = min(self._body_font_size(), SEQ_LABEL_PT)
         for i, head in enumerate(plan.heads):
             # 頭は**塗り箱ではなく折り返さない文字**にする．box() は枠の高さを
             # 固定して文字を折るので、「クライアント」のような長い名前が
