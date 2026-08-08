@@ -225,9 +225,9 @@ def test_a_short_table_is_not_stretched(tmp_path):
     src = _FM + "### x\n\n| a | b |\n|:--|:--|\n| 1 | 2 |\n"
     prs, line_h = _build(tmp_path, src)
     tbl = _only_object(prs.slides[-1])
-    # 1 行の高さで見る——帯いっぱいに広げると 1 行 2.5cm 級になる。
-    # 1 行の文字は本文標準サイズなので、その 2 倍を超えたら広げすぎ。
-    assert tbl.height / 2 < 2 * line_h
+    # 見出し＋データの 2 行しかない。1 行が本文標準サイズの 2 倍を超えたら
+    # 広げすぎ——帯いっぱいに広げると 1 行 2.5cm 級（本文の 4〜5 倍）になる。
+    assert tbl.height < 2 * (2 * line_h)
 
 
 def test_a_short_table_is_centred_in_its_band(tmp_path):
@@ -238,6 +238,13 @@ def test_a_short_table_is_centred_in_its_band(tmp_path):
     tbl = _only_object(slide)
     body, = [sh for sh in slide.shapes
              if sh.is_placeholder and sh.placeholder_format.idx == 1]
+    # 前提：導入文も結論文も 1 行に収まっている（折り返すと下の式が合わない）
+    r = render.Renderer(str(tmp_path / "theme.pptx"))
+    tf = body.text_frame
+    avail_pt = (body.width - tf.margin_left - tf.margin_right) / 12700.0
+    for t in ("導入", "→ 結論"):
+        assert r._wrapped_lines(t, r._body_font_size(), avail_pt) == 1, \
+            f"前提が崩れた（{t} が折り返す）"
     above = tbl.top - (body.top + line_h)          # 導入文の下から表の上まで
     below = (body.top + body.height) - (tbl.top + tbl.height) - line_h
     assert above > 0 and below > 0

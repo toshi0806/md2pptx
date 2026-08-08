@@ -1304,7 +1304,8 @@ class Renderer:
             # フォントは本文標準（lvl1）を基本に，収まらなければ下位レベルへ切り替える．
             fsize = self._fit_font(
                 lambda sz: self._table_height_emu(data, col_w, sz) <= height)
-            if self._table_height_emu(data, col_w, fsize) > height:
+            est_h = self._table_height_emu(data, col_w, fsize)
+            if est_h > height:
                 # 最小レベルまで縮小しても収まらない見積もり．PowerPoint は行を
                 # 最小行高以上へ自動拡張するため，黙って帯を超過しうる（従来は
                 # 無警告）．気づけるよう警告し，@overflow への誘導も添える．
@@ -1317,7 +1318,7 @@ class Renderer:
         # 行へ配分するので、2 行の表でも帯いっぱいに広がって 1 行が 2.5cm に
         # なる．見積もりのほうが小さければそちらで描き、余った空きは上下へ
         # 均等に配る．見積もりは下限で、PowerPoint は最小行高まで自動で広げる．
-        draw_h = min(height, self._table_height_emu(data, col_w, fsize))
+        draw_h = min(height, est_h)
         draw_top = top + max(0, (height - draw_h) // 2)
         gf = slide.shapes.add_table(
             nrows, ncols, Emu(left), Emu(draw_top), Emu(width), Emu(draw_h))
