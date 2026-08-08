@@ -1313,8 +1313,14 @@ class Renderer:
                     "smallest body font size and may overlap following content "
                     "(consider '<!-- @overflow: true -->')\n")
 
+        # **帯の高さをそのまま渡さない**（Issue #165）．PowerPoint は与えた高さを
+        # 行へ配分するので、2 行の表でも帯いっぱいに広がって 1 行が 2.5cm に
+        # なる．見積もりのほうが小さければそちらで描き、余った空きは上下へ
+        # 均等に配る．見積もりは下限で、PowerPoint は最小行高まで自動で広げる．
+        draw_h = min(height, self._table_height_emu(data, col_w, fsize))
+        draw_top = top + max(0, (height - draw_h) // 2)
         gf = slide.shapes.add_table(
-            nrows, ncols, Emu(left), Emu(top), Emu(width), Emu(height))
+            nrows, ncols, Emu(left), Emu(draw_top), Emu(width), Emu(draw_h))
         tbl = gf.table
 
         for ci, cw in enumerate(col_w):
