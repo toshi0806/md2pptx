@@ -161,6 +161,12 @@ def is_dark(rgb: str | None) -> bool:
     return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2] < 0.35
 
 
+# ひらがな（U+3041-309F）とカタカナ（U+30A0-30FF）．``ー``（U+30FC）や小書きの
+# かなも含む——並びの一部なので、同じ詰め方をする（Issue #156）．
+# 全角の句読点（U+3001-3002）はこの外．そちらは 1em のままにしておく．
+_KANA_MIN, _KANA_MAX = 0x3041, 0x30FF
+
+
 class SpaceBefore(NamedTuple):
     """段落前のアキ 1 つぶん（``a:spcBef``）．
 
@@ -526,6 +532,10 @@ class Renderer:
     # （枠が段落の下半分から次の項目へ掛かっていた）．
     _LINE = 1.20
 
+    # 折り返し判定の許容幅．PowerPoint は日本語を詰めて改行を避けるので、
+    # 幅を数％超えただけでは折り返らない（Issue #156）．
+    _WRAP_SLACK = 1.05
+
     @classmethod
     def _line_height(cls, size_pt: float) -> int:
         """文字 1 行ぶんの高さ（EMU）．"""
@@ -808,11 +818,56 @@ class Renderer:
 
     @staticmethod
     def _text_width_pt(text: str | None, font_pt: float) -> float:
-        """テキストの概算表示幅（pt）．全角は font_pt，半角は約 0.55×で見積もる．"""
+        """テキストの概算表示幅（pt）．
+
+        cn2026-theme（BIZ UDPゴシック）・30pt で PDF から実測した文字送り：
+
+        =========== ========= ======
+        種類        1文字      em 比
+        =========== ========= ======
+        カタカナ    26.53pt   0.885
+        漢字        29.87pt   0.996
+        ASCII       15.65pt   0.522
+        =========== ========= ======
+
+        **かなだけが 1em より狭い**（Issue #156）．日本語のプロポーショナル
+        フォント（Yu Gothic / Meiryo / BIZ UDP…）はかなを詰めるため．全角を
+        一律 1em で数えていた頃は折り返しを多く見積もり、``{box}`` の枠が
+        2 行ぶんの高さになって次の項目まで覆っていた．
+
+        等幅の日本語フォント（MS ゴシックなど）では逆に 1 割ぶん小さく見積もる．
+        いま広く使われている日本語フォントに寄せた**概算**．
+        """
         w = 0.0
         for ch in text or "":
-            w += font_pt if ord(ch) > 0x2E80 else font_pt * 0.55
+            c = ord(ch)
+            if c <= 0x2E80:
+                w += font_pt * 0.55         # 半角
+            elif _KANA_MIN <= c <= _KANA_MAX:
+                w += font_pt * 0.885        # かな（長音符・小書きを含む）
+            else:
+                w += font_pt                # 漢字・全角記号
         return w
+
+    @classmethod
+    def _wrapped_lines(cls, text: str | None, font_pt: float,
+                       avail_pt: float) -> int:
+        """``avail_pt`` の幅に流したときの行数（1 以上）．
+
+        **僅差の超過では折り返さない**（Issue #156）．PowerPoint は日本語を
+        少し詰めて改行を避ける（``eaLnBrk`` / ``hangingPunct``）ので、幅を
+        1〜数％超えただけの行は 1 行のまま出る．cn2026-02 のシラバスの
+        「ネットワークコミュニケーション」は実測 397.9pt・使える幅 382.6pt
+        （4.0% 超過）で、1 行に収まっている．
+
+        取り違える向きが問題になるのは ``{box}`` で、**折り返すと決めつけると
+        枠が次の項目まで覆う**．収まると見て外したときは枠が短くなるだけなので、
+        迷ったら「折り返さない」へ倒す．
+        """
+        if avail_pt <= 0:
+            return 1
+        w = cls._text_width_pt(text, font_pt)
+        return max(1, math.ceil(w / (avail_pt * cls._WRAP_SLACK)))
 
     def _fit_font(self, fits_at: Callable[[float], bool]) -> float:
         """レベル別サイズを大きい順に試し，``fits_at(size)`` が真の最大サイズを返す．
@@ -1788,8 +1843,7 @@ class Renderer:
             ind = indent_of(ln.level)
             avail_pt = max(1.0, (avail_full - ind) / 12700.0)
             text = (ln.text or "").replace("\v", " ")
-            n = max(1, math.ceil(self._text_width_pt(text, sz) / avail_pt))
-            return sz, n, ind
+            return sz, self._wrapped_lines(text, sz, avail_pt), ind
 
         y = ph.top + tf.margin_top
         # preceding は**位置を数えるためだけ**に使う．そこに枠が付いていても
@@ -1900,8 +1954,8 @@ class Renderer:
             ind = self._indent_for(ln.level)
             avail_pt = max(1.0, (avail_w - ind) / 12700.0)
             text = (ln.text or "").replace("\v", " ")
-            n = max(1, math.ceil(self._text_width_pt(text, sz) / avail_pt))
-            total += self._para_height(ln.level, sz, n)
+            total += self._para_height(
+                ln.level, sz, self._wrapped_lines(text, sz, avail_pt))
         return total
 
     def _fit_scale(self, ph: SlidePlaceholder, lines: list[Line],
