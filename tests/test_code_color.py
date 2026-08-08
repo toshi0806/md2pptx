@@ -128,3 +128,34 @@ def test_every_run_stays_monospace(tmp_path):
              if sh.is_placeholder and sh.placeholder_format.idx == 1]
     names = {r.font.name for r in body.text_frame.paragraphs[0].runs}
     assert len(names) == 1 and None not in names
+
+
+# ------------------------------------ 色でない ``{…}`` と色が混ざる並び（#163）
+
+@pytest.mark.parametrize("src,plain,colors", [
+    # 色でないものが後ろ
+    ("[a]{blue}[b]{n}", "a[b]{n}", ["#0000FF", None]),
+    # 色でないものが前
+    ("[b]{n}[a]{blue}", "[b]{n}a", [None, "#0000FF"]),
+    # 色でないものが間に挟まる
+    ("[a]{blue}[b]{n}[c]{red}", "a[b]{n}c", ["#0000FF", None, "#FF0000"]),
+    # 色でないものが両端
+    ("[x]{n}[a]{blue}[y]{m}", "[x]{n}a[y]{m}", [None, "#0000FF", None]),
+])
+def test_a_skipped_match_keeps_its_text(src, plain, colors):
+    """色名でない ``{…}`` は**1文字も落とさず**に残る．
+
+    飛ばしたぶんは「次のマッチまでの地の文」または末尾で拾われる。並びによって
+    拾われ方が変わるので、代表的な4通りを固定しておく。
+    """
+    ln, = _lines(_fence("text color", src))
+    assert ln.text == plain
+    assert [s.color for s in ln.spans] == colors
+
+
+def test_nothing_is_lost_whatever_the_order():
+    """記号を除いた文字列は、色の付いた語と地の文の連結に必ず一致する．"""
+    src = "pre[a]{blue}mid[b]{n}post[c]{red}end"
+    ln, = _lines(_fence("text color", src))
+    assert "".join(s.text for s in ln.spans) == ln.text
+    assert ln.text == "prea" + "mid[b]{n}post" + "c" + "end"

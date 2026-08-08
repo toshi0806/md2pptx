@@ -1131,7 +1131,9 @@ def _code_color_spans(text: str) -> tuple[str, list[Span]]:
         try:
             kind, value = parse_color(m.group("color"))
         except Exception:
-            continue                    # 色名でないなら、ただの角括弧
+            # 色名でないなら、ただの角括弧．**``pos`` は進めない**——飛ばした
+            # ぶんは「次のマッチまでの地の文」か末尾でそのまま拾われる．
+            continue
         if m.start() > pos:
             out.append(Span(text=text[pos:m.start()], segment=0))
         name = value if kind == "theme" else "#" + value
