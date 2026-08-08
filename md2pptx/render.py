@@ -532,6 +532,13 @@ class Renderer:
     # （枠が段落の下半分から次の項目へ掛かっていた）．
     _LINE = 1.20
 
+    # 枠（``{box}``）を行の箱より少し上へずらす割合（Issue #160）．
+    # PowerPoint は行の箱の中で字を**上寄り**に置き、下に descent ぶんの空きを
+    # 残す．行の箱にそのまま合わせると、字に対して枠が下がって見える——実測で
+    # 上 4.8pt / 下 11pt（30pt の行・箱 36pt）．差の半分だけ持ち上げて、
+    # 上下の空きを揃える．位置によらず一定なので、積もりはしない．
+    _BOX_LIFT = 0.086
+
     # 折り返し判定の許容幅．PowerPoint は日本語を詰めて改行を避けるので、
     # 幅を数％超えただけでは折り返らない（Issue #156）．
     _WRAP_SLACK = 1.05
@@ -1873,9 +1880,13 @@ class Renderer:
                         ph.left + ph.width - bl)
                 # 枠は**アキを含めない**——アキは段落の上に空く隙間で、字の入る
                 # ところではない．囲むのは字のほうだけ（Issue #150）．
-                self.line_box(slide, bl, y + self._space_before(ln.level, sz),
+                # そこから ``_BOX_LIFT`` だけ持ち上げる（Issue #160）．
+                line_h = self._line_height(sz)
+                box_top = (y + self._space_before(ln.level, sz)
+                           - int(line_h * self._BOX_LIFT))
+                self.line_box(slide, bl, max(0, box_top),
                               max(w, int(avail * 0.2)),
-                              wrapped * self._line_height(sz), ln.box_color)
+                              wrapped * line_h, ln.box_color)
             y += para_h
 
     def line_box(self, slide: PptxSlide, left: int, top: int, w: int, h: int,
