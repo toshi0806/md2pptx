@@ -1762,7 +1762,7 @@ class Renderer:
         **見積もりなので完全ではない**．テーマがレベルごとに行間を変えている枠では
         ずれうる（SYNTAX.md に明記）．ずれても文字は動かない——枠だけが少し外れる．
         """
-        k = (shrink / 100.0) if shrink else 1.0
+        k = (shrink / 100.0) if shrink is not None else 1.0
         if not any(ln.boxed for ln in line_blocks):
             return
         tf = ph.text_frame
@@ -1915,9 +1915,14 @@ class Renderer:
         縮めると折り返しが減ってさらに縮むので、数回まわして落ち着かせる．
         """
         tf = ph.text_frame
+        # 継承したままのプレースホルダは width / height が None を返す．
+        # そこはレイアウト側で補えるが（``_effective_geom``）、スライドを持って
+        # いないここでは補えないので、測れなければ縮めない．
+        if ph.width is None or ph.height is None or not lines:
+            return None
         avail_h = ph.height - tf.margin_top - tf.margin_bottom
         avail_w = ph.width - tf.margin_left - tf.margin_right
-        if avail_h <= 0 or avail_w <= 0 or not lines:
+        if avail_h <= 0 or avail_w <= 0:
             return None
         levels = self._frame_font_levels(tf)
         need = self._text_height(lines, levels, default_size_delta, avail_w)

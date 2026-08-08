@@ -83,13 +83,16 @@ def test_the_text_fits_after_shrinking(tmp_path):
     """縮めた率で数え直すと、プレースホルダに収まっている．"""
     src = _FM + "### x\n\n" + _many(20)
     prs, r = _build(tmp_path, src)
+    from md2pptx.parser import parse as _parse
     body = _body(prs)
     scale = _font_scale(body) / 100.0
     tf = body.text_frame
-    avail = body.height - tf.margin_top - tf.margin_bottom
-    sz = r._body_font_levels()[0] * scale
-    n = len([p for p in tf.paragraphs if p.text.strip()])
-    assert n * r._para_height(0, sz) <= avail
+    avail_h = body.height - tf.margin_top - tf.margin_bottom
+    avail_w = body.width - tf.margin_left - tf.margin_right
+    # 折り返しも含めて数え直す——md2pptx が実際に使っている式で確かめる
+    lines = [b for b in _parse(src).slides[-1].blocks]
+    need = r._text_height(lines, r._frame_font_levels(tf), None, avail_w, scale)
+    assert need <= avail_h
 
 
 # ---------------------------------------------------------------- 明示指定
