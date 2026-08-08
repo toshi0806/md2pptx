@@ -1483,8 +1483,10 @@ class Renderer:
         cl, ct, cr, cb, vis_w, vis_h = self._crop_fractions(img.crop, W, H)
         aspect = (vis_w / vis_h) if vis_h else 1.0      # クロップ後の可視領域の比
 
-        # キャプション用の高さを確保（1 行分）．
-        cap_h = int(Pt(self._body_font_size()) * 1.4) if img.caption else 0
+        # キャプション用の高さを確保．**折り返す行数で数える**（Issue #169）——
+        # 1 行ぶん決め打ちだと、長いキャプションの 2 行目が確保の外へ出て
+        # 罫線やページ番号に掛かる．長く書けば図が小さくなるが、それは見て分かる．
+        cap_h = self._caption_height(img.caption, width)
         avail_w = float(width)
         avail_h = float(max(1, seg_h - cap_h))
 
@@ -1566,6 +1568,25 @@ class Renderer:
             return box_w, box_w / aspect
         return box_h * aspect, box_h    # 高さが制約：高さいっぱい
 
+    def _caption_size(self) -> float:
+        """キャプションの文字サイズ（本文標準より 1 段小さめ）．"""
+        levels = self._body_font_levels()
+        return levels[1] if len(levels) > 1 else levels[0]
+
+    def _caption_height(self, text: str | None, width: int) -> int:
+        """キャプションに要る高さ（EMU）．無ければ 0．
+
+        ``_draw_caption`` は ``word_wrap = True`` で描くので、**折り返す行数で
+        数える**（Issue #169）．テキストボックスの左右マージンは既定のまま
+        （`_draw_caption` が触らない）なので、ここでも既定値を引く．
+        """
+        if not text:
+            return 0
+        size = self._caption_size()
+        avail_pt = max(1.0, (width - 2 * Pt(7.2)) / 12700.0)   # 既定の左右マージン
+        n = self._wrapped_lines(text, size, avail_pt)
+        return int(n * Pt(size) * 1.4)
+
     def _draw_caption(self, slide: PptxSlide, text: str, left: int, top: int,
                       width: int, height: int) -> None:
         """図下キャプションを中央寄せの小さめ本文サイズで描く．"""
@@ -1580,10 +1601,8 @@ class Renderer:
         p.alignment = PP_ALIGN.CENTER
         p.text = text
         # 本文標準より 1 段小さめ（テーマ既定サイズ体系の中で縮小）．
-        levels = self._body_font_levels()
-        size = levels[1] if len(levels) > 1 else levels[0]
         for r in p.runs:
-            r.font.size = Pt(size)
+            r.font.size = Pt(self._caption_size())
 
     # ------------------------------------------------------- content slide
     def render_slide(self, slide: Slide, slide_number: bool = True,
