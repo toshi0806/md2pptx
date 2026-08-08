@@ -252,8 +252,15 @@ def test_the_frame_is_lifted_off_the_line_box(tmp_path):
     assert line_top - box.top < r._line_height(sz) // 4   # 上げすぎない
 
 
-def test_the_frame_never_leaves_the_top_of_the_slide(tmp_path):
-    """持ち上げても負の座標にはしない．"""
+def test_the_frame_stays_inside_the_body_after_the_lift(tmp_path):
+    """持ち上げても本文の枠から上へ出ない．
+
+    ``max(0, ...)`` のクランプは**防御**——持ち上げは行の 8.6% で、本文枠は
+    タイトルの下にあるので、実際のテーマで負になる道は無い。ここで見ているのは
+    「持ち上げが本文枠を越えるほど大きくない」ことのほう。
+    """
     prs = _build(tmp_path, _FM + "### x\n\n- {box} 囲む行\n")
-    box, = _boxes(prs.slides[-1])
+    slide = prs.slides[-1]
+    box, = _boxes(slide)
     assert box.top >= 0
+    assert box.top >= _body(slide).top
