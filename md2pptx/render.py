@@ -542,6 +542,11 @@ class Renderer:
     # （2.85pt ＝ 行の 0.079）だけ足りない．
     _BOX_LIFT = 0.165
 
+    # キャプションのテキストボックスの左右マージン（pt）．**見積もりと描画の
+    # 両方でこの値を使う**——python-pptx の既定に任せると、既定が変われば
+    # 見積もりだけがずれて Issue #169 が戻る．
+    _CAPTION_MARGIN_PT = 7.2
+
     # 折り返し判定の許容幅．PowerPoint は日本語を詰めて改行を避けるので、
     # 幅を数％超えただけでは折り返らない（Issue #156）．
     _WRAP_SLACK = 1.05
@@ -1583,7 +1588,8 @@ class Renderer:
         if not text:
             return 0
         size = self._caption_size()
-        avail_pt = max(1.0, (width - 2 * Pt(7.2)) / 12700.0)   # 既定の左右マージン
+        avail_pt = max(1.0,
+                       (width - 2 * Pt(self._CAPTION_MARGIN_PT)) / 12700.0)
         n = self._wrapped_lines(text, size, avail_pt)
         return int(n * Pt(size) * 1.4)
 
@@ -1594,6 +1600,9 @@ class Renderer:
             Emu(left), Emu(top), Emu(width), Emu(max(height, Pt(12))))
         tf = tb.text_frame
         tf.word_wrap = True
+        # 左右マージンは**明示する**．``_caption_height`` が同じ値で幅を数えるので、
+        # 既定に任せると python-pptx の既定が変わったときに見積もりだけずれる．
+        tf.margin_left = tf.margin_right = Pt(self._CAPTION_MARGIN_PT)
         # キャプションは短文前提（1 行分の高さを確保）．枠を内容で伸ばさない
         # （長文で下方向へはみ出さないよう auto_size を無効化）．必要なら折り返す．
         tf.auto_size = MSO_AUTO_SIZE.NONE

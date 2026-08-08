@@ -70,7 +70,7 @@ def test_a_wrapped_caption_gets_room_for_every_line(tmp_path):
     cap = _caption(prs)
     tf = cap.text_frame
     avail_pt = (cap.width - tf.margin_left - tf.margin_right) / 12700.0
-    size = r._body_font_levels()[1]
+    size = r._caption_size()
     n = r._wrapped_lines(_LONG, size, avail_pt)
     assert n > 1, "前提が崩れた（キャプションが折り返さない）"
     assert cap.height >= n * r._line_height(size)
@@ -97,7 +97,7 @@ def test_a_short_caption_is_unchanged(tmp_path):
     """1行に収まるキャプションでは従来どおり（回帰させない）．"""
     prs, r = _build(tmp_path, _SHORT)
     cap = _caption(prs)
-    size = r._body_font_levels()[1]
+    size = r._caption_size()
     assert cap.height < 2 * r._line_height(size)
 
 
