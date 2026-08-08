@@ -184,3 +184,28 @@ def test_no_minimum_warning_for_an_ordinary_slide(tmp_path, capsys):
     """ふつうの分量では警告しない（出しすぎると読まれなくなる）．"""
     _build(tmp_path, _FM + "### 表\n\n導入文\n\n" + _TABLE + "\n→ 結論文\n")
     assert "band hit its minimum height" not in capsys.readouterr().err
+
+
+# ------------------------------------------------------- 折り返す地の文（#158）
+
+def test_a_wrapped_intro_pushes_the_band_down(tmp_path):
+    """導入文が折り返したら、そのぶん帯が下がる（結論文がはみ出さない）．
+
+    帯の高さを「地の文は1行ずつ」で数えていた頃は、折り返した1行ぶん帯が
+    上へずれ、結論文が下の罫線を越えていた（cn2026-02 p.34）。
+    """
+    intro = "とても長い導入文の続きです" * 4      # 全角52字
+    short = _FM + "### x\n\n- 短い導入\n\n" + _TABLE + "\n→ 結論\n"
+    long_ = _FM + "### x\n\n- " + intro + "\n\n" + _TABLE + "\n→ 結論\n"
+    a, _ = _build(tmp_path / "a", short)
+    b, _ = _build(tmp_path / "b", long_)
+    r = render.Renderer(str(tmp_path / "b" / "theme.pptx"))
+    # 前提：長いほうが本当に折り返している（既定テンプレートの本文枠は
+    # 8.5in ≈ 612pt、lvl1 は 18pt なので 30字ほどで折り返る）
+    body, = [sh for sh in b.slides[-1].shapes
+             if sh.is_placeholder and sh.placeholder_format.idx == 1]
+    tf = body.text_frame
+    avail_pt = (body.width - tf.margin_left - tf.margin_right) / 12700.0
+    assert r._wrapped_lines(intro, r._body_font_size(), avail_pt) > 1, \
+        "前提が崩れた（導入文が折り返らない）"
+    assert _only_object(b.slides[-1]).top > _only_object(a.slides[-1]).top

@@ -2529,11 +2529,25 @@ class Renderer:
         # 食い込んでいた（Issue #145）．
         shrink = (scale / 100.0) if scale is not None else 1.0
 
+        # 折り返しは**プレースホルダの幅**で数える（Issue #158）．1 行ずつと
+        # 決めつけていた頃は、導入文が折り返すとそのぶん帯が上へずれ、
+        # 結論文が下の罫線を越えていた（cn2026-02 p.34）．
+        if body is not None:
+            tf = body.text_frame
+            tf_w = body.width - tf.margin_left - tf.margin_right
+        else:
+            # 枠が無ければ地の文も描かれない（``_warn_no_body``）ので、ここは
+            # 帯の見積もりが 0 除算しないための置きにすぎない．
+            tf_w = width
+
         def para_h(ln: Line) -> int:
             d = ln.size_delta if ln.size_delta is not None else default_size_delta
             base = levels[min(ln.level, len(levels) - 1)] if levels else bsz
             sz = self._size_from_delta(base, d) * shrink
-            return self._para_height(ln.level, sz)
+            avail_pt = max(1.0, (tf_w - self._indent_for(ln.level)) / 12700.0)
+            text = (ln.text or "").replace("\v", " ")
+            return self._para_height(ln.level, sz,
+                                     self._wrapped_lines(text, sz, avail_pt))
 
         before_h = sum(para_h(ln) for ln in prose_before)
         after_h = sum(para_h(ln) for ln in prose_after)
