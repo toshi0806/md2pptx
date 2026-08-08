@@ -870,7 +870,7 @@ class Renderer:
 
     @classmethod
     def _wrapped_lines(cls, text: str | None, font_pt: float,
-                       avail_pt: float) -> int:
+                       avail_pt: float, slack: float | None = None) -> int:
         """``avail_pt`` の幅に流したときの行数（1 以上）．
 
         **僅差の超過では折り返さない**（Issue #156）．PowerPoint は日本語を
@@ -882,11 +882,16 @@ class Renderer:
         取り違える向きが問題になるのは ``{box}`` で、**折り返すと決めつけると
         枠が次の項目まで覆う**．収まると見て外したときは枠が短くなるだけなので、
         迷ったら「折り返さない」へ倒す．
+
+        ``slack`` で許容幅を上書きできる．**キャプションは逆向き**なので 1.0 を
+        渡す（Issue #169）——場所を 1 行ぶん多く取っても図が少し小さくなるだけだが、
+        足りないと 2 行目が罫線の下へ出る．
         """
         if avail_pt <= 0:
             return 1
+        k = cls._WRAP_SLACK if slack is None else slack
         w = cls._text_width_pt(text, font_pt)
-        return max(1, math.ceil(w / (avail_pt * cls._WRAP_SLACK)))
+        return max(1, math.ceil(w / (avail_pt * k)))
 
     def _fit_font(self, fits_at: Callable[[float], bool]) -> float:
         """レベル別サイズを大きい順に試し，``fits_at(size)`` が真の最大サイズを返す．
@@ -1590,7 +1595,9 @@ class Renderer:
         size = self._caption_size()
         avail_pt = max(1.0,
                        (width - 2 * Pt(self._CAPTION_MARGIN_PT)) / 12700.0)
-        n = self._wrapped_lines(text, size, avail_pt)
+        # **許容幅は効かせない**（slack=1.0）．キャプションは 1 行多く取っても
+        # 図が少し小さくなるだけだが、足りないと罫線の下へ出る（Issue #169）．
+        n = self._wrapped_lines(text, size, avail_pt, slack=1.0)
         return int(n * Pt(size) * 1.4)
 
     def _draw_caption(self, slide: PptxSlide, text: str, left: int, top: int,
