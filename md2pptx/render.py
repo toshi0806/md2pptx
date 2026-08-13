@@ -1255,8 +1255,12 @@ class Renderer:
     # 表のセル左右マージン合計（pt）．``_table_height_emu`` の見積もりと同じ値．
     _TABLE_SIDE_PAD_PT = 18
 
+    # 太字は同じ字数でも少し広い．表のヘッダ行の幅見積もりに掛ける
+    # （cn2026-06「cwnd」・cn2026-08「ポート」がヘッダだけ折り返した）．
+    _BOLD_W_RATIO = 1.12
+
     def _table_auto_cols(self, ncols: int, data: list[list[str]],
-                         font_pt: float) -> list[int]:
+                         font_pt: float, has_header: bool = False) -> list[int]:
         """列ごとに「最長のセルが 1 行に収まる幅」（EMU）を返す．
 
         ``_text_width_pt`` は概算で、**実際の組版より少し狭く出る**．
@@ -1267,16 +1271,21 @@ class Renderer:
         """
         cols = []
         for ci in range(ncols):
-            cell_w = max((self._text_width_pt(
-                row[ci] if ci < len(row) else "", font_pt) for row in data),
-                default=0.0)
+            widths = []
+            for ri, row in enumerate(data):
+                w = self._text_width_pt(row[ci] if ci < len(row) else "", font_pt)
+                if has_header and ri == 0:
+                    w *= self._BOLD_W_RATIO         # ヘッダ行は太字で描く
+                widths.append(w)
+            cell_w = max(widths, default=0.0)
             cols.append(int((cell_w * self._BOX_W_SAFETY
                              + self._TABLE_SIDE_PAD_PT) * 12700))
         return cols
 
     def _table_geometry(self, spec: str | float | None, band_w: int, ncols: int,
                         data: list[list[str]], font_pt: float,
-                        col_ratios: list[float] | None) -> tuple[int, list[int]]:
+                        col_ratios: list[float] | None,
+                        has_header: bool = False) -> tuple[int, list[int]]:
         """``@table-width`` から表の (総幅, 列幅リスト) を決める．
 
         未指定なら帯幅いっぱい（従来どおり）．``auto`` は列ごとの最長セルが
@@ -1290,7 +1299,7 @@ class Renderer:
         通常配分へ戻す（潰れた列を作らない）。
         """
         if spec == "auto":
-            cols = self._table_auto_cols(ncols, data, font_pt)
+            cols = self._table_auto_cols(ncols, data, font_pt, has_header)
             need = sum(cols)
             if not col_ratios:
                 if need <= band_w:
@@ -1359,7 +1368,8 @@ class Renderer:
         data = ([table.header] if table.header else []) + list(table.rows)
         # 総幅を先に決める——狭めたぶんは左右へ等分して帯の中で中央に置く．
         tw, col_w = self._table_geometry(total_width, width, ncols, data,
-                                         self._body_font_size(), col_ratios)
+                                         self._body_font_size(), col_ratios,
+                                         bool(table.header))
         if tw < width:
             left += (width - tw) // 2
             width = tw
