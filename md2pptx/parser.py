@@ -926,7 +926,7 @@ def _table_width_value(value: str, lineno: int) -> str | float:
     読めるので受け取らない．0 以下は表が消えるだけなので誤りとして扱う．
     """
     v = value.strip().replace("％", "%")
-    if v.lower() in ("auto", "自動"):
+    if v.lower() == "auto":
         return "auto"
     if v.endswith("%"):
         try:

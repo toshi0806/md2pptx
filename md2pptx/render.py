@@ -1244,6 +1244,8 @@ class Renderer:
         切り捨ての端数は最終列へ寄せ、**合計を ``width`` に一致させる**——
         列ごとに切り捨てたままだと表の右端が帯より僅かに内側で終わる．
         """
+        if ncols <= 0:
+            return []
         if col_ratios and len(col_ratios) == ncols and sum(col_ratios) > 0:
             tot = float(sum(col_ratios))
             cols = [int(width * r / tot) for r in col_ratios]
@@ -1297,6 +1299,11 @@ class Renderer:
         どの指定でも**帯幅は超えない**——表がはみ出すのは ``@overflow`` の
         受け持ちで、幅の指定では起こさない。収まらない ``auto`` は帯幅いっぱいの
         通常配分へ戻す（潰れた列を作らない）。
+
+        ``font_pt`` は**本文の標準サイズ**を渡す。実際に描かれるサイズは幅が
+        決まった後に ``_fit_font`` が帯の高さを見て決めるので、縮めば見積もりは
+        余る側へずれる。幅を先に決めるのは、列幅が決まらないと行の折り返し数が
+        出ず、高さも決められないため（順序は変えられない）。
         """
         if spec == "auto":
             cols = self._table_auto_cols(ncols, data, font_pt, has_header)

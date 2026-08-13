@@ -36,10 +36,17 @@ _LONG = """| 種類 | 説明 |
 """
 
 
-def _build(tmp_path, src):
+def _theme_path(tmp_path):
+    """このテスト群が使う素のテーマ（既定レイアウトのまま）．"""
     tmp_path.mkdir(parents=True, exist_ok=True)
     theme = tmp_path / "theme.pptx"
-    Presentation().save(str(theme))
+    if not theme.exists():
+        Presentation().save(str(theme))
+    return theme
+
+
+def _build(tmp_path, src):
+    theme = _theme_path(tmp_path)
     out = tmp_path / "out.pptx"
     r = render.Renderer(str(theme))
     r.render(parse(src))
@@ -137,18 +144,10 @@ def test_explicit_ratios_win_over_auto(tmp_path):
 
 def test_auto_leaves_room_for_the_longest_cell(tmp_path):
     """``auto`` の幅は最長セルが 1 行に収まるだけある（潰さない）．"""
-    _, w = _geometry(_build(tmp_path, _src(_SHORT, "<!-- @table-width: auto -->")))
     r = render.Renderer(str(_theme_path(tmp_path)))
+    _, w = _geometry(_build(tmp_path, _src(_SHORT, "<!-- @table-width: auto -->")))
     need = r._text_width_pt("ブロードキャスト", r._body_font_size())
     assert w / 12700.0 > need          # 列 1 つぶんより広い（左右の余白を別にしても）
-
-
-def _theme_path(tmp_path):
-    theme = tmp_path / "theme.pptx"
-    if not theme.exists():
-        tmp_path.mkdir(parents=True, exist_ok=True)
-        Presentation().save(str(theme))
-    return theme
 
 
 # ---------------------------------------------------------------- 併用
