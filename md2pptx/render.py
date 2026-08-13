@@ -1239,12 +1239,72 @@ class Renderer:
 
     def _table_col_widths(self, ncols: int, width: int,
                           col_ratios: list[float] | None) -> list[int]:
-        """表の列幅（EMU）リストを返す（均等 or 比率指定）．"""
+        """表の列幅（EMU）リストを返す（均等 or 比率指定）．
+
+        切り捨ての端数は最終列へ寄せ、**合計を ``width`` に一致させる**——
+        列ごとに切り捨てたままだと表の右端が帯より僅かに内側で終わる．
+        """
         if col_ratios and len(col_ratios) == ncols and sum(col_ratios) > 0:
             tot = float(sum(col_ratios))
-            return [int(width * r / tot) for r in col_ratios]
-        cw = int(width / ncols)
-        return [cw] * ncols
+            cols = [int(width * r / tot) for r in col_ratios]
+        else:
+            cols = [int(width / ncols)] * ncols
+        cols[-1] += width - sum(cols)
+        return cols
+
+    # 表のセル左右マージン合計（pt）．``_table_height_emu`` の見積もりと同じ値．
+    _TABLE_SIDE_PAD_PT = 18
+
+    def _table_auto_cols(self, ncols: int, data: list[list[str]],
+                         font_pt: float) -> list[int]:
+        """列ごとに「最長のセルが 1 行に収まる幅」（EMU）を返す．
+
+        ``_text_width_pt`` は概算で、**実際の組版より少し狭く出る**．
+        「ブロードキャスト」は見積もり 212.4pt に対し、使える幅 214.4pt の
+        セルで折り返した（cn2026-04「通信の種類」・30pt で実測）．
+        幅を詰めるための機能で折り返しを増やしては本末転倒なので、
+        ``{box}`` の枠幅と同じ安全係数を掛けて余裕を持たせる．
+        """
+        cols = []
+        for ci in range(ncols):
+            cell_w = max((self._text_width_pt(
+                row[ci] if ci < len(row) else "", font_pt) for row in data),
+                default=0.0)
+            cols.append(int((cell_w * self._BOX_W_SAFETY
+                             + self._TABLE_SIDE_PAD_PT) * 12700))
+        return cols
+
+    def _table_geometry(self, spec: str | float | None, band_w: int, ncols: int,
+                        data: list[list[str]], font_pt: float,
+                        col_ratios: list[float] | None) -> tuple[int, list[int]]:
+        """``@table-width`` から表の (総幅, 列幅リスト) を決める．
+
+        未指定なら帯幅いっぱい（従来どおり）．``auto`` は列ごとの最長セルが
+        1 行に収まる幅を積み上げ、**その必要幅をそのまま列幅にする**——総幅だけ
+        合わせて等分すると、短い列と長い列が同じ幅になって元の木阿弥になる。
+        ただし ``@table-widths`` を明示してあればそちらを優先する（著者の指定が
+        自動判定に負けない）。
+
+        どの指定でも**帯幅は超えない**——表がはみ出すのは ``@overflow`` の
+        受け持ちで、幅の指定では起こさない。収まらない ``auto`` は帯幅いっぱいの
+        通常配分へ戻す（潰れた列を作らない）。
+        """
+        if spec == "auto":
+            cols = self._table_auto_cols(ncols, data, font_pt)
+            need = sum(cols)
+            if not col_ratios:
+                if need <= band_w:
+                    return need, cols
+                # 帯に収まらないぶんは**必要幅の比で**詰める．均等に割ると
+                # 長い列だけが折り返すので、狭める前より読みにくくなる．
+                return band_w, self._table_col_widths(
+                    ncols, band_w, [float(c) for c in cols])
+            width = min(band_w, need)
+        elif spec is None:
+            width = band_w
+        else:
+            width = min(band_w, int(band_w * float(spec) / 100.0))
+        return width, self._table_col_widths(ncols, width, col_ratios)
 
     def _table_height_emu(self, data: list[list[str]], col_w: list[int],
                           font_pt: float) -> int:
@@ -1272,12 +1332,16 @@ class Renderer:
                      width: int, height: int,
                      col_ratios: list[float] | None = None,
                      overflow: bool = False,
-                     has_prose_after: bool = False) -> GraphicFrame | None:
+                     has_prose_after: bool = False,
+                     total_width: str | float | None = None) -> GraphicFrame | None:
         """Table ブロックを座標指定で 1 つ描画する（ヘッダ行をアクセント色で着色）．
 
         ``参照スクリプト`` の表描画を移植・一般化したもの．列幅は既定で均等，
         ``col_ratios`` を与えると比率配分する．配色はテーマ任せ（ヘッダのみ
         アクセント色 A2＋背景色 BG の文字）．
+
+        ``total_width``（@table-width）を与えると総幅を帯より狭くし，余った
+        帯は左右へ等分する（中央寄せ）．``col_ratios`` はその総幅を配分する．
 
         overflow=True（@overflow）の場合はフォント縮小（_fit_font）を行わず，
         本文標準（lvl1）サイズのまま必要な高さで描画する．上端は帯上端に固定し，
@@ -1292,8 +1356,13 @@ class Renderer:
         if nrows == 0 or ncols == 0:
             return None
 
-        col_w = self._table_col_widths(ncols, width, col_ratios)
         data = ([table.header] if table.header else []) + list(table.rows)
+        # 総幅を先に決める——狭めたぶんは左右へ等分して帯の中で中央に置く．
+        tw, col_w = self._table_geometry(total_width, width, ncols, data,
+                                         self._body_font_size(), col_ratios)
+        if tw < width:
+            left += (width - tw) // 2
+            width = tw
 
         if overflow:
             # 縮小せず本文標準サイズを維持し，収まらない分は下へはみ出す．
@@ -1669,16 +1738,20 @@ class Renderer:
         slide_overflow = bool(directives.get("overflow", False))
         blocks = slide.blocks or []
 
+        # 表の総幅（@table-width）も列幅比と同じくスライド単位で全ての表に効く．
+        table_width = self._table_width(directives)
+
         if slide.columns:
             self._render_columns(s, slide.columns, default_num_color, scale,
                                  default_autofit, default_size_delta,
-                                 self._col_ratios(directives), slide_overflow)
+                                 self._col_ratios(directives), slide_overflow,
+                                 table_width)
             if directives.get("col_arrow"):
                 self.draw_column_arrow(s, len(slide.columns))
         elif any(is_object_block(b) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
                                  self._col_ratios(directives), default_size_delta,
-                                 slide_overflow)
+                                 slide_overflow, table_width)
         else:
             line_blocks = [b for b in blocks if isinstance(b, Line)]
             body = self._body_placeholder(s)
@@ -1739,7 +1812,8 @@ class Renderer:
                         default_autofit: bool,
                         default_size_delta: int | None = None,
                         col_ratios: list[float] | None = None,
-                        slide_overflow: bool = False) -> None:
+                        slide_overflow: bool = False,
+                        table_width: str | float | None = None) -> None:
         """多カラム（「2つのコンテンツ」）：各カラムを idx 1, 2 … へ流す．
 
         columns[i] を プレースホルダ idx=i+1 へ描画する（idx 0 はタイトル）．
@@ -1772,7 +1846,8 @@ class Renderer:
                 self._render_stacked_into(slide, col_blocks, ph, left, top,
                                           width, height, default_num_color, scale,
                                           default_autofit, col_ratios,
-                                          default_size_delta, slide_overflow)
+                                          default_size_delta, slide_overflow,
+                                          table_width)
                 continue
             # Line のみのカラムはプレースホルダへ直接流し込む．_render_stacked_into は
             # objects（表・図）が空だと何も描画せず return する設計なので，ここを通すと
@@ -2078,6 +2153,15 @@ class Renderer:
             eff = self._fit_scale(ph, lines, default_size_delta)
         self._apply_autofit(ph.text_frame, eff, default_autofit)
         return eff
+
+    def _table_width(self, directives: dict[str, Any]) -> str | float | None:
+        """@table-width（``"auto"`` か百分率）を返す．値の検証は parser で済み．"""
+        v = directives.get("table_width")
+        if isinstance(v, str):
+            return v
+        if isinstance(v, (int, float)):
+            return float(v)
+        return None
 
     def _col_ratios(self, directives: dict[str, Any]) -> list[float] | None:
         """@table-widths ディレクティブ（"45,55" 等）を表の列幅比リストへ解釈する．"""
@@ -2472,7 +2556,8 @@ class Renderer:
                        left: int, top: int, width: int, height: int,
                        col_ratios: list[float] | None,
                        slide_overflow: bool = False,
-                       has_prose_after: bool = False) -> None:
+                       has_prose_after: bool = False,
+                       table_width: str | float | None = None) -> None:
         """Table / Flow / Image を矩形領域内に重みづけで縦に積んで座標配置する．
 
         slide_overflow（@overflow）は表・画像に共通で効く．画像はブロックの
@@ -2499,7 +2584,8 @@ class Renderer:
             else:
                 self.render_table(slide, obj, left, y, width, seg_h, col_ratios,
                                   overflow=slide_overflow,
-                                  has_prose_after=has_prose_after)
+                                  has_prose_after=has_prose_after,
+                                  total_width=table_width)
             y += seg_h + gap
 
     def _render_stacked(self, slide: PptxSlide, blocks: list[Block],
@@ -2507,7 +2593,8 @@ class Renderer:
                         default_autofit: bool,
                         col_ratios: list[float] | None,
                         default_size_delta: int | None = None,
-                        slide_overflow: bool = False) -> None:
+                        slide_overflow: bool = False,
+                        table_width: str | float | None = None) -> None:
         """表／図を含むスライドを描画する．
 
         地の文（Line）は **標準の本文プレースホルダ**へ流し込み，表・図だけを
@@ -2519,7 +2606,8 @@ class Renderer:
         body = self._body_placeholder(slide)
         self._render_stacked_into(slide, blocks, body, left, top, width, height,
                                   default_num_color, scale, default_autofit,
-                                  col_ratios, default_size_delta, slide_overflow)
+                                  col_ratios, default_size_delta, slide_overflow,
+                                  table_width)
 
     def _render_stacked_into(self, slide: PptxSlide, blocks: list[Block],
                              body: SlidePlaceholder | None, left: int, top: int,
@@ -2528,7 +2616,8 @@ class Renderer:
                              scale: float | None, default_autofit: bool,
                              col_ratios: list[float] | None,
                              default_size_delta: int | None = None,
-                             slide_overflow: bool = False) -> None:
+                             slide_overflow: bool = False,
+                             table_width: str | float | None = None) -> None:
         """``blocks`` を矩形 (left, top, width, height) 内へスタック描画する．
 
         地の文（Line）は ``body`` プレースホルダへ流し込み，表・図は矩形内に
@@ -2571,7 +2660,8 @@ class Renderer:
             if body is not None:
                 body._element.getparent().remove(body._element)
             self._stack_objects(slide, objects, left, top, width, height, col_ratios,
-                                slide_overflow, has_prose_after=False)
+                                slide_overflow, has_prose_after=False,
+                                table_width=table_width)
             return
 
         # 地の文あり：プレースホルダに導入文＋空行＋結論文を流して中央帯を確保．
@@ -2669,7 +2759,8 @@ class Renderer:
                 "slide; the band hit its minimum height and may overlap the "
                 "concluding text (shorten the prose or split the slide)\n")
         self._stack_objects(slide, objects, left, band_top, width, obj_h, col_ratios,
-                            slide_overflow, has_prose_after=bool(prose_after))
+                            slide_overflow, has_prose_after=bool(prose_after),
+                            table_width=table_width)
 
     # ------------------------------------------------------------- deck
     def render(self, deck: Deck) -> PptxPresentation:
