@@ -30,14 +30,21 @@ import sys
 from dataclasses import dataclass
 from typing import Iterable
 
+import pptx2pdf as pdf_backend       # PDF 変換の実装（別パッケージ）
+
 from . import __version__
 from . import parser as md_parser  # 標準ライブラリ parser とは別物
-from . import pdf as pdf_backend
 from . import render
 from . import watch
 from .ir import Deck, Image
-from .pdf import ENV_CONVERTER, ENV_TIMEOUT
 from .thmx2pptx import ThmxError, thmx_to_pptx
+
+# PDF 変換の環境変数．**名前は md2pptx のもの**を保つ——変換の実装が別パッケージ
+# （pptx2pdf）へ移っても，利用者が設定してきた名前が効かなくなる理由は無い．
+# ここで解決した値を convert() へ明示的に渡す（pptx2pdf 自身の PPTX2PDF_* は，
+# ここで何も見つからなかったときの下位の既定として効く）．
+ENV_CONVERTER = "MD2PPTX_PDF_CONVERTER"
+ENV_TIMEOUT = "MD2PPTX_PDF_TIMEOUT"
 
 
 class BuildError(Exception):
@@ -268,6 +275,30 @@ def _run_watch(args: argparse.Namespace) -> int:
                      seed=[os.path.abspath(args.input)])
 
 
+def _pdf_timeout(explicit: float | None) -> float | None:
+    """``--pdf-timeout`` → ``MD2PPTX_PDF_TIMEOUT`` の順に上限（秒）を解決する．
+
+    どちらも無ければ ``None``（＝指定なし）を返し，決め方は pptx2pdf に委ねる
+    （``PPTX2PDF_TIMEOUT``，それも無ければ stderr が tty かどうか）．値の妥当性
+    （負値・``nan``・``inf``）を見るのも向こう側で，ここでやるのは **md2pptx 固有の
+    名前から値を取り出すところまで**．
+
+    Raises:
+        pdf_backend.PdfError: 環境変数が秒数として読めないとき．呼び出し側が
+            警告に整形するので，終了コードは変わらない．
+    """
+    if explicit is not None:
+        return explicit
+    raw = (os.environ.get(ENV_TIMEOUT) or "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        raise pdf_backend.PdfError(
+            f"invalid {ENV_TIMEOUT}: {raw!r} (seconds, 0 = no limit)")
+
+
 def build_once(args: argparse.Namespace, *,
                unattended: bool = False) -> BuildResult:
     """引数 1 セットぶんを 1 回ビルドする（parse → 解決 → render → 任意で PDF）．
@@ -355,7 +386,11 @@ def _build(args: argparse.Namespace, sources: set[str],
         # 開始を stderr に出す（stdout の saved: 行は汚さない）．
         sys.stderr.write(f"md2pptx: converting to PDF: {pdf_out}\n")
         try:
-            pdf_backend.convert(output, pdf_out, converter, args.pdf_timeout,
+            # 上限の解決も try の中で行う．環境変数の書き間違いは PdfError になり，
+            # 下の except が警告に整形する——「PDF が作れなくても pptx は成功」
+            # （Issue #39）を，値が壊れていた場合にも保つ．
+            timeout = _pdf_timeout(args.pdf_timeout)
+            pdf_backend.convert(output, pdf_out, converter, timeout,
                                 unattended=unattended)
             print(f"saved: {pdf_out}", flush=True)
         except pdf_backend.PdfError as e:

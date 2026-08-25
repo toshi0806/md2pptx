@@ -55,6 +55,8 @@ from pptx.shapes.placeholder import SlidePlaceholder
 from pptx.slide import Slide as PptxSlide, SlideLayout
 from pptx.text.text import TextFrame
 
+from pptx2pdf import workdir
+
 from .colors import parse_color
 from .ir import (
     TITLE_LAYOUT, Arrow, Block, Crop, Deck, Flow, Image, Length, Line,
@@ -63,7 +65,6 @@ from .ir import (
 from .flow import FlowNode, plan_flow
 from .parser import parse_content_line
 from .seq import LABEL_PT as SEQ_LABEL_PT, plan_seq
-from . import workdir
 
 if TYPE_CHECKING:
     # ``_Paragraph`` は python-pptx の**私有クラス**（段落に公開の別名が無い）．

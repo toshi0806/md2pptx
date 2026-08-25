@@ -70,7 +70,7 @@ pptx」をメモリ上または一時ファイルに用意する。ステージ3
 | `md2pptx/ir.py` | 中間表現のデータクラス定義 |
 | `md2pptx/render.py` | IR → pptx。`参照スクリプト` のヘルパーをライブラリ化して再利用 |
 | `md2pptx/flow.py` | ` ```flow ` DSL のパーサ＋レイアウタ（box/arrow 配置計算） |
-| `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`）。変換器の探索とプロセス起動（python-pptx 非依存） |
+| （外部）`pptx2pdf` | pptx → PDF 変換（`--pdf`）。変換器の探索とプロセス起動。python-pptx に依存しないので別パッケージへ切り出した（下記） |
 
 パッケージはルート直下の flat レイアウト（`md2pptx/`）で、`pyproject.toml` の
 `[project.scripts]` が `md2pptx = "md2pptx.cli:main"` としてコンソールスクリプトを生成する。
@@ -1379,9 +1379,10 @@ SYNTAX.md に明記した。
     `BuildError` にして終了コード1で終えるため取り違えようがなく、
     それなら主成果物（PowerPoint で開いているかもしれない）を消さない方がよい。
   - `--keep-base` の中間 base pptx は対象外（デバッグ用の副産物で、`thmx2pptx` の担当）。
-- **使い捨て作業ディレクトリの作成と片付けは `workdir.py` に集約する**（Issue #58）。
-  5箇所（`render.save` / `pdf.convert` / LibreOffice の使い捨てプロファイル
+- **使い捨て作業ディレクトリの作成と片付けは `workdir` に集約する**（Issue #58）。
+  5箇所（`render.save` / `pptx2pdf` の変換 / LibreOffice の使い捨てプロファイル
   / PowerPoint コンテナ内の staging / `thmx2pptx` の展開先）が同じ規則で動く。
+  実装は `pptx2pdf.workdir`（PDF 変換と一緒に切り出したもので、md2pptx はそれを使う）。
   - **片付けの失敗で処理の成否を変えない。** 片付けに入る時点で保存も変換も終わっている。
     ここで投げると成功した実行が失敗になり、
     本体が投げた例外があればそれを握りつぶして置き換えてしまう。
@@ -1410,7 +1411,14 @@ md2pptx input.md --theme OfficeTheme.pptx -o out.pptx
 - `-o/--output`：出力 pptx。フロントマター `output:` を上書き。
 - `--keep-base PATH`：ステージ0で作った base pptx を破棄せず保存（デバッグ用）。
 - `--pdf`：pptx 生成後に PDF も作る（値は取らない）。出力先は出力
-  pptx と同じ場所・basename の `.pdf`。変換は `pdf.py` が担う。
+  pptx と同じ場所・basename の `.pdf`。変換は別パッケージの
+  [pptx2pdf](https://github.com/toshi0806/pptx2pdf) が担う（もとは `md2pptx/pdf.py`。
+  pptx の中身を読まない＝python-pptx に依存しないので、単体のコマンドとして切り出した）。
+  **フラグと環境変数の名前は md2pptx のものを保つ**——実装がどこにあるかは利用者の
+  設定を変える理由にならないので、`--pdf-timeout` / `MD2PPTX_PDF_*` はそのまま効く。
+  警告や案内に出る名前も md2pptx のものに差し替えて渡す（`pptx2pdf.set_program_name`
+  / `set_hints`）。以下の設計は md2pptx がこの変換に求める要件で、根拠と実装は
+  pptx2pdf 側の CLAUDE.md にも同じものが置いてある。
   **PDF 変換だけ失敗しても終了コードは0**（警告のみ）——編集しながらのプレビューを止めないため。
   忠実度は変換器による（README 参照）。
 - `--pdf-output PATH`：PDF の出力先。**単独で指定しても生成を有効にする**（`--keep-base PATH`
