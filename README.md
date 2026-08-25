@@ -53,8 +53,12 @@ pip install -e .
 ```
 
 > pipx が無い場合は `brew install pipx`（macOS）や `python3 -m pip install --user pipx`
-> で導入できます。インストールせずに試すだけなら、依存（`pip install python-pptx pyyaml`）を
-> 入れたうえで `python3 -m md2pptx …` でも実行できます。
+> で導入できます。インストールせずに試すだけなら、依存（`pip install python-pptx pyyaml
+> pptx2pdf@git+https://github.com/toshi0806/pptx2pdf.git`）を入れたうえで
+> `python3 -m md2pptx …` でも実行できます。
+
+> 依存のひとつ [pptx2pdf](https://github.com/toshi0806/pptx2pdf)（`--pdf` の変換を担当）は
+> GitHub から取得します。インストール時に `git` とネットワークが要ります。
 
 ## クイックスタート
 
@@ -119,6 +123,9 @@ PDF ビューアで開いたまま**何度作り直しても構いません。�
 
 `--pdf` を付けると pptx に続けて PDF も書き出します（出力 pptx と同じ場所・同じ名前）。
 Markdown を編集しながら PDF ビューアで結果を確認する、という使い方の土台です。
+変換そのものは [pptx2pdf](https://github.com/toshi0806/pptx2pdf)（md2pptx の依存として
+一緒に入ります）が行いますが、**指定はすべて md2pptx のオプションと環境変数で行います**。
+手元の pptx を単体で変換したいときは、同じ実装が `pptx2pdf slide.pptx` として使えます。
 
 ```bash
 md2pptx slide.md --pdf
@@ -260,9 +267,8 @@ LaTeX Workshop のリアルタイムプレビューと同じ体験になりま�
 | `md2pptx/flow.py` | フロー図 DSL のパーサ＋レイアウタ |
 | `md2pptx/seq.py` | シーケンス図 DSL のパーサ＋レイアウタ |
 | `md2pptx/layout.py` | 図の座標計算に共通の入れ物（矩形・配置結果）と単位換算 |
-| `md2pptx/pdf.py` | pptx → PDF 変換（`--pdf`） |
 | `md2pptx/watch.py` | 入力の変更監視（`--watch`） |
-| `md2pptx/workdir.py` | 使い捨て作業ディレクトリの作成と片付け |
+| （依存）[`pptx2pdf`](https://github.com/toshi0806/pptx2pdf) | pptx → PDF 変換（`--pdf`）と、使い捨て作業ディレクトリの作成・片付け |
 | `.vscode/` | VS Code のタスク定義と PDF ビューアの関連付け（VSCODE.md と同じ内容） |
 | `SYNTAX.md` | Markdown 記法のリファレンス（早見表つき） |
 | `THEME.md` | テーマを直して見た目を変える手順 |
