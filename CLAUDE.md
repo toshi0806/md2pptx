@@ -17,6 +17,9 @@ md2pptx — Markdown と PowerPoint テーマ（thmx / pptx）から発表スラ
 
 `--pdf` の変換は依存パッケージ [pptx2pdf](https://github.com/toshi0806/pptx2pdf) が担う
 （もとは `md2pptx/pdf.py`。PyPI には出していないので `pyproject.toml` は git URL で指す）。
+**タグで固定してある**ので、向こうを直したら「pptx2pdf にタグを打つ → こちらの
+`pyproject.toml` のタグを上げる」の順で通すこと。無印（HEAD 追従）に戻すと、md2pptx を
+何も変えていないのにインストールした時期で中身が変わる。
 
 `parser.py` と `flow.py` は **python-pptx に依存しない純モジュール**（描画は
 render の責務）。`ir.py` がパーサとレンダラの契約。新しい記法を足すときは「parser が

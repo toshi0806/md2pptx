@@ -18,7 +18,10 @@ dependencies = [
     # PDF 変換（--pdf）の実装．もとは md2pptx/pdf.py で，python-pptx に依存しないので
     # 単体のコマンドとして切り出した．PyPI には出していないので直接 URL で指す
     # （pip / pipx はこの形をそのまま解決できる）．
-    "pptx2pdf @ git+https://github.com/toshi0806/pptx2pdf.git",
+    # **タグで固定する**——無印だと取得のたびに向こうの HEAD が入るので，こちらは何も
+    # 変えていないのにインストールした時期で中身が変わる．上げるときは pptx2pdf に
+    # タグを打ってからここを書き換える（打ったタグは動かさない）．
+    "pptx2pdf @ git+https://github.com/toshi0806/pptx2pdf.git@v0.1.0",
 ]
 
 [project.optional-dependencies]
