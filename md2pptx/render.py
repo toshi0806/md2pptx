@@ -55,7 +55,7 @@ from .ir import (
     Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
-from . import workdir
+from pptx2pdf import workdir
 
 if TYPE_CHECKING:
     # ``_Paragraph`` は python-pptx の**私有クラス**（段落に公開の別名が無い）．
