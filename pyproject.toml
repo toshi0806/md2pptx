@@ -15,6 +15,10 @@ keywords = ["markdown", "powerpoint", "pptx", "slides", "presentation"]
 dependencies = [
     "python-pptx>=1.0",
     "PyYAML>=6",
+    # PDF 変換（--pdf）の実装．もとは md2pptx/pdf.py で，python-pptx に依存しないので
+    # 単体のコマンドとして切り出した．PyPI には出していないので直接 URL で指す
+    # （pip / pipx はこの形をそのまま解決できる）．
+    "pptx2pdf @ git+https://github.com/toshi0806/pptx2pdf.git",
 ]
 
 [project.optional-dependencies]

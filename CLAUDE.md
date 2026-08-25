@@ -15,6 +15,9 @@ md2pptx — Markdown と PowerPoint テーマ（thmx / pptx）から発表スラ
 `md2pptx/` はルート直下の flat レイアウト（`pip install .` / `pipx install .` で
 `md2pptx` コマンドを生成）。
 
+`--pdf` の変換は依存パッケージ [pptx2pdf](https://github.com/toshi0806/pptx2pdf) が担う
+（もとは `md2pptx/pdf.py`。PyPI には出していないので `pyproject.toml` は git URL で指す）。
+
 `parser.py` と `flow.py` は **python-pptx に依存しない純モジュール**（描画は
 render の責務）。`ir.py` がパーサとレンダラの契約。新しい記法を足すときは「parser が
 IR を作る／render が IR を描く」の分離を保つ。
@@ -75,59 +78,39 @@ osascript 経由で実 PowerPoint を使う**ので、`md2pptx … --pdf --pdf-c
 `--pdf-converter` に外部の実 PowerPoint 変換ツールを指定することもできる。
 忠実度は保証しない（README 参照）。
 
-macOS 経路は **PowerPoint を目立たせずに使う**（Issue #44）。何度変換しても画面が乱れないので、
-検証で繰り返し叩いてよい。仕組みは2つで、どちらも消すと運用が壊れる:
+**PDF 変換の実装は別リポジトリ [pptx2pdf](https://github.com/toshi0806/pptx2pdf) にある**
+（もとは `md2pptx/pdf.py` + `md2pptx/workdir.py`。pptx の中身を読まない＝python-pptx に
+依存しないので切り出した）。変換の不変条件——在る物の失敗を握らない、変換前に既存
+PDF を消さない、待ちの上限を tty かどうかで分ける、macOS では PowerPoint を非表示で
+コンテナ内だけ触らせる、`workdir.discard` の2規則——と、それを固定するテストは**すべて
+そちらへ移した**。触るときは向こうの CLAUDE.md を読むこと。md2pptx 側に残っているのは
+次の3つで、これは pptx2pdf を更新しても変えない:
 
-- `activate` を入れず `open -g -j -a` で非表示・非アクティブ起動してから文書を開く。
-  ウィンドウが出るのは**利用者が既に PowerPoint を表示して使っている場合だけ**で、
-  これは仕様（`-j` は起動の瞬間にしか効かない）。`save … as PDF`
-  は隠したアプリを自ら再表示するので、起動後に隠し直す方法では抑えられない（測定済み）。
-- 変換は **PowerPoint のサンドボックスコンテナ内**で行う（`~/Library/Containers/com.microsoft.Powerpoint/Data/tmp`）。
-  pptx をそこへコピーして変換し、PDF を目的地へ移す。
-  未承認の場所を直接開かせるとファイルアクセスの許可ダイアログ待ちで止まるが、
-  隠していると利用者にはそれが見えないため（実測:
-  未承認フォルダ25秒でタイムアウト／コンテナ内 1.1 秒で成功）。
+- **フラグと環境変数の名前は md2pptx のもの**（`--pdf` / `--pdf-output` /
+  `--pdf-converter` / `--pdf-timeout` と `MD2PPTX_PDF_CONVERTER` /
+  `MD2PPTX_PDF_TIMEOUT`）。実装がどこへ動こうと、利用者が設定してきた名前が効かなくなる
+  理由は無い。`cli.py` がこの名前で解決した値を `convert()` へ明示的に渡す。
+- **利用者に見える名前も md2pptx のもの**。`md2pptx/__init__.py` が
+  `pptx2pdf.set_program_name` / `set_hints` を呼ぶ。`md2pptx deck.md --pdf` の途中で
+  `pptx2pdf: warning: …` と出ても、利用者はそんなコマンドを打っていない。作業ディレクトリ
+  の名前（`.md2pptx-*`）もここから決まる。
+- **PDF 変換に失敗しても pptx は成功**（終了コード0で警告のみ）。`cli.py` の
+  `except PdfError` がこれを担う。上限の解決（環境変数の読み間違い）も同じ `try` の中で
+  行うこと——外に出すと、値が壊れていただけで pptx まで失敗する。
 
-隠したことで気づけない停止（オートメーション承認など）に備え、30秒で
-stderr に案内を出す（前面化は tty のときだけ）。
-
-**待ちの上限は tty かどうかで分ける**（Issue #48）。
-tty なら打ち切らない——止まる原因の多くは承認ダイアログのような「人が今すぐ直せるもの」で、
-30秒の案内はそれを直してもらう仕掛けだから、上から
-kill を被せると自分で用意した解決手段を潰すことになる。
-非 tty（cron / CI / エディタ拡張）は180秒で打ち切る。`--pdf-timeout` / `MD2PPTX_PDF_TIMEOUT`
-で上書き（`0` は無制限）。打ち切り時は自分で起こした子プロセスだけを
-kill し、書きかけの PDF を消す。`convert(..., unattended=True)` はこの
-tty からの推測を呼び出し側が明示的に打ち消す入口（上限と前面化の両方に効く）。
-
-**出力 pptx / PDF は必ず作業ディレクトリ経由で
-`os.replace` する**（`Renderer.save` / `pdf.convert`）。pptx 側の理由は python-pptx が
+**出力 pptx は必ず作業ディレクトリ経由で
+`os.replace` する**（`Renderer.save`）。理由は python-pptx が
 `zipfile.ZipFile(path, "w")` で書くこと——開いた瞬間に出力先を切り詰めるので、
 直接書くと作り直している間だけ壊れた pptx が見える（実測: 25回連続ビルド中38957サンプル中215回。
 差し替え方式では0回）。**ただし失敗時の契約は PDF と逆で、
 pptx は前回の出力を残す**（pptx の失敗は終了コード1で終わるので取り違えようがなく、
 主成果物を消す理由がない）。固定しているのは `tests/test_pptx_replace.py`。
 
-**使い捨て作業ディレクトリの作成と片付けは `workdir.py` に集約する**（Issue #58）。
-全5箇所（`render.save` / `pdf.convert` / LibreOffice の使い捨てプロファイル
-/ PowerPoint コンテナ内の staging / `thmx2pptx` の展開先）がここを通る。
-`workdir.discard` の規則は2つで、どちらも外すと壊れる:
-**①片付けの失敗で処理の成否を変えない**（片付けに入る時点で仕事は終わっている。
-投げると成功した実行が失敗になり、本体の例外があればそれを置き換えてしまう）、
-**②それでも黙って残さない**（`--watch` では保存のたびに1つずつ溜まり、
-出力先のものは利用者の目に触れる）。`tempfile.TemporaryDirectory`
-に戻してはいけない——**片付けの失敗で例外を投げる**（既定 `ignore_cleanup_errors=False`）ので
-① が崩れる。固定しているのは `tests/test_workdir.py`。
-
-PDF 側は加えて、**「変換前に既存
-PDF を消す」実装に戻してはいけない**——PDF ビューアはフォルダを監視していて、
-削除を確定するとそのファイルを監視から外す（LaTeX Workshop は 250ms で確定し、
-集合が空になるとフォルダごと破棄）。変換には1〜数秒かかるので必ず確定してしまい、
-**編集しながらのプレビューが最初のリビルドで死ぬ**（実測: 修正前はリビルド1回あたり約1秒 PDF
-が不在／修正後は0）。作業場所がファイルではなくディレクトリなのは、LibreOffice が `--outdir` に
-`<入力 basename>.pdf` を書くため（`slide.pptx` → `slide.pdf` では出力 PDF を直接書いてしまう）。
-無音失敗の検出（存在＋非空）は削除ではなく「毎回まっさらな別名へ書かせる」ことで担保している。
-固定しているのは `tests/test_pdf_replace.py`。
+**使い捨て作業ディレクトリの作成と片付けは `workdir` に集約する**（Issue #58）。
+実装は `pptx2pdf.workdir` で、md2pptx から通るのは `render.save` と
+`thmx2pptx` の展開先（残り3つは pptx2pdf の中）。`workdir.discard` の規則は2つで、
+どちらも外すと壊れる: **①片付けの失敗で処理の成否を変えない**、
+**②それでも黙って残さない**。詳しい根拠とテストは pptx2pdf 側にある。
 
 **地の文を置けないときは黙らない**（Issue #67）。本文プレースホルダは
 `idx==1` で探すが、この番号は PowerPoint が内部で振るもので画面に出ない。
@@ -200,6 +183,11 @@ PDF を向けるもので、これが無いと保存しても画面が変わら�
   `_clear_slides()` して常に0枚から描画する（先頭の空きスライド対策）。
 - 各サブプロセス/Bash 間で `/tmp` の状態が保持されないことがある。
   生成→検証は1コマンド内で完結させると安全。
+- **pptx2pdf を editable（`pip install -e`）で入れると mypy が見つけられない**
+  （`Cannot find implementation or library stub`）。setuptools の editable
+  インストールが挟む finder を mypy が辿れないため。手元で両方を直すときは、
+  pptx2pdf 側を直すたびに `pip install <pptx2pdf のパス>` で入れ直す
+  （CI は git から通常インストールするので起きない）。
 - 継承ジオメトリのプレースホルダは、`left`/`width` だけ設定すると
   `top`/`height` が0に落ちる。`_effective_geom` で4辺を解決してから設定する。
 

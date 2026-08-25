@@ -28,7 +28,7 @@ import shutil
 import tempfile
 import zipfile
 
-from . import workdir
+from pptx2pdf import workdir
 
 # コンテンツタイプ文字列
 CT_PRESENTATION = (
