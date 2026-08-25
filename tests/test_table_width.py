@@ -143,11 +143,18 @@ def test_explicit_ratios_win_over_auto(tmp_path):
 
 
 def test_auto_leaves_room_for_the_longest_cell(tmp_path):
-    """``auto`` の幅は最長セルが 1 行に収まるだけある（潰さない）．"""
+    """``auto`` の幅は最長セルが 1 行に収まるだけある（潰さない）．
+
+    見るのは総幅ではなく**その語が入る列**．2 列の合計と比べると、列 0 が潰れて
+    列 1 が広いだけでも通ってしまい、この機能が防ぎたい折り返しを見逃す．
+    幅の見積もりを引くために ``Renderer`` を別に作るが、テーマは ``_build`` と
+    同じものなので寸法も同じ．
+    """
     r = render.Renderer(str(_theme_path(tmp_path)))
-    _, w = _geometry(_build(tmp_path, _src(_SHORT, "<!-- @table-width: auto -->")))
+    src = _src(_SHORT, "<!-- @table-width: auto -->")
+    cols = [c.width for c in _frame(_build(tmp_path, src)).table.columns]
     need = r._text_width_pt("ブロードキャスト", r._body_font_size())
-    assert w / 12700.0 > need          # 列 1 つぶんより広い（左右の余白を別にしても）
+    assert cols[0] / 12700.0 > need
 
 
 # ---------------------------------------------------------------- 併用

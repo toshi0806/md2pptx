@@ -1316,6 +1316,9 @@ class Renderer:
                 # 長い列だけが折り返すので、狭める前より読みにくくなる．
                 return band_w, self._table_col_widths(
                     ncols, band_w, [float(c) for c in cols])
+            # ``@table-widths`` があるときは、``auto`` で積んだ列幅は**総幅を
+            # 決めるためだけ**に使い、配分は著者の比に譲る（自動判定が明示指定に
+            # 勝たない．SYNTAX.md にも同じことを書いてある）．
             width = min(band_w, need)
         elif spec is None:
             width = band_w
