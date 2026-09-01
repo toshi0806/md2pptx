@@ -36,8 +36,14 @@ direction: tb
 """)
     assert len(plan.labels) == 1
     assert len(plan.arrows) == 1
+    arrow = plan.arrows[0]
+    # 縦並びの矢印は垂直線なので、両端の x が矢印の横位置そのもの．
+    # ここを固定しておくと、``PlacedArrow`` の意味が変わったときに
+    # **下の比較が黙って別のものを測り始める**のを防げる．
+    assert arrow.x1 == arrow.x2, "縦並びの矢印が垂直でない"
+    arrow_x = arrow.x1
     lab = plan.labels[0]
-    assert lab.rect.left > plan.arrows[0].x1, "枠の左端が矢印より左に来てしまった"
+    assert lab.rect.left > arrow_x, "枠の左端が矢印より左に来てしまった"
     assert lab.align == "left", "中央揃えのままでは見積もり超過ぶんが矢印側へ出る"
 
 
