@@ -15,12 +15,21 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from md2pptx.flow import parse_flow, plan_flow
 from md2pptx.layout import emu
 
 
-def _plan(src: str):
-    return plan_flow(parse_flow(src.strip()), 0, 0, emu(10.0), emu(4.0))
+def _plan(src: str, width: float = 10.0, height: float = 4.0):
+    """既定の帯は 10×4in——講義スライドの本文枠（12×4.95in）より一回り小さい．
+
+    ここで見ているのはラベルと矢印の**前後関係**であって隙間の大きさではない。
+    `_label_rect` は矢印の x から `_emu(0.18)` 右に枠を置くので、帯の寸法に
+    依存しないはず——**そう書くだけでは確かめたことにならない**ので、
+    `test_the_verdict_does_not_depend_on_the_band_size` で実際に振ってある。
+    """
+    return plan_flow(parse_flow(src.strip()), 0, 0, emu(width), emu(height))
 
 
 def test_a_column_label_stays_clear_of_the_arrow():
@@ -62,3 +71,26 @@ c -> b
 """)
     assert plan.labels
     assert all(lab.align == "center" for lab in plan.labels)
+
+
+@pytest.mark.parametrize("width,height", [
+    (3.0, 1.5),     # 帯が最小（box が下限に張り付く）
+    (10.0, 4.0),    # 既定
+    (12.0, 4.95),   # 講義スライドの本文枠の実寸
+    (24.0, 9.0),    # 極端に広い
+])
+def test_the_verdict_does_not_depend_on_the_band_size(width, height):
+    """帯を振ってもラベルは矢印の右に残る．
+
+    ヘルパが渡す 10×4in がたまたま都合の良い寸法だっただけ、という
+    取り違えを防ぐ（レビュー指摘）。
+    """
+    plan = _plan("""
+direction: tb
+[A]
+-NAMEPREP-> [B]
+""", width, height)
+    arrow = plan.arrows[0]
+    assert arrow.x1 == arrow.x2
+    assert plan.labels[0].rect.left > arrow.x1
+    assert plan.labels[0].align == "left"

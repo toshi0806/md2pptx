@@ -29,7 +29,7 @@ import math
 import os
 import struct
 import sys
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, assert_never
 
 from pptx import Presentation
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
@@ -75,11 +75,27 @@ if TYPE_CHECKING:
     from pptx.text.text import _Paragraph, _Run
 
 
-# 寄せ名 → PowerPoint の段落水平アラインメント．``Table.aligns`` と
-# ``PlacedText.align`` の両方が同じ ``Align``（Literal）を使うので、
-# **この表に無い値は mypy が弾く**——実行時の KeyError にならない．
-_ALIGN: dict[Align, PP_ALIGN] = {
-    "left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
+def _pp_align(align: Align) -> PP_ALIGN:
+    """寄せ名 → PowerPoint の段落水平アラインメント．
+
+    ``Table.aligns`` と ``PlacedText.align`` の両方が同じ ``Align``（Literal）を使う．
+
+    **dict ではなく match で書く**．``dict[Align, PP_ALIGN]`` と注釈しても
+    **mypy はリテラルの網羅性を見ない**——``Align`` に値を足しても、表から
+    キーを落としても、静的解析は素通りして実行時の ``KeyError`` になる
+    （実際に試して確かめた）．``assert_never`` なら足りない枝を mypy が捕まえる。
+    ``ir.OBJECT_BLOCKS`` / ``ARROW_DIRECTIONS`` が
+    「型注釈と別に並べると必ずずれる」と言っているのと同じ話で、
+    こちらは実行時のタプルではなく**静的な網羅**で守れる．
+    """
+    match align:
+        case "left":
+            return PP_ALIGN.LEFT
+        case "center":
+            return PP_ALIGN.CENTER
+        case "right":
+            return PP_ALIGN.RIGHT
+    assert_never(align)
 
 # コードブロックの既定の等幅フォント（front matter の ``mono_font`` で変えられる）．
 # Windows / macOS の Office に同梱されていて，日本語混在時は欧文だけに効く
@@ -1234,7 +1250,7 @@ class Renderer:
             # 寄せは plan が決める——縦並びだけ左寄せ（Issue #176）．
             r = lab.rect
             self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
-                      tc=self.T2, bold=True, align=_ALIGN[lab.align], wrap=False)
+                      tc=self.T2, bold=True, align=_pp_align(lab.align), wrap=False)
         for cap in plan.captions:
             # 図に付くのは caption だけ（note_top / note_bottom は地の文なので
             # 本文プレースホルダ側で描く——plan にも入っていない）．
@@ -1446,7 +1462,7 @@ class Renderer:
                 pa = cell.text_frame.paragraphs[0]
                 pa.text = row[ci] if ci < len(row) else ""
                 if al != "left":
-                    pa.alignment = _ALIGN[al]
+                    pa.alignment = _pp_align(al)
                 # セルごとの背景色（§5.4）．**ヘッダの既定より優先する**——
                 # 書いたものがそのまま出るほうが説明しやすい．
                 fill_name: str | None = None
@@ -1557,7 +1573,7 @@ class Renderer:
         for lab in plan.labels:
             r = lab.rect
             self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
-                      tc=self.T2, bold=True, align=_ALIGN[lab.align], wrap=False)
+                      tc=self.T2, bold=True, align=_pp_align(lab.align), wrap=False)
         for nt in plan.notes:
             r = nt.rect
             self.note(slide, r.left, r.top, r.width, r.height, nt.text, bsz,
