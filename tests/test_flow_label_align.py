@@ -37,8 +37,8 @@ direction: tb
     assert len(plan.labels) == 1
     assert len(plan.arrows) == 1
     lab = plan.labels[0]
-    assert lab.rect.left > plan.arrows[0].x1, "枠の左端が矢印より左にある"
-    assert lab.align == "left", "中央揃えだと見積もり超過ぶんが矢印側へ出る"
+    assert lab.rect.left > plan.arrows[0].x1, "枠の左端が矢印より左に来てしまった"
+    assert lab.align == "left", "中央揃えのままでは見積もり超過ぶんが矢印側へ出る"
 
 
 def test_a_row_label_keeps_its_centre_alignment():

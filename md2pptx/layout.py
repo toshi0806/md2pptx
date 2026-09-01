@@ -19,6 +19,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# ``Align`` は ``ir.py`` から借りる．``ir.py`` は**内部 import がゼロの基底**で、
+# 7 モジュールのうち 5 つが既に import している——実質そこが共通の型置き場．
+# 1 行の別名のために ``types.py`` を足すより、増やさないほうがよい．
 from .ir import Align
 
 EMU = 914400  # 1 インチ = 914400 EMU
