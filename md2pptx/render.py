@@ -29,7 +29,7 @@ import math
 import os
 import struct
 import sys
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, assert_never
 
 from pptx import Presentation
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
@@ -59,7 +59,7 @@ from pptx2pdf import workdir
 
 from .colors import parse_color
 from .ir import (
-    TITLE_LAYOUT, Arrow, Block, Crop, Deck, Flow, Image, Length, Line,
+    TITLE_LAYOUT, Align, Arrow, Block, Crop, Deck, Flow, Image, Length, Line,
     is_object_block, ObjectBlock, Seq, Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
@@ -75,8 +75,28 @@ if TYPE_CHECKING:
     from pptx.text.text import _Paragraph, _Run
 
 
-# Table.aligns の寄せ名 → PowerPoint の段落水平アラインメント．
-_TABLE_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
+def _pp_align(align: Align) -> PP_ALIGN:
+    """寄せ名 → PowerPoint の段落水平アラインメント．
+
+    ``Table.aligns`` と ``PlacedText.align`` の両方が同じ ``Align``（Literal）を使う．
+
+    **dict ではなく match で書く**．``dict[Align, PP_ALIGN]`` と注釈しても
+    **mypy は Literal をキーとする dict の網羅性を検査しない**（型システムの仕様）．
+    ``Align`` に値を足しても、表からキーを落としても、静的解析は素通りして
+    実行時の ``KeyError`` になる——注釈を付けたので守れている、と思い込んで
+    実際に試すまで気づかなかった．``assert_never`` なら足りない枝を mypy が捕まえる。
+    ``ir.OBJECT_BLOCKS`` / ``ARROW_DIRECTIONS`` が
+    「型注釈と別に並べると必ずずれる」と言っているのと同じ話で、
+    こちらは実行時のタプルではなく**静的な網羅**で守れる．
+    """
+    match align:
+        case "left":
+            return PP_ALIGN.LEFT
+        case "center":
+            return PP_ALIGN.CENTER
+        case "right":
+            return PP_ALIGN.RIGHT
+    assert_never(align)
 
 # コードブロックの既定の等幅フォント（front matter の ``mono_font`` で変えられる）．
 # Windows / macOS の Office に同梱されていて，日本語混在時は欧文だけに効く
@@ -1228,9 +1248,10 @@ class Renderer:
         for lab in plan.labels:
             # 矢印ラベルは**折り返さない**．短い語なので、折れると単語の途中で
             # 割れて読めなくなる（"NAMEPREP" が "NAM / EPRE / P" になっていた）．
+            # 寄せは plan が決める——縦並びだけ左寄せ（Issue #176）．
             r = lab.rect
             self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
-                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER, wrap=False)
+                      tc=self.T2, bold=True, align=_pp_align(lab.align), wrap=False)
         for cap in plan.captions:
             # 図に付くのは caption だけ（note_top / note_bottom は地の文なので
             # 本文プレースホルダ側で描く——plan にも入っていない）．
@@ -1441,8 +1462,13 @@ class Renderer:
                 cell.margin_bottom = Pt(2)
                 pa = cell.text_frame.paragraphs[0]
                 pa.text = row[ci] if ci < len(row) else ""
+                # **"left" のときは何も書かない．** ここの ``al`` は
+                # 「`:---` で左寄せと**指定された**」と「区切り行に**指定が無い**」の
+                # 両方が "left" になる（上の既定）．``algn`` を書き出すと、
+                # 後者にまで寄せを**押し付ける**ことになる——書かなければ
+                # スライドマスターの既定がそのまま効く．
                 if al != "left":
-                    pa.alignment = _TABLE_ALIGN[al]
+                    pa.alignment = _pp_align(al)
                 # セルごとの背景色（§5.4）．**ヘッダの既定より優先する**——
                 # 書いたものがそのまま出るほうが説明しやすい．
                 fill_name: str | None = None
@@ -1553,7 +1579,7 @@ class Renderer:
         for lab in plan.labels:
             r = lab.rect
             self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
-                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER, wrap=False)
+                      tc=self.T2, bold=True, align=_pp_align(lab.align), wrap=False)
         for nt in plan.notes:
             r = nt.rect
             self.note(slide, r.left, r.top, r.width, r.height, nt.text, bsz,

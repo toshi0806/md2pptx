@@ -19,6 +19,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# ``Align`` は ``ir.py`` から借りる．``ir.py`` は**内部 import がゼロの基底**で、
+# 7 モジュールのうち 5 つが既に import している——実質そこが共通の型置き場．
+# 1 行の別名のために ``types.py`` を足すより、増やさないほうがよい．
+from .ir import Align
+
 EMU = 914400  # 1 インチ = 914400 EMU
 
 
@@ -54,9 +59,16 @@ class Rect:
 
 @dataclass(frozen=True)
 class PlacedText:
-    """文字だけの要素（省略記号・矢印ラベル・キャプション）．"""
+    """文字だけの要素（省略記号・矢印ラベル・キャプション）．
+
+    ``align`` は枠の中での**横の寄せ**．既定は中央で、矢印の真上に置くラベルや
+    キャプションはこれでよい。**縦並びの矢印ラベルだけ左寄せ**にする（Issue #176）
+    ——枠幅は字幅の見積もりなので、実際の字がそれを超えると中央揃えでは左右へ
+    等しくはみ出し、左側が矢印に掛かる。左寄せなら余りは矢印から離れる側へ出る。
+    """
     text: str
     rect: Rect
+    align: Align = "center"
 
 
 @dataclass(frozen=True)

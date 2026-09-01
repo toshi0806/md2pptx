@@ -548,8 +548,12 @@ def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
         plan.arrows.append(PlacedArrow(cx, a.bottom, cx, b.top))
         if e.label:
             # 縦並びではラベルを矢印の**右横**に置く（上下は box で埋まっている）．
+            # **左寄せ**にするのは、枠幅が ``_label_width`` の見積もりだから
+            # （Issue #176）——中央揃えだと見積もりを超えたぶんが左右へ等しく
+            # はみ出し、左側が矢印に掛かって先頭の字が読めなくなる。
             my = (a.bottom + b.top) // 2
             r = _label_rect(e.label, cx, my + _LABEL_H // 2)
             plan.labels.append(PlacedText(
-                e.label, Rect(cx + _emu(0.18), r.top, r.width, r.height)))
+                e.label, Rect(cx + _emu(0.18), r.top, r.width, r.height),
+                align="left"))
     return starty + total
