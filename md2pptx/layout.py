@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .ir import Align
+
 EMU = 914400  # 1 インチ = 914400 EMU
 
 
@@ -63,7 +65,7 @@ class PlacedText:
     """
     text: str
     rect: Rect
-    align: str = "center"
+    align: Align = "center"
 
 
 @dataclass(frozen=True)

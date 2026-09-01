@@ -59,7 +59,7 @@ from pptx2pdf import workdir
 
 from .colors import parse_color
 from .ir import (
-    TITLE_LAYOUT, Arrow, Block, Crop, Deck, Flow, Image, Length, Line,
+    TITLE_LAYOUT, Align, Arrow, Block, Crop, Deck, Flow, Image, Length, Line,
     is_object_block, ObjectBlock, Seq, Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
@@ -76,8 +76,10 @@ if TYPE_CHECKING:
 
 
 # 寄せ名 → PowerPoint の段落水平アラインメント．``Table.aligns`` と
-# ``PlacedText.align`` の両方が同じ名前を使う．
-_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
+# ``PlacedText.align`` の両方が同じ ``Align``（Literal）を使うので、
+# **この表に無い値は mypy が弾く**——実行時の KeyError にならない．
+_ALIGN: dict[Align, PP_ALIGN] = {
+    "left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
 
 # コードブロックの既定の等幅フォント（front matter の ``mono_font`` で変えられる）．
 # Windows / macOS の Office に同梱されていて，日本語混在時は欧文だけに効く
