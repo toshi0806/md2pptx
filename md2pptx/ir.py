@@ -413,12 +413,16 @@ class Arrow:
             ``%`` は帯に対する割合（``Image`` と同じ ``Length``）．
             **明示した値は自動のときの上限を超えてよい**——書いた人がそう決めた．
         color: 色（テーマ色名／CSS の色名／16進）．``None`` ならテーマのアクセント色．
+        align: 帯の中での水平寄せ（既定は中央）．``Image`` と同じ語彙で、
+            2 カラムの片側に置いた矢印を項目の行頭に合わせるのに使う
+            （中央のままだと、左寄せの項目に対して矢印だけ右へずれて見える）．
     """
 
     direction: ArrowDirection = "down"
     width: Length | None = None
     height: Length | None = None
     color: str | None = None
+    align: Align = "center"
 
 
 # 帯（中央領域）へ座標配置するブロック．地の文（Line）と違い，本文プレースホルダ

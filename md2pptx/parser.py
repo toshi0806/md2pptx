@@ -84,7 +84,7 @@ _INT_DIRECTIVES = {"layout", "autofit", "body_size"}
 # 専用形式（_RE_COL / _RE_TITLE_SLIDE）で，ここへ来るのは値付きの誤りだけ．
 _KNOWN_DIRECTIVES = {
     "layout", "autofit", "body_size", "autonum_color", "widths", "table_widths",
-    "table_width", "overflow",
+    "table_width", "title_width", "overflow",
 }
 
 # v0.7 で改名した旧ディレクティブ名 → 新名称（エラーメッセージで案内する）．
@@ -882,6 +882,7 @@ def _parse_arrow_block(text: str) -> Arrow:
     direction: str | None = None
     width = height = None
     color: str | None = None
+    align: Align = "center"
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -905,10 +906,18 @@ def _parse_arrow_block(text: str) -> Arrow:
             # 色は行内装飾と同じ語彙．**検証して正規化してから** IR へ入れる．
             kind, value = parse_color(v)
             color = value if kind == "theme" else "#" + value
+        elif k == "align":
+            # 語彙は ```image と共通（left | center | right）．新しい書き方を
+            # 増やさない——同じことを指す言葉が 2 つあると、どちらが効くのかを
+            # 覚える必要が出る．
+            if v.lower() not in ("left", "center", "right"):
+                raise ValueError(
+                    f"arrow block: invalid align {v!r} (left|center|right)")
+            align = cast(Align, v.lower())
         else:
             raise ValueError(
                 f"arrow block: unknown key {k!r} "
-                f"(direction | width | height | color)")
+                f"(direction | width | height | color | align)")
     if direction is None:
         raise ValueError(
             "arrow block requires 'direction:' "
@@ -916,7 +925,7 @@ def _parse_arrow_block(text: str) -> Arrow:
     # direction は上で ARROW_DIRECTIONS に含まれることを確かめてあるが、
     # mypy は str から Literal への絞り込みを追えない．
     return Arrow(direction=cast(ArrowDirection, direction),
-                 width=width, height=height, color=color)
+                 width=width, height=height, color=color, align=align)
 
 
 def _table_width_value(value: str, lineno: int) -> str | float:
@@ -1301,6 +1310,23 @@ def parse_content_line(raw: str) -> Line | None:
         delta, boxed, box_color, rest = _split_tokens(s[len(ARROW):].lstrip())
         text = f"{ARROW} {rest}" if rest else ARROW
         text, seg_deltas = _split_br(text)
+        text, spans = _parse_spans(text)
+        return Line(text=text, level=level, kind="plain", size_delta=delta,
+                    seg_deltas=seg_deltas, spans=spans, boxed=boxed,
+                    box_color=box_color)
+
+    # 引用 "> …" → 行頭記号なし（no_bullet 相当）で、**記号も本文に残さない**．
+    # 「→」と違うのはそこだけ——あちらは導線として矢印を見せるための書き方で、
+    # 図形の矢印の下に置くと二重に見える．地の文をそのまま置きたいときはこちら．
+    # "- " を使うとビュレットが付き、本文の項目と同列に見えてしまう．
+    #
+    # **空白を必須にする**（"> 本文" と "\u003e" 単独のみ）．">=" のような
+    # 記号で始まる本文まで拾うと、書いた覚えのない行で記号が消える．
+    # マーカーだけの行は空の段落（記号の出ないスペーサ）になる——"-" 単独と
+    # 同じ扱いで、_mk が空を落とすのでここで直接組み立てる．
+    if s == ">" or s.startswith("> "):
+        delta, boxed, box_color, rest = _split_tokens(s[1:].lstrip())
+        text, seg_deltas = _split_br(rest)
         text, spans = _parse_spans(text)
         return Line(text=text, level=level, kind="plain", size_delta=delta,
                     seg_deltas=seg_deltas, spans=spans, boxed=boxed,
