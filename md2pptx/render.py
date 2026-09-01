@@ -81,9 +81,10 @@ def _pp_align(align: Align) -> PP_ALIGN:
     ``Table.aligns`` と ``PlacedText.align`` の両方が同じ ``Align``（Literal）を使う．
 
     **dict ではなく match で書く**．``dict[Align, PP_ALIGN]`` と注釈しても
-    **mypy はリテラルの網羅性を見ない**——``Align`` に値を足しても、表から
-    キーを落としても、静的解析は素通りして実行時の ``KeyError`` になる
-    （実際に試して確かめた）．``assert_never`` なら足りない枝を mypy が捕まえる。
+    **mypy は Literal をキーとする dict の網羅性を検査しない**（型システムの仕様）．
+    ``Align`` に値を足しても、表からキーを落としても、静的解析は素通りして
+    実行時の ``KeyError`` になる——注釈を付けたので守れている、と思い込んで
+    実際に試すまで気づかなかった．``assert_never`` なら足りない枝を mypy が捕まえる。
     ``ir.OBJECT_BLOCKS`` / ``ARROW_DIRECTIONS`` が
     「型注釈と別に並べると必ずずれる」と言っているのと同じ話で、
     こちらは実行時のタプルではなく**静的な網羅**で守れる．
@@ -1461,6 +1462,11 @@ class Renderer:
                 cell.margin_bottom = Pt(2)
                 pa = cell.text_frame.paragraphs[0]
                 pa.text = row[ci] if ci < len(row) else ""
+                # **"left" のときは何も書かない．** ここの ``al`` は
+                # 「`:---` で左寄せと**指定された**」と「区切り行に**指定が無い**」の
+                # 両方が "left" になる（上の既定）．``algn`` を書き出すと、
+                # 後者にまで寄せを**押し付ける**ことになる——書かなければ
+                # スライドマスターの既定がそのまま効く．
                 if al != "left":
                     pa.alignment = _pp_align(al)
                 # セルごとの背景色（§5.4）．**ヘッダの既定より優先する**——

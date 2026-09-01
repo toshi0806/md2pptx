@@ -69,8 +69,10 @@ def test_a_grid_label_keeps_its_centre_alignment():
 [#c C]
 c -> b
 """)
-    assert plan.labels
-    assert all(lab.align == "center" for lab in plan.labels)
+    # 本数まで固定する——``assert plan.labels`` だけだと、ラベルが
+    # 生成されなくなったときに ``all(...)`` が空で真になって**素通りする**．
+    assert len(plan.labels) == 1
+    assert plan.labels[0].align == "center"
 
 
 @pytest.mark.parametrize("width,height", [
