@@ -23,7 +23,7 @@ def _plan(src: str):
     return plan_flow(parse_flow(src.strip()), 0, 0, emu(10.0), emu(4.0))
 
 
-def test_縦並びのラベルは矢印に掛からない():
+def test_a_column_label_stays_clear_of_the_arrow():
     """左寄せ＋枠の左端が矢印より右——この 2 つが揃って初めて掛からない．
 
     枠が矢印より右にあるだけでは足りない（もともとそうなっている）。
@@ -41,13 +41,13 @@ direction: tb
     assert lab.align == "left", "中央揃えだと見積もり超過ぶんが矢印側へ出る"
 
 
-def test_横並びのラベルは中央揃えのまま():
+def test_a_row_label_keeps_its_centre_alignment():
     plan = _plan("[A] -TCP-> [B]")
     assert len(plan.labels) == 1
     assert plan.labels[0].align == "center"
 
 
-def test_格子のラベルも中央揃えのまま():
+def test_a_grid_label_keeps_its_centre_alignment():
     plan = _plan("""
 [#a A] -x-> [#b B]
 --
