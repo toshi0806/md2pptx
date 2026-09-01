@@ -2285,6 +2285,13 @@ class Renderer:
         new_w = width * pcts[0] / 100.0
         max_w = ((self.SW - self._PH_MARGIN - left) if not allow_left
                  else (self.SW - 2 * self._PH_MARGIN))
+        if max_w <= 0:
+            # 枠の左端が既に余白の外にあるテーマ（右端に寄せたタイトル等）．
+            # クランプすると幅 0 の枠になり、**タイトルが消える**．触らずに知らせる．
+            sys.stderr.write(
+                "md2pptx: warning: no room to widen the title "
+                f"(it starts at {left} EMU); ignoring @title-width\n")
+            return
         if new_w > max_w:
             sys.stderr.write(
                 "md2pptx: warning: @title-width exceeds the "

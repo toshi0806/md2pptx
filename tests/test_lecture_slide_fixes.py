@@ -77,25 +77,44 @@ def test_an_unknown_align_is_an_error():
         _arrow_block(_fence(direction="down", align="middle"))
 
 
-def test_align_left_moves_the_arrow_to_the_left_edge(tmp_path):
+_ARROW_BODY = "### x\n\n- 上\n\n{}\n\n- 下\n"
+
+
+def _placed(tmp_path, name, **kw):
+    """矢印だけを差し替えた 1 枚を作り、その矢印の図形を返す．"""
+    src = _FM + _ARROW_BODY.format(_fence(direction="down", **kw))
+    return _arrow_shape(_build(tmp_path / name, src))
+
+
+@pytest.fixture
+def centered(tmp_path):
+    """比較の基準（既定の中央）．左右のテストで作り直さない．"""
+    return _placed(tmp_path, "c")
+
+
+def test_align_left_moves_the_arrow_to_the_left_edge(tmp_path, centered):
     """``align: left`` は帯の左端に置く（中央より必ず左）．"""
-    body = "### x\n\n- 上\n\n{}\n\n- 下\n"
-    left = _arrow_shape(_build(
-        tmp_path / "l", _FM + body.format(_fence(direction="down", align="left"))))
-    center = _arrow_shape(_build(
-        tmp_path / "c", _FM + body.format(_fence(direction="down"))))
-    assert left.left < center.left
-    assert left.width == center.width      # 寄せは大きさを変えない
+    left = _placed(tmp_path, "l", align="left")
+    assert left.left < centered.left
+    assert left.width == centered.width      # 寄せは大きさを変えない
 
 
-def test_align_right_moves_the_arrow_to_the_right_edge(tmp_path):
+def test_align_right_moves_the_arrow_to_the_right_edge(tmp_path, centered):
     """``align: right`` は帯の右端に置く．"""
-    body = "### x\n\n- 上\n\n{}\n\n- 下\n"
-    right = _arrow_shape(_build(
-        tmp_path / "r", _FM + body.format(_fence(direction="down", align="right"))))
-    center = _arrow_shape(_build(
-        tmp_path / "c", _FM + body.format(_fence(direction="down"))))
-    assert right.left > center.left
+    assert _placed(tmp_path, "r", align="right").left > centered.left
+
+
+def test_an_arrow_wider_than_the_band_stays_inside_it(tmp_path):
+    """帯より広い矢印は、どの寄せでも左端で止める（左へはみ出させない）．
+
+    はみ出す向きを下（結論文の側）だけにする規約と同じで、左外へ出すと
+    スライドの外に消える．寄せの指定はこの規約を上書きしない．
+    """
+    wide = {"width": "200%"}
+    lefts = {a: _placed(tmp_path / "wide", a, align=a, **wide).left
+             for a in ("left", "center", "right")}
+    assert len(set(lefts.values())) == 1, lefts
+    assert lefts["right"] >= 0
 
 
 # ---------------------------------------------------------------- 記号なしの行
