@@ -1746,6 +1746,7 @@ class Renderer:
         # 前に済ませる（以降の _effective_geom / _content_rect が上書き後を参照）．
         self._apply_placeholder_widths(s, directives,
                                        is_columns=bool(slide.columns))
+        self._apply_title_width(s, directives)
 
         # スライド既定の採番色（@autonum-color）．Line.num_color が優先．
         raw_num_color = directives.get("autonum_color")
@@ -2247,6 +2248,57 @@ class Renderer:
         else:
             self._apply_body_width(slide, val)
 
+    def _apply_title_width(self, slide: PptxSlide,
+                           directives: dict[str, Any]) -> None:
+        """@title-width: "120" — タイトルプレースホルダ幅を再指定する．
+
+        ``@widths`` が本文（とカラム）だけを見るのは、値の個数が**カラム数**を
+        意味するため——タイトルはカラムではないので、同じディレクティブに混ぜると
+        「値 1 個」が本文幅なのかタイトル幅なのか決められなくなる．そこで
+        ``@table-width`` と同じく**対象を名前に持つ別のディレクティブ**にする．
+
+        解釈と語彙は ``@widths`` と共通：継承したタイトル枠幅に対する百分率、
+        既定は左端固定（右余白のみ使用）、末尾の ``!`` で左余白の使用を許可．
+        長いタイトルは ``<br>`` で折るのが基本だが、枠を広げれば収まる場合に
+        原稿を折らずに済ませるための逃げ道（Issue #62 の折り方の規則は本文の話で、
+        枠の広さとは別）．
+        """
+        val = directives.get("title_width")
+        if val is None:
+            return
+        val, allow_left = self._split_allow_left(val)
+        pcts = self._parse_pct_list(val)
+        if pcts is None or len(pcts) != 1 or pcts[0] <= 0:
+            sys.stderr.write(
+                "md2pptx: warning: @title-width expects one positive "
+                f"percentage, got {val!r}; ignoring\n")
+            return
+        ph = self._find_placeholder(slide, 0)
+        if ph is None:
+            # タイトル枠の無いレイアウト（「白紙」等）．本文と同じく黙って何もしない
+            # ——ここで警告を出すと、タイトルの無いスライドを含むデッキで
+            # スライドごとに 1 行ずつ出てしまう．
+            return
+        left, top, width, height = self._effective_geom(ph, slide)
+        if left is None or top is None or width is None or height is None:
+            return
+        new_w = width * pcts[0] / 100.0
+        max_w = ((self.SW - self._PH_MARGIN - left) if not allow_left
+                 else (self.SW - 2 * self._PH_MARGIN))
+        if new_w > max_w:
+            sys.stderr.write(
+                "md2pptx: warning: @title-width exceeds the "
+                f"{'slide' if allow_left else 'right margin'}; clamping"
+                f"{'' if allow_left else ' (append ! to use the left margin)'}\n")
+            new_w = max_w
+        new_l = left
+        if allow_left:
+            overflow = (new_l + new_w) - (self.SW - self._PH_MARGIN)
+            if overflow > 0:
+                new_l -= overflow
+            new_l = max(new_l, self._PH_MARGIN)
+        self._override_geom(ph, new_l, top, new_w, height)
+
     def _apply_ph_widths(self, slide: PptxSlide, val: object) -> None:
         """@widths: "55,45" — 多カラムのプレースホルダ幅を再指定する．
 
@@ -2480,7 +2532,14 @@ class Renderer:
             w = int(ew)
         if eh is not None:
             h = int(eh)
-        x = left + (width - w) // 2
+        # 水平寄せは ```image と同じ語彙（既定は中央）．2 カラムの片側に置いた
+        # ときに、左寄せの項目に対して矢印だけ中央で右へずれて見えるのを直す．
+        if arrow.align == "left":
+            x = left
+        elif arrow.align == "right":
+            x = left + (width - w)
+        else:
+            x = left + (width - w) // 2
         y = top + (height - h) // 2
         if h > height or w > width:
             # 帯に収まらない大きさを書かれたとき．**上端（左端）に寄せる**——
