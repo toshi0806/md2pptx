@@ -75,8 +75,9 @@ if TYPE_CHECKING:
     from pptx.text.text import _Paragraph, _Run
 
 
-# Table.aligns の寄せ名 → PowerPoint の段落水平アラインメント．
-_TABLE_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
+# 寄せ名 → PowerPoint の段落水平アラインメント．``Table.aligns`` と
+# ``PlacedText.align`` の両方が同じ名前を使う．
+_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
 
 # コードブロックの既定の等幅フォント（front matter の ``mono_font`` で変えられる）．
 # Windows / macOS の Office に同梱されていて，日本語混在時は欧文だけに効く
@@ -1228,9 +1229,10 @@ class Renderer:
         for lab in plan.labels:
             # 矢印ラベルは**折り返さない**．短い語なので、折れると単語の途中で
             # 割れて読めなくなる（"NAMEPREP" が "NAM / EPRE / P" になっていた）．
+            # 寄せは plan が決める——縦並びだけ左寄せ（Issue #176）．
             r = lab.rect
             self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
-                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER, wrap=False)
+                      tc=self.T2, bold=True, align=_ALIGN[lab.align], wrap=False)
         for cap in plan.captions:
             # 図に付くのは caption だけ（note_top / note_bottom は地の文なので
             # 本文プレースホルダ側で描く——plan にも入っていない）．
@@ -1442,7 +1444,7 @@ class Renderer:
                 pa = cell.text_frame.paragraphs[0]
                 pa.text = row[ci] if ci < len(row) else ""
                 if al != "left":
-                    pa.alignment = _TABLE_ALIGN[al]
+                    pa.alignment = _ALIGN[al]
                 # セルごとの背景色（§5.4）．**ヘッダの既定より優先する**——
                 # 書いたものがそのまま出るほうが説明しやすい．
                 fill_name: str | None = None
@@ -1553,7 +1555,7 @@ class Renderer:
         for lab in plan.labels:
             r = lab.rect
             self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
-                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER, wrap=False)
+                      tc=self.T2, bold=True, align=_ALIGN[lab.align], wrap=False)
         for nt in plan.notes:
             r = nt.rect
             self.note(slide, r.left, r.top, r.width, r.height, nt.text, bsz,

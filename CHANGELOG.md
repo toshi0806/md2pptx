@@ -59,6 +59,12 @@
 
 ### 修正
 
+- 縦に並べた ` ```flow ` で、**矢印ラベルが矢印に重なって**先頭の字が読めなく
+  なることがありました（`NAMEPREP` が `AMEPREP` に見えるなど）。ラベルの枠幅は
+  字幅の見積もりなので、実際の字がそれを超えると中央揃えのぶんが左右へはみ出し、
+  左側が矢印に掛かっていました。縦並びのラベルを左寄せにして、はみ出しは
+  矢印から離れる側へ出るようにしました [#177]
+
 - `{box}` の枠が、囲んでいる字に対して**少し下へ寄って**見えていました。
   PowerPoint が行の箱の中で字を上寄りに置くためです。上下の空きが揃うように
   枠を持ち上げました [#161] [#165]
@@ -304,3 +310,18 @@
 [#140]: https://github.com/toshi0806/md2pptx/pull/140
 [#142]: https://github.com/toshi0806/md2pptx/pull/142
 [#144]: https://github.com/toshi0806/md2pptx/pull/144
+[#147]: https://github.com/toshi0806/md2pptx/pull/147
+[#149]: https://github.com/toshi0806/md2pptx/pull/149
+[#151]: https://github.com/toshi0806/md2pptx/pull/151
+[#153]: https://github.com/toshi0806/md2pptx/pull/153
+[#155]: https://github.com/toshi0806/md2pptx/pull/155
+[#157]: https://github.com/toshi0806/md2pptx/pull/157
+[#159]: https://github.com/toshi0806/md2pptx/pull/159
+[#161]: https://github.com/toshi0806/md2pptx/pull/161
+[#163]: https://github.com/toshi0806/md2pptx/pull/163
+[#165]: https://github.com/toshi0806/md2pptx/pull/165
+[#166]: https://github.com/toshi0806/md2pptx/pull/166
+[#168]: https://github.com/toshi0806/md2pptx/pull/168
+[#170]: https://github.com/toshi0806/md2pptx/pull/170
+[#173]: https://github.com/toshi0806/md2pptx/pull/173
+[#177]: https://github.com/toshi0806/md2pptx/pull/177
