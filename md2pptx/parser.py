@@ -84,7 +84,7 @@ _INT_DIRECTIVES = {"layout", "autofit", "body_size"}
 # 専用形式（_RE_COL / _RE_TITLE_SLIDE）で，ここへ来るのは値付きの誤りだけ．
 _KNOWN_DIRECTIVES = {
     "layout", "autofit", "body_size", "autonum_color", "widths", "table_widths",
-    "overflow",
+    "table_width", "overflow",
 }
 
 # v0.7 で改名した旧ディレクティブ名 → 新名称（エラーメッセージで案内する）．
@@ -919,6 +919,27 @@ def _parse_arrow_block(text: str) -> Arrow:
                  width=width, height=height, color=color)
 
 
+def _table_width_value(value: str, lineno: int) -> str | float:
+    """``@table-width`` の値を ``"auto"`` か百分率（float）へ解釈する．
+
+    受理するのは ``auto`` と ``70%`` だけ．単位なしの数値は割合とも長さとも
+    読めるので受け取らない．0 以下は表が消えるだけなので誤りとして扱う．
+    """
+    v = value.strip().replace("％", "%")
+    if v.lower() == "auto":
+        return "auto"
+    if v.endswith("%"):
+        try:
+            pct = float(v[:-1])
+        except ValueError:
+            pct = 0.0
+        if pct > 0:
+            return pct
+    raise ValueError(
+        f"invalid @table-width value {value!r} at line {lineno} "
+        f"(write 'auto' or a percentage of the band such as '70%')")
+
+
 def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
     """HTML コメント由来のディレクティブを Slide へ反映する．
 
@@ -960,6 +981,11 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
             raise ValueError(
                 f"invalid @overflow value {value!r} at line {lineno} (true|false)")
         val = (v == "true")
+    elif norm == "table_width":
+        # 表の総幅．``auto``（内容なり）か帯幅に対する百分率のみ受理する．
+        # 単なる数値（"70"）は割合か長さか読み手に分からないので受け取らない——
+        # 画像の width: が 70% / 8cm と単位を必ず書かせるのと同じ方針．
+        val = _table_width_value(value, lineno)
 
     slide.directives[norm] = val
 
