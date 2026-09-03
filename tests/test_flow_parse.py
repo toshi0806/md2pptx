@@ -308,3 +308,26 @@ def test_an_empty_flow_plans_nothing():
     plan = F.plan_flow(F.parse_flow(""), 0, 0, F.EMU * 8, F.EMU * 4)
 
     assert plan == F.FlowPlan()
+
+
+def test_object_blocks_is_populated():
+    """``OBJECT_BLOCKS`` が空でない（Issue: PR #186 のレビュー）．
+
+    ``get_args`` で Union から実行時のタプルを導いているので、型の書き方を
+    変えると**黙って空になる**ことがありうる。空のタプルを ``isinstance`` に
+    渡すと常に偽で、オブジェクトブロックの判定が全部すり抜ける——
+    エラーにならないぶん気づきにくい。``ARROW_DIRECTIONS`` と同じ要領で固定する。
+    """
+    from md2pptx.ir import OBJECT_BLOCKS, Arrow, Flow, Image, Seq, Table
+    assert set(OBJECT_BLOCKS) == {Table, Flow, Image, Seq, Arrow}
+
+
+def test_every_object_block_with_steps_can_be_sliced():
+    """図の中で ``@step`` を持てる型は ``upto`` を実装している．
+
+    ``_expand_steps`` は ``isinstance(last, (Flow, Seq))`` で判定するので、
+    ここが実装と食い違うと段が黙って刻まれなくなる。
+    """
+    from md2pptx.ir import Flow, Seq
+    for t in (Flow, Seq):
+        assert callable(getattr(t, "upto", None)), t.__name__

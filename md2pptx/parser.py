@@ -29,7 +29,7 @@ import yaml
 from .ir import (
     CONTENT_LAYOUT, SECTION_LAYOUT, TITLE_LAYOUT, Align, Block, Crop, Deck,
     ARROW_DIRECTIONS, Arrow, ArrowDirection, Flow, Image, Length, Line, Slide,
-    Span, Table, TitleSlide,
+    Seq, Span, Table, TitleSlide,
 )
 from .colors import parse_color
 from .flow import parse_flow as _parse_flow
@@ -666,7 +666,10 @@ def _expand_steps(
             ci, n = partial
             if ci < len(sliced) and sliced[ci]:
                 last = sliced[ci][-1]
-                if hasattr(last, "upto"):
+                # **型で判定する**．``hasattr(last, "upto")`` だと、
+                # ``ObjectBlock`` に型を足して ``upto`` を実装し忘れても
+                # 静的解析では気づけない（黙って段が刻まれなくなる）．
+                if isinstance(last, (Flow, Seq)):
                     sliced[ci][-1] = last.upto(n)
         # 浅いコピーで足りる——``title_deltas`` は ``int | None``，
         # ``directives`` の値は ``int | str | bool`` で，どれも不変
@@ -1171,7 +1174,10 @@ def _code_color_spans(text: str) -> tuple[str, list[Span]]:
         try:
             kind, value = parse_color(m.group("color"))
         except Exception:
-            # 色名でないなら、ただの角括弧．**``pos`` は進めない**——飛ばした
+            # 色名でないなら、ただの角括弧．**``pos`` は進めない**——そのぶんの
+        # 文字は次に色が付いた箇所で ``text[pos:m.start()]`` としてまとめて
+        # 地の文に出る．**この順序に依存している**ので、``finditer`` を
+        # 前から順に回すことをやめるとここが壊れる．——飛ばした
             # ぶんは「次のマッチまでの地の文」か末尾でそのまま拾われる．
             continue
         if m.start() > pos:
