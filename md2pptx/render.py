@@ -1220,6 +1220,13 @@ class Renderer:
                     for b in boxes))
         else:
             bsz = self._body_font_size()
+        # 矢印ラベルの枠は**描くサイズ**で決める（Issue #178）．box の大きさは
+        # ラベルに依らないので、サイズが決まってから引き直せばよい——枠を
+        # 16pt 固定で見積もっていた頃は、30pt の字が枠の下へはみ出して
+        # box に乗っていた（cn2026-12 p.42 の「暗号化」）．
+        if plan.labels:
+            plan = plan_flow(flow, left, top, width, height, label_pt=bsz)
+            boxes = plan.boxes
         for bi, box in enumerate(boxes):
             r = box.rect
             tc = self._theme_color(box.node.color) or \

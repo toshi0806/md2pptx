@@ -299,9 +299,56 @@ class FlowPlan:
 
 # ---------------------------------------------------------------- レイアウト
 
+# 矢印ラベルの枠を見積もるときの既定の文字サイズ．
+#
+# **呼び出し側が実寸を渡す**（``plan_flow(label_pt=…)``）．render は自分が
+# どのサイズで描くかを知っているので、渡してもらえば枠は実寸で決まる．
+#
+# 以前はここを 16pt 固定にして「実寸と合っている必要はない、折り返さないから
+# 字は割れない」と説明していた．**横はそのとおりだが縦は成り立たない**——
+# 枠は ``anchor=MIDDLE`` なので、大きい字は枠の上下へ等しくはみ出し、
+# 下側が box に乗る（Issue #178．cn2026-12 p.42 で「暗号化」が 9pt 食い込んでいた）．
+_LABEL_PT = 16.0
+
+# 行送り．枠の高さは「文字サイズ × これ」に上下のアキを足したもの．
+_LABEL_LINE = 1.2
+_LABEL_PAD = _emu(0.08)
+
+
+def _label_height(label_pt: float = _LABEL_PT) -> int:
+    """矢印ラベルの枠の高さ（EMU）．**描くサイズで決まる**（Issue #178）．"""
+    return int(label_pt * _LABEL_LINE * 12700) + _LABEL_PAD
+
+
+def _label_width(text: str, label_pt: float = _LABEL_PT) -> int:
+    """矢印ラベルの想定幅（EMU）．全角は半角の2倍で数える．
+
+    固定幅だと**中心がずれる**（長いラベルほど左に寄って矢印から離れる）．
+    Issue #111 では折り返しと重なって "NAMEPREP" が "NAM / EPRE / P" と
+    3 行に割れていた．折り返しは render 側で止め，ここでは中心を合わせる．
+    """
+    # 0x2E80 より上を全角とみなす．CJK の記号・かな・漢字（U+3000〜）だけでなく、
+    # 全角英数と全角記号（U+FF01〜）も上側に入るので、実用上これで足りる
+    # （"（" U+FF08 も "Ａ" U+FF21 も 2 文字ぶんとして数えられることを確認済み）．
+    units = sum(2 if ord(c) > 0x2E80 else 1 for c in text)
+    return int(units * label_pt * 12700 * 0.55) + _emu(0.12)
+
+
+def _label_rect(text: str, center_x: int, bottom_y: int,
+                label_pt: float = _LABEL_PT) -> Rect:
+    """矢印ラベルを box の上へ、文字が入る幅と高さで置く．"""
+    w = max(_emu(0.5), _label_width(text, label_pt))
+    h = _label_height(label_pt)
+    return Rect(center_x - w // 2, bottom_y - h - _emu(0.04), w, h)
+
+
 def plan_flow(flow: Flow, left: int, top: int, width: int,
-              height: int) -> FlowPlan:
-    """Flow を矩形領域 (left, top, width, height) に配置する．"""
+              height: int, label_pt: float = _LABEL_PT) -> FlowPlan:
+    """Flow を矩形領域 (left, top, width, height) に配置する．
+
+    ``label_pt`` は矢印ラベルを**実際に描く**文字サイズ．枠の幅と高さをこれで
+    決めるので、render は自分が使うサイズをそのまま渡す（Issue #178）．
+    """
     plan = FlowPlan()
     nodes = flow.nodes
     if not nodes:
@@ -316,13 +363,13 @@ def plan_flow(flow: Flow, left: int, top: int, width: int,
 
     if flow.rows:
         bottom = _plan_grid(plan, flow, left, top, width, height,
-                            cap_h + cap_gap)
+                            cap_h + cap_gap, label_pt)
     elif flow.direction == "tb":
         bottom = _plan_vertical(plan, flow, left, top, width, height,
-                                cap_h + cap_gap)
+                                cap_h + cap_gap, label_pt)
     else:
         bottom = _plan_horizontal(plan, flow, left, top, width, height,
-                                  cap_h + cap_gap)
+                                  cap_h + cap_gap, label_pt)
 
     if flow.caption:
         cy = bottom + cap_gap
@@ -331,43 +378,9 @@ def plan_flow(flow: Flow, left: int, top: int, width: int,
     return plan
 
 
-# 矢印ラベルの枠を見積もるための想定値．
-#
-# **実寸と合っている必要はない．** render は矢印ラベルを折り返さない設定で描く
-# （``note(wrap=False)``）ので，枠に入りきらなくても文字は割れず，枠の中心に
-# 揃えて置かれるだけ．つまりこの幅が効くのは**どこを中心に置くか**であって，
-# 読めるかどうかではない．実サイズはテーマの本文サイズ（30pt になることもある）
-# で決まり，ここで先回りして知ることはできない．
-#
-# 0.55 は「1 文字ぶんの送り幅 ÷ フォントサイズ」の概算．欧文のプロポーショナル
-# フォントでおよそこの比になる（全角は下の ``units`` で 2 文字ぶんとして数える）．
-_LABEL_PT = 16.0
-_LABEL_H = _emu(0.34)
-
-
-def _label_width(text: str) -> int:
-    """矢印ラベルの想定幅（EMU）．全角は半角の2倍で数える．
-
-    固定幅だと**中心がずれる**（長いラベルほど左に寄って矢印から離れる）．
-    Issue #111 では折り返しと重なって "NAMEPREP" が "NAM / EPRE / P" と
-    3 行に割れていた．折り返しは render 側で止め，ここでは中心を合わせる．
-    """
-    # 0x2E80 より上を全角とみなす．CJK の記号・かな・漢字（U+3000〜）だけでなく、
-    # 全角英数と全角記号（U+FF01〜）も上側に入るので、実用上これで足りる
-    # （"（" U+FF08 も "Ａ" U+FF21 も 2 文字ぶんとして数えられることを確認済み）．
-    units = sum(2 if ord(c) > 0x2E80 else 1 for c in text)
-    return int(units * _LABEL_PT * 12700 * 0.55) + _emu(0.12)
-
-
-def _label_rect(text: str, center_x: int, bottom_y: int) -> Rect:
-    """矢印ラベルを box の上へ、文字が入る幅で置く．"""
-    w = max(_emu(0.5), _label_width(text))
-    return Rect(center_x - w // 2, bottom_y - _LABEL_H - _emu(0.04),
-                w, _LABEL_H)
-
-
 def _plan_grid(plan: FlowPlan, flow: Flow, left: int, top: int,
-               width: int, height: int, reserve: int) -> int:
+               width: int, height: int, reserve: int,
+               label_pt: float = _LABEL_PT) -> int:
     """段（``--`` 区切り）を持つ図を格子に置く（Issue #109）．
 
     段は上から下へ、段の中は左から右。**列は全段で揃える**——段ごとに幅を
@@ -429,14 +442,17 @@ def _plan_grid(plan: FlowPlan, flow: Flow, left: int, top: int,
             plan.arrows.append(PlacedArrow(x1, a.center_y, x2, b.center_y))
             if e.label:
                 plan.labels.append(PlacedText(
-                    e.label, _label_rect(e.label, (x1 + x2) // 2, a.top)))
+                    e.label, _label_rect(e.label, (x1 + x2) // 2, a.top,
+                                         label_pt)))
         else:
             x1, y1, x2, y2 = _edge_points(a, b)
             plan.lines.append(PlacedLine(x1, y1, x2, y2))
             if e.label:
                 plan.labels.append(PlacedText(
                     e.label, _label_rect(e.label, (x1 + x2) // 2,
-                                         (y1 + y2) // 2 + _LABEL_H // 2)))
+                                         (y1 + y2) // 2
+                                         + _label_height(label_pt) // 2,
+                                         label_pt)))
     return y0 + grid_h
 
 
@@ -458,7 +474,8 @@ def _edge_points(a: Rect, b: Rect) -> tuple[int, int, int, int]:
 
 
 def _plan_horizontal(plan: FlowPlan, flow: Flow, left: int, top: int,
-                     width: int, height: int, cap_reserve: int) -> int:
+                     width: int, height: int, cap_reserve: int,
+                     label_pt: float = _LABEL_PT) -> int:
     """横並び（lr）に配置し，box 帯の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
@@ -503,12 +520,14 @@ def _plan_horizontal(plan: FlowPlan, flow: Flow, left: int, top: int,
         plan.arrows.append(PlacedArrow(a.right, ay, b.left, ay))
         if e.label:
             mx = (a.right + b.left) // 2
-            plan.labels.append(PlacedText(e.label, _label_rect(e.label, mx, by)))
+            plan.labels.append(PlacedText(
+                e.label, _label_rect(e.label, mx, by, label_pt)))
     return by + bh
 
 
 def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
-                   width: int, height: int, cap_reserve: int) -> int:
+                   width: int, height: int, cap_reserve: int,
+                   label_pt: float = _LABEL_PT) -> int:
     """縦並び（tb）に配置し，box 列の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
@@ -552,7 +571,8 @@ def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
             # （Issue #176）——中央揃えだと見積もりを超えたぶんが左右へ等しく
             # はみ出し、左側が矢印に掛かって先頭の字が読めなくなる。
             my = (a.bottom + b.top) // 2
-            r = _label_rect(e.label, cx, my + _LABEL_H // 2)
+            r = _label_rect(e.label, cx, my + _label_height(label_pt) // 2,
+                            label_pt)
             plan.labels.append(PlacedText(
                 e.label, Rect(cx + _emu(0.18), r.top, r.width, r.height),
                 align="left"))
