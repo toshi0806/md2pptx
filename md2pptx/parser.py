@@ -21,15 +21,19 @@ from __future__ import annotations
 
 import re
 import sys
-from typing import Any, Literal
+from dataclasses import dataclass, replace
+from typing import Any, Literal, cast
 
 import yaml
 
 from .ir import (
     CONTENT_LAYOUT, SECTION_LAYOUT, TITLE_LAYOUT, Align, Block, Crop, Deck,
-    Flow, Image, Length, Line, Slide, Table, TitleSlide,
+    ARROW_DIRECTIONS, Arrow, ArrowDirection, Flow, Image, Length, Line, Slide,
+    Seq, Span, Table, TitleSlide,
 )
+from .colors import parse_color
 from .flow import parse_flow as _parse_flow
+from .seq import parse_seq as _parse_seq
 
 
 # ---------------------------------------------------------------- 定数
@@ -50,8 +54,12 @@ _RE_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 _RE_ORDERED = re.compile(r"^(\d+)\.\s+(.*)$")        # 1. 2. 3. …（arabicPeriod）
 _RE_PAREN = re.compile(r"^\(\s*(\d+)\s*\)\s+(.*)$")  # (1) (2) …（arabicParenBoth）
 _RE_DIRECTIVE = re.compile(r"^<!--\s*@([\w-]+)\s*:\s*(.*?)\s*-->$")
-# カラム区切り（「2つのコンテンツ」レイアウト）．値を取らない指示．
-_RE_COL = re.compile(r"^<!--\s*@col\s*-->$")
+# カラム区切り（「2つのコンテンツ」レイアウト）．値は arrow のみ．
+# **_RE_DIRECTIVE より先に評価すること**——"@col: arrow" は汎用の
+# "@キー: 値" にも当たるので、順序が入れ替わると _apply_directive へ落ちる．
+_RE_COL = re.compile(r"^<!--\s*@col(?:\s*:\s*(\S+?))?\s*-->$")
+# 段階の区切り（アニメーションの代替．§5.11）．同じく値を取らない．
+_RE_STEP = re.compile(r"^<!--\s*@step\s*-->$")
 # 表紙（テーマの「タイトル スライド」レイアウト）．同じく値を取らない．
 _RE_TITLE_SLIDE = re.compile(r"^<!--\s*@title-slide\s*-->$")
 # 1 行 HTML コメント（ディレクティブ以外のメモ等．無視する）．
@@ -64,6 +72,8 @@ _RE_BR = re.compile(r"\s*<br\s*/?>\s*")
 # 相対フォントサイズトークン．マーカー直後・本文直前の "{+1}"/"{-2}"/"{0}"．
 # 符号は省略可（"{2}" は "+2" と同義）．render がテーマ基準で実サイズへ換算する．
 _RE_SIZE = re.compile(r"^\{\s*([+-]?\d+)\s*\}\s*(.*)$")
+_RE_BOX = re.compile(r"^\{\s*box\s*(?::\s*([^}\s]+)\s*)?\}\s*(.*)$",
+                     re.IGNORECASE)
 
 # 整数として解釈するディレクティブキー（正規化後の名前）．
 # body_size はスライド既定の相対フォントサイズ段数（@body-size）．
@@ -74,7 +84,7 @@ _INT_DIRECTIVES = {"layout", "autofit", "body_size"}
 # 専用形式（_RE_COL / _RE_TITLE_SLIDE）で，ここへ来るのは値付きの誤りだけ．
 _KNOWN_DIRECTIVES = {
     "layout", "autofit", "body_size", "autonum_color", "widths", "table_widths",
-    "overflow",
+    "table_width", "title_width", "overflow",
 }
 
 # v0.7 で改名した旧ディレクティブ名 → 新名称（エラーメッセージで案内する）．
@@ -86,7 +96,7 @@ _RENAMED_DIRECTIVES = {
 
 # フロントマターの既知キー．未知のキーはエラー（ディレクティブと同方針）．
 _KNOWN_META_KEYS = {
-    "theme", "output", "slide_number", "default_autofit", "syntax",
+    "theme", "output", "slide_number", "default_autofit", "syntax", "mono_font",
     "title", "subtitle", "author", "affiliation",
 }
 
@@ -333,6 +343,17 @@ def _parse_body(body: str, body_offset: int = 0,
     slides: list[Slide] = []
     current: Slide | None = None
     title_notes: list[str] = []
+    # 現在のスライドの段階区切り（@step）．各要素は「その時点での各カラムの
+    # ブロック数」．**切り出しはスライドを閉じるときにまとめて行う**——@step の
+    # 位置で即座にスナップショットを取ると，その後に書いた @layout や ```note が
+    # 前の段に入らず，「どこに書いたか」で結果が変わってしまう（§5.11）．
+    # 各要素は (各カラムのブロック数, 途中まで見せる図の位置 or None)．
+    # 後者は図の中の @step（Issue #125）用で ``(カラム番号, 単位数)``．
+    # ブロック境界だけでは図の内部で切れないので、
+    # 「このカラムの最後のブロックだけ途中まで」を表せるようにしてある．
+    # **カラム番号を持つ**のは、左右どちらにも図があるとき「最初に見つかった図」
+    # では取り違えるため（左の図が常に選ばれてしまう）．
+    step_marks: list[tuple[list[int], tuple[int, int] | None]] = []
 
     def ensure_slide() -> Slide:
         """直前にスライド開始マーカーが無いまま本文が来た場合のフォールバック．"""
@@ -342,9 +363,33 @@ def _parse_body(body: str, body_offset: int = 0,
         return current
 
     def add_block(b: Block) -> None:
-        """ブロックを現在のカラム（多カラム時）または blocks へ追加する．"""
+        """ブロックを現在のカラム（多カラム時）または blocks へ追加する．
+
+        図が**中に段階を持って**いれば（``Flow.steps`` / ``Seq.steps``）、
+        その数だけスライドの段を刻む（Issue #125）．最後の段は図の全体なので
+        刻まない——``_expand_steps`` が最終段としてスライド本体を使う．
+        """
         s = ensure_slide()
         (s.columns[-1] if s.columns else s.blocks).append(b)
+        steps = getattr(b, "steps", None)
+        if steps:
+            cols = s.columns if s.columns else [s.blocks]
+            counts = [len(c) for c in cols]
+            ci = len(s.columns) - 1 if s.columns else 0
+            for n in steps:
+                step_marks.append((list(counts), (ci, n)))
+
+    def flush() -> None:
+        """現在のスライドを（段があれば展開して）slides へ移す．
+
+        ``slides`` に ``nonlocal`` が要らないのは ``extend`` するだけで
+        束縛し直さないため（``current`` と ``step_marks`` は代入するので要る）．
+        """
+        nonlocal current, step_marks
+        if current is not None:
+            slides.extend(_expand_steps(current, step_marks))
+        current = None
+        step_marks = []
 
     lines = body.split("\n")
     n = len(lines)
@@ -387,8 +432,7 @@ def _parse_body(body: str, body_offset: int = 0,
                         f"a second title slide at line {lineno}: {stripped!r} "
                         f"(a deck has one; if this is a section divider, "
                         f"write 'syntax: 0' in the front matter or use '##')")
-            if current is not None:
-                slides.append(current)
+            flush()
             current = Slide(title=htext or None, title_deltas=title_deltas,
                             layout=headings[level])
             i += 1
@@ -397,8 +441,7 @@ def _parse_body(body: str, body_offset: int = 0,
         if stripped == "---":
             # 水平線 → タイトルなしスライドを明示的に開始．**非推奨**（Issue #92）．
             _warn_deprecated_rule(lineno)
-            if current is not None:
-                slides.append(current)
+            flush()
             current = Slide()
             i += 1
             continue
@@ -427,13 +470,29 @@ def _parse_body(body: str, body_offset: int = 0,
             continue
 
         # --- カラム区切り（「2つのコンテンツ」）→ 多カラム化（§5.7）----
-        if _RE_COL.match(stripped):
+        m_col = _RE_COL.match(stripped)
+        if m_col:
             s = ensure_slide()
+            if m_col.group(1) is not None:
+                # 区切りそのものを図形として描く指定．いまは arrow だけ．
+                if m_col.group(1) != "arrow":
+                    raise ValueError(
+                        f"invalid @col value {m_col.group(1)!r} at line "
+                        f"{lineno} (arrow)")
+                s.directives["col_arrow"] = True
             if not s.columns:
                 s.layout = 3                 # 2つのコンテンツ レイアウト
                 s.columns = [s.blocks, []]   # 既存ブロックを左カラムへ
             else:
                 s.columns.append([])
+            i += 1
+            continue
+
+        # --- 段階の区切り（アニメーションの代替）→ 段を1つ刻む（§5.11）----
+        if _RE_STEP.match(stripped):
+            s = ensure_slide()
+            cols = s.columns if s.columns else [s.blocks]
+            step_marks.append(([len(c) for c in cols], None))
             i += 1
             continue
 
@@ -450,7 +509,7 @@ def _parse_body(body: str, body_offset: int = 0,
             i += 1
             continue
 
-        # --- フェンスドコードブロック（```flow … ```）→ Flow（§5.5）--
+        # --- フェンスドブロック（```flow / ```image / ```note / コード）------
         if stripped.startswith("```"):
             info = stripped[3:].strip().lower()
             j = i + 1
@@ -458,8 +517,18 @@ def _parse_body(body: str, body_offset: int = 0,
             while j < n and lines[j].strip() != "```":
                 buf.append(lines[j])
                 j += 1
-            if info == "flow":
+            if j >= n:
+                # 閉じ忘れを黙って末尾まで飲み込むと，以降のスライドが丸ごと
+                # 消えたデッキが出る．**行番号付きで止める**（§7 の方針）．
+                raise ValueError(
+                    f"unclosed code fence at line {lineno}: "
+                    f"{stripped!r} (add a closing ```)")
+            if info == "arrow":
+                add_block(_parse_arrow_block("\n".join(buf)))
+            elif info == "flow":
                 add_block(_parse_flow("\n".join(buf)))
+            elif info == "seq":
+                add_block(_parse_seq("\n".join(buf)))
             elif info == "image":
                 add_block(_parse_image_block("\n".join(buf)))
             elif info in ("note", "notes"):
@@ -481,8 +550,27 @@ def _parse_body(body: str, body_offset: int = 0,
                     else:
                         s = ensure_slide()
                         s.notes = text if s.notes is None else s.notes + "\n" + text
-            # flow / image / note 以外のコードブロックは範囲外（無視）．
-            i = j + 1  # 閉じフェンスの次へ（無い場合も末尾へ）
+            else:
+                # それ以外はすべてコードブロック（§5.12）．**info string は
+                # 自由で，md2pptx は読み飛ばす**——構文強調はしないので言語名に
+                # 意味が無く，受理する名前の一覧を持つと維持する羽目になる．
+                # 行は原稿のまま Line にする（行頭マーカーもサイズトークンも
+                # <br> も解釈しない．解釈したらもうコードではない）．
+                # 前後の空行だけ落とす（フェンス境界に接する空行の正規化）．
+                body_lines = list(buf)
+                while body_lines and not body_lines[0].strip():
+                    body_lines.pop(0)
+                while body_lines and not body_lines[-1].strip():
+                    body_lines.pop()
+                # ``color`` と書いたフェンスだけ ``[語]{色}`` を解釈する
+                # （既定は「書いたまま」．Issue #162）．
+                colored = "color" in info.split()
+                for text in body_lines:
+                    spans: list[Span] = []
+                    if colored:
+                        text, spans = _code_color_spans(text)
+                    add_block(Line(text=text, kind="code", spans=spans))
+            i = j + 1  # 閉じフェンスの次へ
             continue
 
         # --- 画像ショートハンド（![cap](src){opts}）→ Image（§5.9）--------
@@ -507,7 +595,19 @@ def _parse_body(body: str, body_offset: int = 0,
                     break  # 別ブロック開始
                 rows.append(_split_row(rs))
                 j += 1
-            add_block(Table(header=header, rows=rows, aligns=aligns))
+            # セル末尾の {色} を剥がす．**色を書いていない表では fills を空の
+            # まま**にして、従来どおりの経路（テーマ任せ）を通す．
+            header_cells = [_split_cell_fill(c) for c in header]
+            body_cells = [[_split_cell_fill(c) for c in r] for r in rows]
+            header_fills = [f for _, f in header_cells]
+            fills = [[f for _, f in r] for r in body_cells]
+            has_fill = any(header_fills) or any(any(r) for r in fills)
+            add_block(Table(
+                header=[t for t, _ in header_cells],
+                rows=[[t for t, _ in r] for r in body_cells],
+                aligns=aligns,
+                fills=fills if has_fill else [],
+                header_fills=header_fills if has_fill else []))
             i = j
             continue
 
@@ -517,15 +617,93 @@ def _parse_body(body: str, body_offset: int = 0,
             continue
 
         # --- 本文行 → Line ---------------------------------------
-        line = _parse_content_line(raw)
+        line = parse_content_line(raw)
         if line is not None:
             add_block(line)
         i += 1
 
-    if current is not None:
-        slides.append(current)
+    flush()
 
     return slides, ("\n".join(title_notes) if title_notes else None)
+
+
+def _expand_steps(
+        slide: Slide,
+        marks: list[tuple[list[int], tuple[int, int] | None]]) -> list[Slide]:
+    """段階の区切り（@step）を持つスライドを、積み上がる複数枚へ展開する．
+
+    marks の各要素は (その区切りの時点での各カラムのブロック数,
+    途中まで見せる図の位置 or None)．**最終段は slide そのもの**で、それより前の
+    段は各カラムを先頭から切り出した写しになる．
+
+    2 つめの値は**図の中の段階**（Issue #125）で ``(カラム番号, 単位数)``．
+    ブロック境界だけでは図の内部で切れないので、そのカラムの最後のブロックを
+    ``upto(n)`` で途中まで（矢印 n 本目まで・ノード n 個目まで）に差し替える．
+    地の文は従来どおり累積したまま、**図だけがその段階の姿になる**．
+
+    **カラム番号を持つ**のは、左右どちらにも図があるとき「最初に見つかった図」
+    では取り違えるため（左の図が常に選ばれてしまう）．
+
+    段はどれも**最終的なカラム構成**で描く．カラム区切りより前の段だけ単一カラムに
+    すると、レイアウトが段ごとに変わって行頭の位置が動いてしまう．そのため
+    marks が短い（＝その時点で存在しなかった）カラムは空として補う．
+
+    タイトル・レイアウト・ディレクティブは全段で同じ．発表者ノートは最終段だけに
+    残す——段の集まりで 1 つの話なので、発表者ビューに同じ原稿が何度も出ても
+    読みにくいだけ．
+    """
+    if not marks:
+        return [slide]
+    # ``Slide.columns`` は**空リストが「単一カラム」の意味**（``None`` は取らない）．
+    # parser の add_block も ``s.columns[-1] if s.columns else s.blocks`` と
+    # 同じ判定をしており，ここだけ ``is not None`` にすると食い違う．
+    cols = slide.columns if slide.columns else [slide.blocks]
+    out: list[Slide] = []
+    for mark, partial in marks:
+        counts = list(mark) + [0] * (len(cols) - len(mark))
+        sliced = [list(c[:k]) for c, k in zip(cols, counts)]
+        if partial is not None:
+            ci, n = partial
+            if ci < len(sliced) and sliced[ci]:
+                last = sliced[ci][-1]
+                # **型で判定する**．``hasattr(last, "upto")`` だと、
+                # ``ObjectBlock`` に型を足して ``upto`` を実装し忘れても
+                # 静的解析では気づけない（黙って段が刻まれなくなる）．
+                if isinstance(last, (Flow, Seq)):
+                    sliced[ci][-1] = last.upto(n)
+        # 浅いコピーで足りる——``title_deltas`` は ``int | None``，
+        # ``directives`` の値は ``int | str | bool`` で，どれも不変
+        # （``ir.Slide`` の注釈が正）．``blocks`` は下でスライスした新しいリスト．
+        step = Slide(title=slide.title,
+                     title_deltas=list(slide.title_deltas),
+                     layout=slide.layout,
+                     directives=dict(slide.directives))
+        if slide.columns:
+            step.columns = sliced
+        else:
+            step.blocks = sliced[0]
+        out.append(step)
+    out.append(slide)
+    return out
+
+
+# セル末尾の色指定 "… {accent2}"．**色名らしい語だけ**を対象にする
+# （"{n} 個" のような式まで拾うと、書けるものを勝手に減らすことになる）．
+_RE_CELL_FILL = re.compile(r"^(.*?)\s*\{\s*(#?[A-Za-z][\w-]*|#[0-9A-Fa-f]{3,6})\s*\}$")
+
+
+def _split_cell_fill(cell: str) -> tuple[str, str | None]:
+    """セルの末尾に書かれた ``{色}`` を剥がして (中身, 色名) を返す（§5.4）．
+
+    色として解釈できない ``{…}`` は**文字のまま残す**——式や記号を壊さないため．
+    色名らしいのに解決できないものはタイポとみなして止める（``parse_color``）．
+    """
+    m = _RE_CELL_FILL.match(cell)
+    if not m:
+        return cell, None
+    name = m.group(2)
+    parse_color(name)          # 綴り違いはここで止まる
+    return m.group(1).strip(), name
 
 
 def _split_row(s: str) -> list[str]:
@@ -693,6 +871,92 @@ def _parse_image_block(text: str) -> Image:
     return img
 
 
+def _parse_arrow_block(text: str) -> Arrow:
+    """``` ```arrow ``` ブロックを Arrow へ解釈する（§5.16）．
+
+    ``direction:`` は**必須**——向きの無い矢印は描きようが無い．
+    ``width:`` / ``height:`` / ``color:`` は任意で、語彙は ``` ```image ``` および
+    行内装飾と共通（``_parse_length`` / ``parse_color``）．新しい書き方を増やさない．
+    知らないキー・知らない値はタイポとみなしてエラーで止める（他のフェンスと同じ）．
+
+    同じキーを 2 回書いたら**後に書いたほうが残る**．``` ```image ``` と同じ扱いで、
+    フェンスの中のキーはどれもそう動く（ここだけエラーにすると規則が二重になる）．
+    """
+    direction: str | None = None
+    width = height = None
+    color: str | None = None
+    align: Align = "center"
+    left: Length | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if ":" not in line:
+            raise ValueError(
+                f"arrow block: expected 'key: value', got {line!r}")
+        k, v = line.split(":", 1)
+        k, v = k.strip().lower(), v.strip()
+        if k == "direction":
+            if v.lower() not in ARROW_DIRECTIONS:
+                raise ValueError(
+                    f"arrow block: unknown direction {v!r} "
+                    f"({' | '.join(ARROW_DIRECTIONS)})")
+            direction = v.lower()
+        elif k == "width":
+            width = _parse_length(v)
+        elif k == "height":
+            height = _parse_length(v)
+        elif k == "left":
+            # 帯の左端からの距離．語彙は width / height と同じ（Issue #180）．
+            left = _parse_length(v)
+        elif k == "color":
+            # 色は行内装飾と同じ語彙．**検証して正規化してから** IR へ入れる．
+            kind, value = parse_color(v)
+            color = value if kind == "theme" else "#" + value
+        elif k == "align":
+            # 語彙は ```image と共通（left | center | right）．新しい書き方を
+            # 増やさない——同じことを指す言葉が 2 つあると、どちらが効くのかを
+            # 覚える必要が出る．
+            if v.lower() not in ("left", "center", "right"):
+                raise ValueError(
+                    f"arrow block: invalid align {v!r} (left|center|right)")
+            align = cast(Align, v.lower())
+        else:
+            raise ValueError(
+                f"arrow block: unknown key {k!r} "
+                f"(direction | width | height | left | color | align)")
+    if direction is None:
+        raise ValueError(
+            "arrow block requires 'direction:' "
+            f"({' | '.join(ARROW_DIRECTIONS)})")
+    # direction は上で ARROW_DIRECTIONS に含まれることを確かめてあるが、
+    # mypy は str から Literal への絞り込みを追えない．
+    return Arrow(direction=cast(ArrowDirection, direction),
+                 width=width, height=height, color=color, align=align,
+                 left=left)
+
+
+def _table_width_value(value: str, lineno: int) -> str | float:
+    """``@table-width`` の値を ``"auto"`` か百分率（float）へ解釈する．
+
+    受理するのは ``auto`` と ``70%`` だけ．単位なしの数値は割合とも長さとも
+    読めるので受け取らない．0 以下は表が消えるだけなので誤りとして扱う．
+    """
+    v = value.strip().replace("％", "%")
+    if v.lower() == "auto":
+        return "auto"
+    if v.endswith("%"):
+        try:
+            pct = float(v[:-1])
+        except ValueError:
+            pct = 0.0
+        if pct > 0:
+            return pct
+    raise ValueError(
+        f"invalid @table-width value {value!r} at line {lineno} "
+        f"(write 'auto' or a percentage of the band such as '70%')")
+
+
 def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
     """HTML コメント由来のディレクティブを Slide へ反映する．
 
@@ -702,10 +966,11 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
     """
     norm = key.replace("-", "_")
     if norm == "col":
-        # 値なしの "<!-- @col -->" は _RE_COL が先に拾う．ここへ来るのは
-        # "@col: 2" のような値付きで，カラム区切りとしては不正．
+        # "<!-- @col -->" と "<!-- @col: arrow -->" は _RE_COL が先に拾う．
+        # ここへ来るのは値の綴りが違うときだけ．
         raise ValueError(
-            f"@col takes no value at line {lineno} (write '<!-- @col -->')")
+            f"invalid @col value at line {lineno} "
+            f"(write '<!-- @col -->' or '<!-- @col: arrow -->')")
     if norm == "title_slide":
         raise ValueError(
             f"@title-slide takes no value at line {lineno} "
@@ -733,6 +998,11 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
             raise ValueError(
                 f"invalid @overflow value {value!r} at line {lineno} (true|false)")
         val = (v == "true")
+    elif norm == "table_width":
+        # 表の総幅．``auto``（内容なり）か帯幅に対する百分率のみ受理する．
+        # 単なる数値（"70"）は割合か長さか読み手に分からないので受け取らない——
+        # 画像の width: が 70% / 8cm と単位を必ず書かせるのと同じ方針．
+        val = _table_width_value(value, lineno)
 
     slide.directives[norm] = val
 
@@ -762,6 +1032,40 @@ def _split_size(content: str) -> tuple[int | None, str]:
     return None, content
 
 
+def _split_tokens(content: str) -> tuple[int | None, bool, str | None, str]:
+    """本文先頭の行レベルトークンを剥がして (段数, 枠, 枠の色, 残りの本文) を返す．
+
+    置き場は 1 か所（行頭マーカーの直後）で、``{+1}`` と ``{box}`` の**どちらが先でも
+    受ける**——書く側に順序を覚えさせる理由が無い。同じトークンを 2 回書いても
+    最後の値が残るだけで、エラーにはしない。
+
+    知らない綴り（``{boxx}``）は**本文として残す**。``{+x}`` が今そうなっているのと
+    同じ扱いで、行頭トークンだけディレクティブ流のエラーにすると規則が二重になる
+    （SYNTAX.md にその旨を書いてある）。
+    """
+    delta: int | None = None
+    boxed = False
+    color: str | None = None
+    while True:
+        m = _RE_SIZE.match(content)
+        if m:
+            delta = int(m.group(1))
+            content = m.group(2).strip()
+            continue
+        m = _RE_BOX.match(content)
+        if m:
+            boxed = True
+            if m.group(1):
+                # 色名はここで**検証して正規化する**——綴り違いは黙って既定色に
+                # 落とさず止める．正規化まで済ませるのは Span.color と同じ理由で、
+                # "#f00" と "#F00" を別物として IR に残さないため（§5.13）．
+                kind, value = parse_color(m.group(1))
+                color = value if kind == "theme" else "#" + value
+            content = m.group(2).strip()
+            continue
+        return delta, boxed, color, content
+
+
 def _split_br(text: str) -> tuple[str, list[int | None]]:
     """<br> を行内改行（\\v）へ変換し，各セグメント先頭のサイズトークンを剥がす．
 
@@ -782,8 +1086,139 @@ def _split_br(text: str) -> tuple[str, list[int | None]]:
     return "\v".join(out), deltas
 
 
-def _parse_content_line(raw: str) -> Line | None:
+# 行内装飾（§5.13）．左から順に食い，マッチしない部分は素のテキストになる．
+# ``[表示](url)`` は画像ショートハンド（``![…](…)``）より後で評価されるので衝突しない．
+_RE_INLINE = re.compile(
+    r"\*\*(?P<bold>.+?)\*\*"
+    r"|`(?P<code>[^`]+)`"
+    r"|\[(?P<ltext>[^\[\]]*)\]\((?P<url>[^()\s]*)\)"
+    r"|\[(?P<ctext>[^\[\]]*)\]\{(?P<color>[^{}]*)\}"
+    r"|\^(?P<sup>[^\^\s]+)\^"
+    r"|~(?P<sub>[^~\s]+)~"
+)
+
+
+@dataclass(frozen=True)
+class _Marks:
+    """``[…]{色}`` や ``**…**`` の内側へ継承する装飾．
+
+    ``dict`` で持つとキーの綴り違いを mypy が拾えない——``Span(**marks)`` は
+    キーワード展開なので，間違えても実行時まで分からない．
+    """
+
+    bold: bool = False
+    mono: bool = False
+    color: str | None = None
+    link: str | None = None
+    script: Literal["sup", "sub"] | None = None
+
+
+def _span(text: str, segment: int, m: _Marks) -> Span:
+    """継承した装飾を載せた Span を作る（フィールドの対応はここ 1 か所）．"""
+    return Span(text=text, segment=segment, bold=m.bold, mono=m.mono,
+                color=m.color, link=m.link, script=m.script)
+
+
+def _spans_in(text: str, segment: int, base: _Marks) -> list[Span]:
+    """1 セグメントを Span 列へ分解する（``base`` は外側から継承する装飾）．
+
+    ``[…]{色}`` と ``[…](url)`` の中身は**再帰的に解釈する**——
+    ``[**赤い強調**]{red}`` のように重ねて書けるほうが自然で，
+    「色を付けたら太字にできない」という説明を増やさずに済む．
+    """
+    out: list[Span] = []
+    pos = 0
+    for m in _RE_INLINE.finditer(text):
+        if m.start() > pos:
+            out.append(_span(text[pos:m.start()], segment, base))
+        if m.group("bold") is not None:
+            out += _spans_in(m.group("bold"), segment, replace(base, bold=True))
+        elif m.group("code") is not None:
+            out.append(_span(m.group("code"), segment, replace(base, mono=True)))
+        elif m.group("url") is not None:
+            out += _spans_in(m.group("ltext"), segment,
+                             replace(base, link=m.group("url")))
+        elif m.group("color") is not None:
+            # 色名はここで**検証して正規化する**（綴り違いは黙って既定色にせず止める）．
+            # 正規化しないと "#f00" と "#F00" が別物として IR に入り，render で
+            # もう一度同じ文字列を解き直すことになる（Issue #105 のレビュー指摘）．
+            kind, value = parse_color(m.group("color"))
+            name = value if kind == "theme" else "#" + value
+            out += _spans_in(m.group("ctext"), segment, replace(base, color=name))
+        elif m.group("sup") is not None:
+            out.append(_span(m.group("sup"), segment, replace(base, script="sup")))
+        else:
+            out.append(_span(m.group("sub"), segment, replace(base, script="sub")))
+        pos = m.end()
+    if pos < len(text):
+        out.append(_span(text[pos:], segment, base))
+    return out
+
+
+# 等幅ブロックの中で受ける記法は ``[語]{色}`` **だけ**（Issue #162）．
+_RE_CODE_COLOR = re.compile(r"\[(?P<ctext>[^\[\]]*)\]\{(?P<color>[^{}]+)\}")
+
+
+def _code_color_spans(text: str) -> tuple[str, list[Span]]:
+    """コード行の ``[語]{色}`` だけを解釈して (素のテキスト, Span 列) を返す．
+
+    **色名として解決できない ``{…}`` は文字のまま残す**——``[133.69.130.4]{n}``
+    のようなふつうの角括弧はコードにふつうに現れる．壊さないほうが大事．
+
+    ``**強調**`` や `` `等幅` `` は解釈しない．もう等幅なので意味が無く、
+    「書いたまま出る」という約束を色以外では守れる．
+    """
+    out: list[Span] = []
+    pos = 0
+    for m in _RE_CODE_COLOR.finditer(text):
+        try:
+            kind, value = parse_color(m.group("color"))
+        except Exception:
+            # 色名でないなら、ただの角括弧．**``pos`` は進めない**——そのぶんの
+        # 文字は次に色が付いた箇所で ``text[pos:m.start()]`` としてまとめて
+        # 地の文に出る．**この順序に依存している**ので、``finditer`` を
+        # 前から順に回すことをやめるとここが壊れる．——飛ばした
+            # ぶんは「次のマッチまでの地の文」か末尾でそのまま拾われる．
+            continue
+        if m.start() > pos:
+            out.append(Span(text=text[pos:m.start()], segment=0))
+        name = value if kind == "theme" else "#" + value
+        out.append(Span(text=m.group("ctext"), segment=0, color=name))
+        pos = m.end()
+    if not any(s.color for s in out):
+        return text, []                 # 色がひとつも無ければ従来どおり
+    if pos < len(text):
+        out.append(Span(text=text[pos:], segment=0))
+    return "".join(s.text for s in out), out
+
+
+def _parse_spans(text: str) -> tuple[str, list[Span]]:
+    """行内装飾を解釈し (装飾記号を除いたテキスト, Span 列) を返す（§5.13）．
+
+    装飾がまったく無ければ **Span 列は空**で返す——従来どおり 1 run で書く経路に
+    落ちるので，装飾を使わない原稿の出力はこの変更で 1 ビットも変わらない．
+
+    セグメント（``\\v`` 区切り）ごとに解釈し，各 Span はどのセグメントの
+    ものかを覚える．**1 セグメントが複数 run に割れる**ので，
+    相対サイズを付ける相手を位置ではなくこの値で決める必要がある．
+    """
+    all_spans: list[Span] = []
+    plain: list[str] = []
+    for i, seg in enumerate(text.split("\v")):
+        spans = _spans_in(seg, i, _Marks())
+        plain.append("".join(s.text for s in spans))
+        all_spans.extend(spans)
+    decorated = any(s.bold or s.mono or s.color or s.link or s.script
+                    for s in all_spans)
+    return "\v".join(plain), (all_spans if decorated else [])
+
+
+def parse_content_line(raw: str) -> Line | None:
     """1 行を行頭マーカー規則（DESIGN.md §5.3）に従って Line へ変換する．
+
+    **公開関数**．図の note(top)/note(bottom) を地の文として解釈するため
+    render からも呼ぶ（Issue #129）——本文行と同じ解釈でなければならず、
+    行頭マーカーの判定を二重に持つと必ずずれる．
 
     インデント（半角スペース 2 つ＝1 レベル）でネスト深さを決める．
 
@@ -813,10 +1248,13 @@ def _parse_content_line(raw: str) -> Line | None:
         render 側は本文をそのまま段落 text へ渡すため，python-pptx が
         "\v" を段落内改行（<a:br/>）として出力する．"""
         text, seg_deltas = _split_br(text)
-        return (Line(text=text, level=level, seg_deltas=seg_deltas, **kw)
+        text, spans = _parse_spans(text)
+        return (Line(text=text, level=level, seg_deltas=seg_deltas,
+                     spans=spans, **kw)
                 if text else None)
 
-    def _mk_bullet(text: str, size_delta: int | None) -> Line:
+    def _mk_bullet(text: str, size_delta: int | None,
+                   boxed: bool = False, box_color: str | None = None) -> Line:
         """箇条書き行を Line にする．**本文が空でも段落を作る**（Issue #82）．
 
         マーカーだけの行は「1 行空ける」指示として使う．表紙の著者欄やセクション扉の
@@ -829,8 +1267,10 @@ def _parse_content_line(raw: str) -> Line | None:
         空けたいのは 1 行なので，空の段落そのものを作れる必要がある．
         """
         body, seg_deltas = _split_br(text)
-        return Line(text=body, level=level, kind="bullet",
-                    size_delta=size_delta, seg_deltas=seg_deltas)
+        body, spans = _parse_spans(body)
+        return Line(text=body, level=level, kind="bullet", boxed=boxed,
+                    box_color=box_color, size_delta=size_delta,
+                    seg_deltas=seg_deltas, spans=spans)
 
     # マーカーだけの行 → 空行（Issue #82）．**末尾に空白が無い形を必ず拾うこと**
     # ——多くのエディタは保存時に行末空白を除去するので，"- " しか受けないと空行
@@ -842,39 +1282,71 @@ def _parse_content_line(raw: str) -> Line | None:
 
     # 通常箇条書き："- " / "* "
     if s.startswith("- ") or s.startswith("* "):
-        delta, text = _split_size(s[2:].strip())
-        return _mk_bullet(text, delta)
+        delta, boxed, box_color, text = _split_tokens(s[2:].strip())
+        return _mk_bullet(text, delta, boxed, box_color)
+
+    # 採番行は**書かれていた番号を捨てない**（Issue #107）．render がリストの
+    # 先頭の行だけ開始番号として使う——PowerPoint の自動採番はプレースホルダごとに
+    # 1 から数え直すので，開始番号を渡せないと 2 カラムに割った採番リストの
+    # 右カラムが 1. に戻る．先頭だけ効かせるのは CommonMark と同じ規則で，
+    # "1. 1. 1." と書けば 1・2・3 になる従来の書き方もそのまま動く．
 
     # 連番："1. 2. 3." → arabicPeriod
     m = _RE_ORDERED.match(s)
     if m:
-        delta, text = _split_size(m.group(2).strip())
-        return _mk(text, kind="autonum", num_style="arabicPeriod", size_delta=delta)
+        delta, boxed, box_color, text = _split_tokens(m.group(2).strip())
+        return _mk(text, kind="autonum", num_style="arabicPeriod",
+                   num_start=int(m.group(1)), size_delta=delta, boxed=boxed,
+                   box_color=box_color)
 
     # 丸括弧："(1) (2)" → arabicParenBoth（"(1)" 表記を忠実に再現）
     m = _RE_PAREN.match(s)
     if m:
-        delta, text = _split_size(m.group(2).strip())
-        return _mk(text, kind="autonum", num_style="arabicParenBoth", size_delta=delta)
+        delta, boxed, box_color, text = _split_tokens(m.group(2).strip())
+        return _mk(text, kind="autonum", num_style="arabicParenBoth",
+                   num_start=int(m.group(1)), size_delta=delta, boxed=boxed,
+                   box_color=box_color)
 
     # 丸数字："①②③ …" → circleNumDbPlain（番号文字は除去）
     if s[0] in CIRCLED_DIGITS:
-        delta, text = _split_size(s[1:].lstrip())
-        return _mk(text, kind="autonum", num_style="circleNumDbPlain", size_delta=delta)
+        delta, boxed, box_color, text = _split_tokens(s[1:].lstrip())
+        return _mk(text, kind="autonum", num_style="circleNumDbPlain",
+                   num_start=CIRCLED_DIGITS.index(s[0]) + 1, size_delta=delta,
+                   boxed=boxed, box_color=box_color)
 
     # 矢印："→ …" → 行頭記号なし（no_bullet 相当）．"→" は本文に残す
     # （結論・補足行の視覚的な導線として表示する）．トークンは "→" の後ろに置く．
     # 他の行種と同様，"→ 本文" へ空白を正規化する（トークン有無で挙動を変えない）．
     if s.startswith(ARROW):
-        delta, rest = _split_size(s[len(ARROW):].lstrip())
+        delta, boxed, box_color, rest = _split_tokens(s[len(ARROW):].lstrip())
         text = f"{ARROW} {rest}" if rest else ARROW
         text, seg_deltas = _split_br(text)
+        text, spans = _parse_spans(text)
         return Line(text=text, level=level, kind="plain", size_delta=delta,
-                    seg_deltas=seg_deltas)
+                    seg_deltas=seg_deltas, spans=spans, boxed=boxed,
+                    box_color=box_color)
+
+    # 引用 "> …" → 行頭記号なし（no_bullet 相当）で、**記号も本文に残さない**．
+    # 「→」と違うのはそこだけ——あちらは導線として矢印を見せるための書き方で、
+    # 図形の矢印の下に置くと二重に見える．地の文をそのまま置きたいときはこちら．
+    # "- " を使うとビュレットが付き、本文の項目と同列に見えてしまう．
+    #
+    # **空白を必須にする**（"> 本文" と "\u003e" 単独のみ）．">=" のような
+    # 記号で始まる本文まで拾うと、書いた覚えのない行で記号が消える．
+    # マーカーだけの行は空の段落（記号の出ないスペーサ）になる——"-" 単独と
+    # 同じ扱いで、_mk が空を落とすのでここで直接組み立てる．
+    if s == ">" or s.startswith("> "):
+        delta, boxed, box_color, rest = _split_tokens(s[1:].lstrip())
+        text, seg_deltas = _split_br(rest)
+        text, spans = _parse_spans(text)
+        return Line(text=text, level=level, kind="plain", size_delta=delta,
+                    seg_deltas=seg_deltas, spans=spans, boxed=boxed,
+                    box_color=box_color)
 
     # 上記以外 → 既定の箇条書き（インデントに応じたレベル）
-    delta, text = _split_size(s)
-    return _mk(text, kind="bullet", size_delta=delta)
+    delta, boxed, box_color, text = _split_tokens(s)
+    return _mk(text, kind="bullet", size_delta=delta, boxed=boxed,
+               box_color=box_color)
 
 
 # ---------------------------------------------------------------- 自己検証

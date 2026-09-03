@@ -29,13 +29,17 @@ import math
 import os
 import struct
 import sys
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, assert_never
 
 from pptx import Presentation
+from pptx.enum.dml import MSO_LINE_DASH_STYLE
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR, PP_ALIGN
 from pptx.enum.dml import MSO_THEME_COLOR
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
+from pptx.oxml import parse_xml
 from pptx.oxml.ns import qn
+from pptx.dml.color import RGBColor
 from pptx.util import Emu, Inches, Pt
 # python-pptx の Slide は ir.Slide と名前がぶつかる．**外来のほうに印を付ける**
 # ——``Slide`` は parser / cli でも ir の意味で使っており，この 1 ファイルのために
@@ -44,18 +48,23 @@ from pptx.util import Emu, Inches, Pt
 # 注釈にはクラスのほうが要る．
 from pptx.presentation import Presentation as PptxPresentation
 from pptx.shapes.autoshape import Shape
+from pptx.shapes.connector import Connector
 from pptx.shapes.graphfrm import GraphicFrame
 from pptx.shapes.picture import Picture
 from pptx.shapes.placeholder import SlidePlaceholder
 from pptx.slide import Slide as PptxSlide, SlideLayout
 from pptx.text.text import TextFrame
 
+from pptx2pdf import workdir
+
+from .colors import parse_color
 from .ir import (
-    TITLE_LAYOUT, Block, Crop, Deck, Flow, Image, Length, Line, ObjectBlock,
-    Slide, Table, TitleSlide,
+    TITLE_LAYOUT, Align, Arrow, Block, Crop, Deck, Flow, Image, Length, Line,
+    is_object_block, ObjectBlock, Seq, Slide, Table, TitleSlide,
 )
 from .flow import FlowNode, plan_flow
-from pptx2pdf import workdir
+from .parser import parse_content_line
+from .seq import LABEL_PT as SEQ_LABEL_PT, plan_seq
 
 if TYPE_CHECKING:
     # ``_Paragraph`` は python-pptx の**私有クラス**（段落に公開の別名が無い）．
@@ -63,11 +72,36 @@ if TYPE_CHECKING:
     # 名前で起動ごと落とさない**ため——``from __future__ import annotations``
     # により注釈は文字列のままなので、実行には要らない．CI の typecheck が
     # 気づかせてくれる．
-    from pptx.text.text import _Paragraph
+    from pptx.text.text import _Paragraph, _Run
 
 
-# Table.aligns の寄せ名 → PowerPoint の段落水平アラインメント．
-_TABLE_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
+def _pp_align(align: Align) -> PP_ALIGN:
+    """寄せ名 → PowerPoint の段落水平アラインメント．
+
+    ``Table.aligns`` と ``PlacedText.align`` の両方が同じ ``Align``（Literal）を使う．
+
+    **dict ではなく match で書く**．``dict[Align, PP_ALIGN]`` と注釈しても
+    **mypy は Literal をキーとする dict の網羅性を検査しない**（型システムの仕様）．
+    ``Align`` に値を足しても、表からキーを落としても、静的解析は素通りして
+    実行時の ``KeyError`` になる——注釈を付けたので守れている、と思い込んで
+    実際に試すまで気づかなかった．``assert_never`` なら足りない枝を mypy が捕まえる。
+    ``ir.OBJECT_BLOCKS`` / ``ARROW_DIRECTIONS`` が
+    「型注釈と別に並べると必ずずれる」と言っているのと同じ話で、
+    こちらは実行時のタプルではなく**静的な網羅**で守れる．
+    """
+    match align:
+        case "left":
+            return PP_ALIGN.LEFT
+        case "center":
+            return PP_ALIGN.CENTER
+        case "right":
+            return PP_ALIGN.RIGHT
+    assert_never(align)
+
+# コードブロックの既定の等幅フォント（front matter の ``mono_font`` で変えられる）．
+# Windows / macOS の Office に同梱されていて，日本語混在時は欧文だけに効く
+# （和文はテーマの東アジア用フォントへ落ちる．``font.name`` は latin にだけ書くため）．
+DEFAULT_MONO_FONT = "Consolas"
 
 
 def resolve_image_path(src: str, base_dir: str | None) -> str:
@@ -122,6 +156,50 @@ def _read_image_size(path: str) -> tuple[int, int]:
     raise ValueError(f"cannot read image dimensions (png/jpeg only): {path}")
 
 
+def is_dark(rgb: str | None) -> bool:
+    """``"RRGGBB"`` が「白文字を載せるべき濃さ」か．
+
+    WCAG の相対輝度（sRGB をガンマ戻ししてから重みづけ）で見る．素の
+    ``0.299R+0.587G+0.114B`` だと cn2026-theme の accent2（#3B812F）と
+    accent5（#E2CAAA）のような、緑が効いた色の判定を外す．
+
+    閾値 0.35 は「白と黒のどちらがコントラスト比を稼げるか」の分かれ目
+    （相対輝度 0.179）より明るめ．**WCAG の判定そのものではなく、読みやすさを
+    採った経験則**——0.18〜0.35 は黒でも 4.5:1 を満たすが、投影して見ると
+    白抜きのほうが読める（cn2026-theme の accent2 #3B812F がここに入る）．
+
+    **色が引けなかったら濃いものとして扱う**（``None``）．塗ってあるのに黒文字だと
+    読めない——読めるかもしれない側へ倒す．
+    """
+    if not rgb or len(rgb) != 6:
+        return True
+    try:
+        ch = [int(rgb[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+    except ValueError:
+        return True
+    lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+           for c in ch]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2] < 0.35
+
+
+# ひらがな（U+3041-309F）とカタカナ（U+30A0-30FF）．``ー``（U+30FC）や小書きの
+# かなも含む——並びの一部なので、同じ詰め方をする（Issue #156）．
+# 全角の句読点（U+3001-3002）はこの外．そちらは 1em のままにしておく．
+_KANA_MIN, _KANA_MAX = 0x3041, 0x30FF
+
+
+class SpaceBefore(NamedTuple):
+    """段落前のアキ 1 つぶん（``a:spcBef``）．
+
+    OOXML は同じ「アキ」を 2 通りで書く——``spcPct`` は**フォントサイズに対する
+    割合**、``spcPts`` は絶対値（pt）．読んだ場所ではサイズが分からないので、
+    どちらなのかを持ったまま返し、pt に直すのは ``Renderer._para_height``．
+    """
+
+    value: float
+    percent: bool
+
+
 class Renderer:
     """IR を pptx へ描画するレンダラ．
 
@@ -160,6 +238,9 @@ class Renderer:
             raise ValueError("theme has no slide size (slide_width/height)")
         self.SW = self.prs.slide_width
         self.SH = self.prs.slide_height
+        # コードブロックの等幅フォント（§5.12）．render() が front matter の
+        # ``mono_font`` で上書きする．Renderer を直接使う経路でも既定が要る．
+        self._mono_font = DEFAULT_MONO_FONT
 
         # テーマのアクセント色（図形用）．テキスト色・フォントはテーマ任せ．
         # Phase 1 では box/block_arrow/note/table（Phase 2/3）が使うため保持のみ．
@@ -182,6 +263,9 @@ class Renderer:
         }
         # マスターの txStyles 由来レベル別サイズ（pt）のキャッシュ（style 名 → 一覧）．
         self._master_levels: dict[str, list[float]] = {}
+        self._indent_cache: list[int] | None = None
+        self._spc_cache: list[SpaceBefore] | None = None
+        self._theme_rgb_cache: dict[str, str] | None = None
 
         # レイアウト解決．title=0 / content=1 / section=2．
         layouts = self.prs.slide_layouts
@@ -225,9 +309,18 @@ class Renderer:
                 return
 
     def set_autonum(self, p: _Paragraph, fmt: str = "arabicPeriod",
-                    color: str | None = None) -> None:
+                    color: str | None = None, start: int | None = None) -> None:
         """段落の行頭記号を自動採番（1. 2. 3. …）に切り替える（enumerate 相当）．
-           color にテーマ色名（例 "tx1"）を渡すと採番記号の色を指定する．"""
+
+        color にテーマ色名（例 "tx1"）を渡すと採番記号の色を指定する．
+        start を渡すとその番号から数え始める（buAutoNum の startAt）．
+        PowerPoint の自動採番は**プレースホルダごとに 1 から数え直す**ので，
+        2 カラムに割った採番リストの続きを右カラムで書くにはこれが要る（Issue #107）．
+
+        **呼び出し側は採番段落すべてに start を渡す．** PowerPoint は startAt の
+        付いた段落の**次から数え直す**ので，先頭にだけ渡すと "8. 1. 2. 3. …" になる．
+        番号を数えるのは ``_append_lines`` の ``counters``．
+        """
         pPr = p._p.get_or_add_pPr()
         if color:
             for tag in ("a:buClrTx", "a:buClr"):
@@ -235,9 +328,16 @@ class Renderer:
                 if el is not None:
                     pPr.remove(el)
             buClr = pPr.makeelement(qn("a:buClr"), {})
-            buClr.append(buClr.makeelement(qn("a:schemeClr"), {"val": color}))
+            # 色名の解決は本文の行内装飾と同じリゾルバを使う（Issue #105）．
+            # @autonum-color でも CSS の色名と16進が書けるのはこのため．
+            kind, value = parse_color(color)
+            tag = "a:schemeClr" if kind == "theme" else "a:srgbClr"
+            buClr.append(buClr.makeelement(qn(tag), {"val": value}))
             pPr.insert(0, buClr)  # buClr は採番記号より前に置く
-        bu = pPr.makeelement(qn("a:buAutoNum"), {"type": fmt})
+        attrs = {"type": fmt}
+        if start is not None:
+            attrs["startAt"] = str(start)
+        bu = pPr.makeelement(qn("a:buAutoNum"), attrs)
         for tag in ("a:buChar", "a:buNone", "a:buAutoNum"):
             el = pPr.find(qn(tag))
             if el is not None:
@@ -313,6 +413,196 @@ class Renderer:
             pass
         self._master_levels[style] = levels
         return levels
+
+    def _indent_for(self, level: int) -> int:
+        """そのレベルの左インデント（EMU）．取れなければ 0．"""
+        ind = self._body_indents()
+        return ind[min(level, len(ind) - 1)] if ind else 0
+
+    def _body_indents(self) -> list[int]:
+        """マスター本文スタイルのレベル別の左インデント（EMU．lvl1 始まり）．
+
+        ``{box}`` の枠を文字の始まりに合わせるために要る（Issue #133）．
+        取れなければ空リストを返し，呼び出し側が 0 を当てる——枠が少し左へ出るだけで、
+        位置の見積もりそのものは壊れない．
+        """
+        if self._indent_cache is not None:
+            return self._indent_cache
+        levels: list[int] = []
+        try:
+            master = self.prs.slide_masters[0]
+            root = master.element.find(
+                qn("p:txStyles") + "/" + qn("p:bodyStyle"))
+            if root is not None:
+                # レベルが飛んでいても打ち切らない．テーマが lvl2 だけ書かない
+                # ことはありうるので、欠けたレベルは**直前の値で埋める**
+                # （0 に落とすと、そのレベルだけ枠が左へ飛び出す）．
+                last = 0
+                for lvl in range(1, 10):
+                    el = root.find(qn("a:lvl%dpPr" % lvl))
+                    marL = el.get("marL") if el is not None else None
+                    if marL:
+                        last = int(marL)
+                    levels.append(last)
+        except Exception:
+            levels = []
+        self._indent_cache = levels
+        return levels
+
+    def _theme_rgb(self, name: str) -> str | None:
+        """テーマ色名（DSL の ``bg2`` / ``accent2`` …）を ``"RRGGBB"`` へ解決する．
+
+        **``p:clrMap`` を必ず踏む**——``bg2`` が指すのはテーマの ``lt2`` で、
+        名前がそのまま clrScheme のタグ名になっているのは accent1〜6 と
+        hlink / folHlink だけ．踏まずに引くと別の色を見る（Issue #148）．
+
+        引けなければ None．テーマによっては色が ``srgbClr`` ではなく
+        ``sysClr``（``lastClr`` に実効値）で書いてあるので、そちらも見る．
+        """
+        if self._theme_rgb_cache is None:
+            self._theme_rgb_cache = self._read_color_scheme()
+        return self._theme_rgb_cache.get(name)
+
+    def _read_color_scheme(self) -> dict[str, str]:
+        """テーマの clrScheme を、DSL の色名で引ける辞書にして返す．
+
+        見るのは ``slide_masters[0]`` だけ．md2pptx はテーマ 1 つ・マスター 1 つを
+        前提に描いており（``_master_style_levels`` なども同じ）、複数マスターの
+        pptx を作る手立ては無い．
+        """
+        out: dict[str, str] = {}
+        try:
+            master = self.prs.slide_masters[0]
+            part = master.part.part_related_by(RT.THEME)
+            root = parse_xml(part.blob)
+            scheme = root.find(
+                qn("a:themeElements") + "/" + qn("a:clrScheme"))
+            if scheme is None:
+                return out
+            raw: dict[str, str] = {}
+            for el in scheme:
+                key = str(el.tag).rsplit("}", 1)[-1]
+                for tag, attr in ((qn("a:srgbClr"), "val"),
+                                  (qn("a:sysClr"), "lastClr")):
+                    child = el.find(tag)
+                    if child is not None and child.get(attr):
+                        raw[key] = str(child.get(attr)).upper()
+                        break
+            # clrMap（bg1="lt1" 等）で DSL の名前へ引き直す．属性が無いテーマは
+            # 恒等写像とみなす（accent1〜6 / hlink は元から同名）．
+            cmap = master.element.find(qn("p:clrMap"))
+            for name in self._theme_map:
+                mapped = cmap.get(name) if cmap is not None else None
+                val = raw.get(str(mapped) if mapped else name)
+                if val:
+                    out[name] = val
+        except Exception:
+            return out
+        return out
+
+    def _body_space_before(self) -> list[SpaceBefore]:
+        """マスター本文スタイルのレベル別の段落前アキ（lvl1 始まり）．
+
+        **帯の高さはここを数えないと足りない**（Issue #145）．cn2026-theme は
+        全レベルに 20% を持ち、30pt の段落なら 0.21cm、4段落で 0.85cm ずれる．
+
+        ``spcPct``（フォントサイズに対する％）は**その場では pt に直せない**ので、
+        ``SpaceBefore`` の ``percent`` を立てて返し、サイズを掛けるのは
+        ``_para_height`` に任せる．``spcPts``（絶対値）はそのまま pt．
+
+        アキを書いていないレベルは**直前のレベルの値を引き継ぐ**．テーマは
+        上位レベルだけ書いて下位を省くことがあり、そこを 0 と読むと深い階層の
+        段落だけ高さが足りなくなる．取得に失敗したら空リスト——呼び出し側が
+        0 を当てる（アキを数えない従来の見積もりに戻るだけ）．
+        """
+        if self._spc_cache is not None:
+            return self._spc_cache
+        levels: list[SpaceBefore] = []
+        try:
+            master = self.prs.slide_masters[0]
+            root = master.element.find(
+                qn("p:txStyles") + "/" + qn("p:bodyStyle"))
+            last = SpaceBefore(0.0, False)
+            if root is not None:
+                for lvl in range(1, 10):
+                    el = root.find(qn("a:lvl%dpPr" % lvl))
+                    spc = el.find(qn("a:spcBef")) if el is not None else None
+                    if spc is not None:
+                        pct = spc.find(qn("a:spcPct"))
+                        pts = spc.find(qn("a:spcPts"))
+                        if pct is not None and pct.get("val"):
+                            last = SpaceBefore(
+                                int(pct.get("val")) / 100000.0, True)
+                        elif pts is not None and pts.get("val"):
+                            last = SpaceBefore(int(pts.get("val")) / 100.0,
+                                               False)
+                        else:
+                            last = SpaceBefore(0.0, False)
+                    levels.append(last)
+        # OOXML の探りは軒並みこの形（_master_style_levels / _layout_level_sizes
+        # と同じ）．テーマの作りは千差万別で、読めなければ既定へ落ちれば済む．
+        except Exception:
+            levels = []
+        self._spc_cache = levels
+        return levels
+
+    # 行送りの倍率．**PowerPoint で実測した値**（Issue #152）．
+    # cn2026-theme（BIZ UDPゴシック・30pt）で ``spcBef`` を 0 にして段落の送りを
+    # 測ると 36.0pt ちょうど＝ 30 × 1.20．以前は保守的な 1.32 を置いていたが、
+    # ``{box}`` は**位置**を出すのに使うので、大きめに見ることに意味が無い
+    # （枠が段落の下半分から次の項目へ掛かっていた）．
+    _LINE = 1.20
+
+    # 枠（``{box}``）を行の箱より上へずらす割合（Issue #160 / #164）．
+    # PowerPoint は行の箱の中で字を**上寄り**に置き、下に descent ぶんの空きを
+    # 残す．行の箱にそのまま合わせると、字に対して枠が下がって見える．
+    #
+    # #160 では 0.086 にしたが、**枠線そのものを字と数えて**上の空きを大きく
+    # 見積もっていた（線は 3pt ある）．色で分けて測り直すと 30pt の行で
+    # 上 2.9pt / 下 8.6pt——字は枠の上辺にほとんど触れていた．差の半分
+    # （2.85pt ＝ 行の 0.079）だけ足りない．
+    _BOX_LIFT = 0.165
+
+    # キャプションのテキストボックスの左右マージン（pt）．**見積もりと描画の
+    # 両方でこの値を使う**——python-pptx の既定に任せると、既定が変われば
+    # 見積もりだけがずれて Issue #169 が戻る．
+    _CAPTION_MARGIN_PT = 7.2
+
+    # 折り返し判定の許容幅．PowerPoint は日本語を詰めて改行を避けるので、
+    # 幅を数％超えただけでは折り返らない（Issue #156）．
+    _WRAP_SLACK = 1.05
+
+    @classmethod
+    def _line_height(cls, size_pt: float) -> int:
+        """文字 1 行ぶんの高さ（EMU）．"""
+        return int(Pt(size_pt * cls._LINE))
+
+    def _space_before(self, level: int, size_pt: float) -> int:
+        """そのレベルの段落前アキ（EMU）．
+
+        ``level`` は 0 始まり（``Line.level``）、``_body_space_before`` のリストは
+        lvl1 始まり——先頭が level 0 に当たるので添字はそのまま。テーマが書いて
+        いない深さは末尾で頭打ち。``_body_font_levels`` を引くときと同じ数え方
+        （render 全体で揃えてある）。
+        """
+        spc = self._body_space_before()
+        raw = spc[min(level, len(spc) - 1)] if spc else SpaceBefore(0.0, False)
+        if not raw.percent:
+            return int(Pt(raw.value))          # spcPts はそのまま pt
+        # **``spcPct`` はフォントサイズではなく「行の高さ」に対する割合**
+        # （Issue #152）．30pt・20% の段落を測ると 43.2pt ＝ 36.0 × 1.20 で、
+        # 増えぶんは 7.2 ＝ 0.20 × 36.0．フォントに掛けると 6.0 で足りない．
+        return int(raw.value * self._line_height(size_pt))
+
+    def _para_height(self, level: int, size_pt: float, lines: int = 1) -> int:
+        """段落 1 つぶんの高さ（EMU）．行の高さ × 行数 ＋ 段落前アキ．
+
+        アキを足さないと帯が上へずれ、図が地の文に食い込む（Issue #145）。
+        **アキは段落に 1 回だけ**——折り返した行ごとに足すと、2 行の項目を囲む
+        ``{box}`` が 1 行ぶん下へ伸びて次の項目に掛かる（Issue #150）。
+        """
+        return lines * self._line_height(size_pt) + self._space_before(
+            level, size_pt)
 
     def _body_font_levels(self) -> list[float]:
         """マスター本文スタイルのレベル別フォントサイズ（pt）を返す（lvl1 始まり．既定 [18]）．
@@ -433,9 +723,83 @@ class Renderer:
         size = min(self._SIZE_MAX_PT, max(self._SIZE_MIN_PT, size))
         p.font.size = Pt(size)
 
+    def _write_spans(self, p: _Paragraph, blk: Line) -> None:
+        """Line を段落へ書く．装飾があれば run を分けて属性を付ける（§5.13）．
+
+        装飾の無い行（``blk.spans`` が空）は従来どおり ``p.text`` へ一括で入れる——
+        python-pptx が ``\\v`` を ``a:br`` に割ってくれるので，触る理由がない．
+        **装飾を使わない原稿の出力はこの経路のままで 1 ビットも変わらない．**
+
+        装飾がある行は run を自分で並べる．セグメントの境目（``segment`` が変わる位置）
+        には ``a:br`` を挟む——``p.text`` に任せられないのは，1 セグメントが
+        複数 run に割れるため．
+        """
+        if not blk.spans:
+            p.text = blk.text
+            return
+        p.text = ""
+        prev_seg = blk.spans[0].segment
+        for i, span in enumerate(blk.spans):
+            if i and span.segment != prev_seg:
+                self._append_break(p)
+                prev_seg = span.segment
+            run = p.add_run()
+            run.text = span.text
+            if span.bold:
+                run.font.bold = True
+            if span.mono:
+                run.font.name = self._mono_font
+            if span.color:
+                self._set_run_color(run, span.color)
+            if span.link:
+                run.hyperlink.address = span.link
+            if span.script:
+                self._set_run_script(run, span.script)
+
+    @staticmethod
+    def _append_break(p: _Paragraph) -> None:
+        """段落の末尾（``a:endParaRPr`` の前）へ ``a:br`` を足す．"""
+        br = p._p.makeelement(qn("a:br"), {})
+        end = p._p.find(qn("a:endParaRPr"))
+        if end is None:
+            p._p.append(br)
+        else:
+            end.addprevious(br)
+
+    def _set_run_color(self, run: _Run, name: str) -> None:
+        """run の文字色を設定する（テーマ色名／CSS の色名／16進）．
+
+        テーマ色は **RGB へ潰さず** ``theme_color`` で指定する——
+        テーマを差し替えたときに追従させたいため．
+
+        ``Span.color`` はパーサが正規化済みだが，ここでも ``parse_color`` を通す．
+        冪等（テーマ色名も "#RRGGBB" もそのまま返る）なうえ，**色名の語彙を知る
+        場所を 1 つに保てる**——先頭の "#" で振り分けると，render が
+        「正規化済みである」という書かれざる前提に依存することになる．
+        """
+        kind, value = parse_color(name)
+        if kind == "theme":
+            run.font.color.theme_color = self._theme_map[value]
+        else:
+            run.font.color.rgb = RGBColor.from_string(value)
+
+    @staticmethod
+    def _set_run_script(run: _Run, script: str) -> None:
+        """run を上付き／下付きにする（``a:rPr/@baseline``）．
+
+        python-pptx に API が無いので属性を直接書く．値は OOXML の千分率で，
+        PowerPoint の UI が付けるのと同じ ±30% にしている．
+        """
+        run.font._rPr.set("baseline", "30000" if script == "sup" else "-25000")
+
     def _apply_segment_deltas(self, p: _Paragraph, deltas: list[int | None],
-                              base_pt: float) -> None:
+                              base_pt: float,
+                              segments: list[int] | None = None) -> None:
         """段落 p の run へ，セグメントごとの相対サイズを適用する（Issue #82）．
+
+        segments を渡すと run とセグメントの対応をそれで決める（Issue #105）．
+        **行内装飾があると 1 セグメントが複数 run に割れる**ので，位置で対応させると
+        別のセグメントへサイズが付く．渡さないときは従来どおり位置で対応させる．
 
         ``<br>`` を含む段落は python-pptx が ``\\v`` ごとに run を分けて ``a:br`` で
         つなぐので，run と IR のセグメントが順に 1 対 1 で対応する．行や段落を分けずに
@@ -450,7 +814,9 @@ class Renderer:
 
         本文が空の段落（``- `` 由来）は run が 0 個で，このループは回らない．
         """
-        for run, delta in zip(p.runs, deltas):
+        idx = segments if segments is not None else range(len(deltas))
+        for run, seg in zip(p.runs, idx):
+            delta = deltas[seg] if seg < len(deltas) else None
             if delta is None:
                 continue
             size = round(base_pt * self._SIZE_STEP_RATIO ** delta)
@@ -488,11 +854,65 @@ class Renderer:
 
     @staticmethod
     def _text_width_pt(text: str | None, font_pt: float) -> float:
-        """テキストの概算表示幅（pt）．全角は font_pt，半角は約 0.55×で見積もる．"""
+        """テキストの概算表示幅（pt）．
+
+        cn2026-theme（BIZ UDPゴシック）・30pt で PDF から実測した文字送り：
+
+        =========== ========= ======
+        種類        1文字      em 比
+        =========== ========= ======
+        カタカナ    26.53pt   0.885
+        漢字        29.87pt   0.996
+        ASCII       15.65pt   0.522
+        =========== ========= ======
+
+        **かなだけが 1em より狭い**（Issue #156）．日本語のプロポーショナル
+        フォント（Yu Gothic / Meiryo / BIZ UDP…）はかなを詰めるため．全角を
+        一律 1em で数えていた頃は折り返しを多く見積もり、``{box}`` の枠が
+        2 行ぶんの高さになって次の項目まで覆っていた．
+
+        等幅の日本語フォント（MS ゴシックなど）では逆に 1 割ぶん小さく見積もる．
+        いま広く使われている日本語フォントに寄せた**概算**．
+        """
         w = 0.0
         for ch in text or "":
-            w += font_pt if ord(ch) > 0x2E80 else font_pt * 0.55
+            c = ord(ch)
+            # 0x2E80（CJK 部首補助の先頭）より前は半角として扱う．ここには
+            # ギリシャ文字や記号（U+2600〜 など）も入り、フォントによっては
+            # 全角で出るが、講義スライドで使うのは ASCII がほとんどなので
+            # この境目のままにしてある（**概算**．Issue #156）．
+            if c <= 0x2E80:
+                w += font_pt * 0.55         # 半角
+            elif _KANA_MIN <= c <= _KANA_MAX:
+                w += font_pt * 0.885        # かな（長音符・小書きを含む）
+            else:
+                w += font_pt                # 漢字・全角記号
         return w
+
+    @classmethod
+    def _wrapped_lines(cls, text: str | None, font_pt: float,
+                       avail_pt: float, slack: float | None = None) -> int:
+        """``avail_pt`` の幅に流したときの行数（1 以上）．
+
+        **僅差の超過では折り返さない**（Issue #156）．PowerPoint は日本語を
+        少し詰めて改行を避ける（``eaLnBrk`` / ``hangingPunct``）ので、幅を
+        1〜数％超えただけの行は 1 行のまま出る．cn2026-02 のシラバスの
+        「ネットワークコミュニケーション」は実測 397.9pt・使える幅 382.6pt
+        （4.0% 超過）で、1 行に収まっている．
+
+        取り違える向きが問題になるのは ``{box}`` で、**折り返すと決めつけると
+        枠が次の項目まで覆う**．収まると見て外したときは枠が短くなるだけなので、
+        迷ったら「折り返さない」へ倒す．
+
+        ``slack`` で許容幅を上書きできる．**キャプションは逆向き**なので 1.0 を
+        渡す（Issue #169）——場所を 1 行ぶん多く取っても図が少し小さくなるだけだが、
+        足りないと 2 行目が罫線の下へ出る．
+        """
+        if avail_pt <= 0:
+            return 1
+        k = cls._WRAP_SLACK if slack is None else slack
+        w = cls._text_width_pt(text, font_pt)
+        return max(1, math.ceil(w / (avail_pt * k)))
 
     def _fit_font(self, fits_at: Callable[[float], bool]) -> float:
         """レベル別サイズを大きい順に試し，``fits_at(size)`` が真の最大サイズを返す．
@@ -673,6 +1093,32 @@ class Renderer:
                     r.font.size = Pt(ssize)
         return shp
 
+    def line(self, slide: PptxSlide, x1: int, y1: int, x2: int, y2: int,
+             color: MSO_THEME_COLOR | None = None, width_pt: float = 1.0,
+             dashed: bool = False, arrow: bool = False) -> Connector:
+        """2 点を結ぶ線を引く（Issue #108）．
+
+        ``block_arrow`` はノード間の**すき間に収まる塗り矢印**で，box に食い込ませない
+        ための道具．こちらは任意の 2 点を結ぶ細い線で，シーケンス図のライフライン
+        （縦線）やメッセージ（斜めの矢印）のように**すき間ではなく図の骨格**を描くのに使う．
+
+        ``arrow`` を立てると終点に矢じりが付き，``dashed`` で破線になる
+        （時間の経過や省略を表す線に使う）．色はテーマ任せ（既定は本文色）．
+        """
+        conn = slide.shapes.add_connector(
+            MSO_CONNECTOR.STRAIGHT, Emu(int(x1)), Emu(int(y1)),
+            Emu(int(x2)), Emu(int(y2)))
+        conn.line.color.theme_color = color or self.TX
+        conn.line.width = Pt(width_pt)
+        if dashed:
+            conn.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+        if arrow:
+            # 矢じりは python-pptx に API が無いので ``a:ln`` へ直接書く．
+            ln = conn.line._get_or_add_ln()
+            ln.append(ln.makeelement(qn("a:tailEnd"),
+                                     {"type": "triangle", "w": "med", "len": "med"}))
+        return conn
+
     def block_arrow(self, slide: PptxSlide, x1: int, y1: int, x2: int, y2: int,
                     thickness: int,
                     color: MSO_THEME_COLOR | None = None) -> Shape:
@@ -708,11 +1154,18 @@ class Renderer:
     def note(self, slide: PptxSlide, l: int, t: int, w: int, h: int, text: str,
              size: float, tc: MSO_THEME_COLOR | None = None, bold: bool = False,
              align: PP_ALIGN = PP_ALIGN.LEFT,
-             anchor: MSO_ANCHOR | None = None) -> Shape:
-        """注記用テキストボックスを描く（キャプション・矢印ラベル・省略記号）．"""
+             anchor: MSO_ANCHOR | None = None, wrap: bool = True) -> Shape:
+        """注記用テキストボックスを描く（キャプション・矢印ラベル・省略記号）．
+
+        ``wrap=False`` は折り返さず、左右の余白も取らない．矢印ラベルのように
+        **短くて折れては困る**文字に使う——枠に収まらないと単語の途中で割れて
+        読めなくなる（Issue #111）．はみ出す先は box の上の何も無い場所なので害が無い．
+        """
         tb = slide.shapes.add_textbox(Emu(l), Emu(t), Emu(w), Emu(h))
         tf = tb.text_frame
-        tf.word_wrap = True
+        tf.word_wrap = wrap
+        if not wrap:
+            tf.margin_left = tf.margin_right = 0
         if anchor is not None:
             tf.vertical_anchor = anchor
         pa = tf.paragraphs[0]
@@ -757,7 +1210,11 @@ class Renderer:
 
         図中の文字サイズは本文プレースホルダの標準サイズに揃える．
         """
-        plan = plan_flow(flow, left, top, width, height)
+        # **本文標準サイズで見積もり始める**（Issue #184）．縦並びの box 幅は
+        # ラベルの長さから決まるので、既定の 16pt で 1 回目を引くと box が
+        # 細く出て、そのぶん字を縮める判断になってしまう．
+        base = self._body_font_size()
+        plan = plan_flow(flow, left, top, width, height, label_pt=base)
         # box が標準サイズで収まらなければ，全 box 一律で下位レベルへ切り替える．
         boxes = plan.boxes
         if boxes:
@@ -767,6 +1224,21 @@ class Renderer:
                     for b in boxes))
         else:
             bsz = self._body_font_size()
+        # 矢印ラベルの枠は**描くサイズ**で決める（Issue #178）．枠を 16pt 固定で
+        # 見積もっていた頃は、30pt の字が枠の下へはみ出して box に乗っていた
+        # （cn2026-12 p.42 の「暗号化」）．
+        #
+        # **プランは 2 回引く．** ``bsz`` は 1 回目のプランの box 矩形から決まる
+        # （``_box_fits`` が矩形を要る）ので、ラベルのサイズを先に知ることは
+        # できない．box の大きさはラベルに依らないため、2 回目で変わるのは
+        # ラベルの枠だけ——``boxes`` を差し替えるのは、以降で描くのも
+        # ``box_h_emu`` を測るのも**このプランの矩形**に揃えるため．
+        # 引き直す条件は 2 つ．``bsz != base`` は**字が縮んだとき**——縦並びの
+        # box 幅はラベルの長さ×サイズで決まるので、縮めたなら幅も引き直す．
+        # ``plan.labels`` は矢印ラベルの枠を実サイズで取り直すため（#178）．
+        if bsz != base or plan.labels:
+            plan = plan_flow(flow, left, top, width, height, label_pt=bsz)
+            boxes = plan.boxes
         for bi, box in enumerate(boxes):
             r = box.rect
             tc = self._theme_color(box.node.color) or \
@@ -786,10 +1258,19 @@ class Renderer:
         for arrow in plan.arrows:
             self.block_arrow(slide, arrow.x1, arrow.y1, arrow.x2, arrow.y2,
                              thick)
+        # 隣り合わないノードを結ぶ線は**細い矢印**で引く（Issue #109）．
+        # 上の塗り矢印はすき間を埋めるための形なので、離れた 2 点を結ぶと
+        # box に食い込む．
+        for ln in plan.lines:
+            self.line(slide, ln.x1, ln.y1, ln.x2, ln.y2,
+                      width_pt=1.5, dashed=ln.dashed, arrow=True)
         for lab in plan.labels:
+            # 矢印ラベルは**折り返さない**．短い語なので、折れると単語の途中で
+            # 割れて読めなくなる（"NAMEPREP" が "NAM / EPRE / P" になっていた）．
+            # 寄せは plan が決める——縦並びだけ左寄せ（Issue #176）．
             r = lab.rect
             self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
-                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER)
+                      tc=self.T2, bold=True, align=_pp_align(lab.align), wrap=False)
         for cap in plan.captions:
             # 図に付くのは caption だけ（note_top / note_bottom は地の文なので
             # 本文プレースホルダ側で描く——plan にも入っていない）．
@@ -799,12 +1280,91 @@ class Renderer:
 
     def _table_col_widths(self, ncols: int, width: int,
                           col_ratios: list[float] | None) -> list[int]:
-        """表の列幅（EMU）リストを返す（均等 or 比率指定）．"""
+        """表の列幅（EMU）リストを返す（均等 or 比率指定）．
+
+        切り捨ての端数は最終列へ寄せ、**合計を ``width`` に一致させる**——
+        列ごとに切り捨てたままだと表の右端が帯より僅かに内側で終わる．
+        """
+        if ncols <= 0:
+            return []
         if col_ratios and len(col_ratios) == ncols and sum(col_ratios) > 0:
             tot = float(sum(col_ratios))
-            return [int(width * r / tot) for r in col_ratios]
-        cw = int(width / ncols)
-        return [cw] * ncols
+            cols = [int(width * r / tot) for r in col_ratios]
+        else:
+            cols = [int(width / ncols)] * ncols
+        cols[-1] += width - sum(cols)
+        return cols
+
+    # 表のセル左右マージン合計（pt）．``_table_height_emu`` の見積もりと同じ値．
+    _TABLE_SIDE_PAD_PT = 18
+
+    # 太字は同じ字数でも少し広い．表のヘッダ行の幅見積もりに掛ける
+    # （cn2026-06「cwnd」・cn2026-08「ポート」がヘッダだけ折り返した）．
+    _BOLD_W_RATIO = 1.12
+
+    def _table_auto_cols(self, ncols: int, data: list[list[str]],
+                         font_pt: float, has_header: bool = False) -> list[int]:
+        """列ごとに「最長のセルが 1 行に収まる幅」（EMU）を返す．
+
+        ``_text_width_pt`` は概算で、**実際の組版より少し狭く出る**．
+        「ブロードキャスト」は見積もり 212.4pt に対し、使える幅 214.4pt の
+        セルで折り返した（cn2026-04「通信の種類」・30pt で実測）．
+        幅を詰めるための機能で折り返しを増やしては本末転倒なので、
+        ``{box}`` の枠幅と同じ安全係数を掛けて余裕を持たせる．
+        """
+        cols = []
+        for ci in range(ncols):
+            widths = []
+            for ri, row in enumerate(data):
+                w = self._text_width_pt(row[ci] if ci < len(row) else "", font_pt)
+                if has_header and ri == 0:
+                    w *= self._BOLD_W_RATIO         # ヘッダ行は太字で描く
+                widths.append(w)
+            cell_w = max(widths, default=0.0)
+            cols.append(int((cell_w * self._BOX_W_SAFETY
+                             + self._TABLE_SIDE_PAD_PT) * 12700))
+        return cols
+
+    def _table_geometry(self, spec: str | float | None, band_w: int, ncols: int,
+                        data: list[list[str]], font_pt: float,
+                        col_ratios: list[float] | None,
+                        has_header: bool = False) -> tuple[int, list[int]]:
+        """``@table-width`` から表の (総幅, 列幅リスト) を決める．
+
+        未指定なら帯幅いっぱい（従来どおり）．``auto`` は列ごとの最長セルが
+        1 行に収まる幅を積み上げ、**その必要幅をそのまま列幅にする**——総幅だけ
+        合わせて等分すると、短い列と長い列が同じ幅になって元の木阿弥になる。
+        ただし ``@table-widths`` を明示してあればそちらを優先する（著者の指定が
+        自動判定に負けない）。
+
+        どの指定でも**帯幅は超えない**——表がはみ出すのは ``@overflow`` の
+        受け持ちで、幅の指定では起こさない。収まらない ``auto`` は帯幅いっぱいの
+        通常配分へ戻す（潰れた列を作らない）。
+
+        ``font_pt`` は**本文の標準サイズ**を渡す。実際に描かれるサイズは幅が
+        決まった後に ``_fit_font`` が帯の高さを見て決めるので、縮めば見積もりは
+        余る側へずれる。幅を先に決めるのは、列幅が決まらないと行の折り返し数が
+        出ず、高さも決められないため（順序は変えられない）。
+        """
+        if spec == "auto":
+            cols = self._table_auto_cols(ncols, data, font_pt, has_header)
+            need = sum(cols)
+            if not col_ratios:
+                if need <= band_w:
+                    return need, cols
+                # 帯に収まらないぶんは**必要幅の比で**詰める．均等に割ると
+                # 長い列だけが折り返すので、狭める前より読みにくくなる．
+                return band_w, self._table_col_widths(
+                    ncols, band_w, [float(c) for c in cols])
+            # ``@table-widths`` があるときは、``auto`` で積んだ列幅は**総幅を
+            # 決めるためだけ**に使い、配分は著者の比に譲る（自動判定が明示指定に
+            # 勝たない．SYNTAX.md にも同じことを書いてある）．
+            width = min(band_w, need)
+        elif spec is None:
+            width = band_w
+        else:
+            width = min(band_w, int(band_w * float(spec) / 100.0))
+        return width, self._table_col_widths(ncols, width, col_ratios)
 
     def _table_height_emu(self, data: list[list[str]], col_w: list[int],
                           font_pt: float) -> int:
@@ -832,12 +1392,16 @@ class Renderer:
                      width: int, height: int,
                      col_ratios: list[float] | None = None,
                      overflow: bool = False,
-                     has_prose_after: bool = False) -> GraphicFrame | None:
+                     has_prose_after: bool = False,
+                     total_width: str | float | None = None) -> GraphicFrame | None:
         """Table ブロックを座標指定で 1 つ描画する（ヘッダ行をアクセント色で着色）．
 
         ``参照スクリプト`` の表描画を移植・一般化したもの．列幅は既定で均等，
         ``col_ratios`` を与えると比率配分する．配色はテーマ任せ（ヘッダのみ
         アクセント色 A2＋背景色 BG の文字）．
+
+        ``total_width``（@table-width）を与えると総幅を帯より狭くし，余った
+        帯は左右へ等分する（中央寄せ）．``col_ratios`` はその総幅を配分する．
 
         overflow=True（@overflow）の場合はフォント縮小（_fit_font）を行わず，
         本文標準（lvl1）サイズのまま必要な高さで描画する．上端は帯上端に固定し，
@@ -852,8 +1416,14 @@ class Renderer:
         if nrows == 0 or ncols == 0:
             return None
 
-        col_w = self._table_col_widths(ncols, width, col_ratios)
         data = ([table.header] if table.header else []) + list(table.rows)
+        # 総幅を先に決める——狭めたぶんは左右へ等分して帯の中で中央に置く．
+        tw, col_w = self._table_geometry(total_width, width, ncols, data,
+                                         self._body_font_size(), col_ratios,
+                                         bool(table.header))
+        if tw < width:
+            left += (width - tw) // 2
+            width = tw
 
         if overflow:
             # 縮小せず本文標準サイズを維持し，収まらない分は下へはみ出す．
@@ -874,7 +1444,8 @@ class Renderer:
             # フォントは本文標準（lvl1）を基本に，収まらなければ下位レベルへ切り替える．
             fsize = self._fit_font(
                 lambda sz: self._table_height_emu(data, col_w, sz) <= height)
-            if self._table_height_emu(data, col_w, fsize) > height:
+            est_h = self._table_height_emu(data, col_w, fsize)
+            if est_h > height:
                 # 最小レベルまで縮小しても収まらない見積もり．PowerPoint は行を
                 # 最小行高以上へ自動拡張するため，黙って帯を超過しうる（従来は
                 # 無警告）．気づけるよう警告し，@overflow への誘導も添える．
@@ -883,8 +1454,14 @@ class Renderer:
                     "smallest body font size and may overlap following content "
                     "(consider '<!-- @overflow: true -->')\n")
 
+        # **帯の高さをそのまま渡さない**（Issue #165）．PowerPoint は与えた高さを
+        # 行へ配分するので、2 行の表でも帯いっぱいに広がって 1 行が 2.5cm に
+        # なる．見積もりのほうが小さければそちらで描き、余った空きは上下へ
+        # 均等に配る．見積もりは下限で、PowerPoint は最小行高まで自動で広げる．
+        draw_h = min(height, est_h)
+        draw_top = top + max(0, (height - draw_h) // 2)
         gf = slide.shapes.add_table(
-            nrows, ncols, Emu(left), Emu(top), Emu(width), Emu(height))
+            nrows, ncols, Emu(left), Emu(draw_top), Emu(width), Emu(draw_h))
         tbl = gf.table
 
         for ci, cw in enumerate(col_w):
@@ -904,16 +1481,44 @@ class Renderer:
                 cell.margin_bottom = Pt(2)
                 pa = cell.text_frame.paragraphs[0]
                 pa.text = row[ci] if ci < len(row) else ""
+                # **"left" のときは何も書かない．** ここの ``al`` は
+                # 「`:---` で左寄せと**指定された**」と「区切り行に**指定が無い**」の
+                # 両方が "left" になる（上の既定）．``algn`` を書き出すと、
+                # 後者にまで寄せを**押し付ける**ことになる——書かなければ
+                # スライドマスターの既定がそのまま効く．
                 if al != "left":
-                    pa.alignment = _TABLE_ALIGN[al]
+                    pa.alignment = _pp_align(al)
+                # セルごとの背景色（§5.4）．**ヘッダの既定より優先する**——
+                # 書いたものがそのまま出るほうが説明しやすい．
+                fill_name: str | None = None
+                if is_header:
+                    if ci < len(table.header_fills):
+                        fill_name = table.header_fills[ci]
+                else:
+                    bi = ri - (1 if table.header else 0)
+                    if bi < len(table.fills) and ci < len(table.fills[bi]):
+                        fill_name = table.fills[bi][ci]
+                if fill_name is None and is_header:
+                    fill_name = "accent2"       # ヘッダの既定
+                fill_rgb: str | None = None
+                if fill_name:
+                    cell.fill.solid()
+                    kind, value = parse_color(fill_name)
+                    if kind == "theme":
+                        cell.fill.fore_color.theme_color = self._theme_map[value]
+                        fill_rgb = self._theme_rgb(value)
+                    else:
+                        cell.fill.fore_color.rgb = RGBColor.from_string(value)
+                        fill_rgb = value
                 for run in pa.runs:
                     run.font.size = Pt(fsize)
                     if is_header:
                         run.font.bold = True
+                    # 塗ったセルは文字色も塗りに合わせる（Issue #148）．濃い塗りに
+                    # 黒文字を載せると読めない——見出し行だけの特別扱いだったものを
+                    # 全セルへ広げた．明るい塗りでは触らない（テーマの本文色のまま）．
+                    if fill_name and is_dark(fill_rgb):
                         run.font.color.theme_color = self.BG
-                if is_header:
-                    cell.fill.solid()
-                    cell.fill.fore_color.theme_color = self.A2
         return gf
 
     def _resolve_image_path(self, src: str) -> str:
@@ -959,6 +1564,50 @@ class Renderer:
             return length.value / 100.0 * base_emu
         return float(length.value)
 
+    def render_seq(self, slide: PptxSlide, seq: Seq, left: int, top: int,
+                   width: int, height: int) -> None:
+        """シーケンス図（ラダー図）を矩形領域へ描く（Issue #110）．
+
+        座標は ``plan_seq`` が EMU で出し終えているので、ここは図形を置くだけ．
+        ライフラインは**矢尻の無い縦線**、メッセージは**矢尻付きの横線**で、
+        描き分けは ``PlacedLine`` と ``PlacedArrow`` の型がそのまま指示になる．
+        """
+        plan = plan_seq(seq, left, top, width, height)
+        if not plan.heads:
+            return
+        # **plan が前提にしている大きさで描く**（Issue #167）．箱の位置も幅も
+        # ``seq.LABEL_PT`` で見積もられているので、本文標準サイズで描くと
+        # 本文の大きいテーマでは字が箱に入らず、``wrap=False`` の注記が
+        # スライドの外へ出る．本文が小さいテーマでは従来どおり本文サイズ．
+        bsz = min(self._body_font_size(), SEQ_LABEL_PT)
+        for i, head in enumerate(plan.heads):
+            # 頭は**塗り箱ではなく折り返さない文字**にする．box() は枠の高さを
+            # 固定して文字を折るので、「クライアント」のような長い名前が
+            # 縦に潰れて読めなくなる（実 PowerPoint で確認）．
+            r = head.rect
+            self.note(slide, r.left, r.top, r.width, r.height, head.text, bsz,
+                      tc=self.T2, bold=True, align=PP_ALIGN.CENTER,
+                      anchor=MSO_ANCHOR.MIDDLE, wrap=False)
+        for ln in plan.lines:
+            # ライフラインは細く目立たせない——主役は矢印のほう．
+            self.line(slide, ln.x1, ln.y1, ln.x2, ln.y2,
+                      width_pt=1.0, dashed=ln.dashed)
+        for ar in plan.arrows:
+            self.line(slide, ar.x1, ar.y1, ar.x2, ar.y2,
+                      width_pt=1.75, arrow=True)
+        for lab in plan.labels:
+            r = lab.rect
+            self.note(slide, r.left, r.top, r.width, r.height, lab.text, bsz,
+                      tc=self.T2, bold=True, align=_pp_align(lab.align), wrap=False)
+        for nt in plan.notes:
+            r = nt.rect
+            self.note(slide, r.left, r.top, r.width, r.height, nt.text, bsz,
+                      tc=self.TX, align=PP_ALIGN.LEFT, wrap=False)
+        for cap in plan.captions:
+            r = cap.rect
+            self.note(slide, r.left, r.top, r.width, r.height, cap.text, bsz,
+                      tc=self.TX, align=PP_ALIGN.CENTER)
+
     def render_image(self, slide: PptxSlide, img: Image, left: int, top: int,
                      width: int, seg_h: int, overflow: bool | None = None,
                      has_prose_after: bool = False) -> Picture:
@@ -979,8 +1628,10 @@ class Renderer:
         cl, ct, cr, cb, vis_w, vis_h = self._crop_fractions(img.crop, W, H)
         aspect = (vis_w / vis_h) if vis_h else 1.0      # クロップ後の可視領域の比
 
-        # キャプション用の高さを確保（1 行分）．
-        cap_h = int(Pt(self._body_font_size()) * 1.4) if img.caption else 0
+        # キャプション用の高さを確保．**折り返す行数で数える**（Issue #169）——
+        # 1 行ぶん決め打ちだと、長いキャプションの 2 行目が確保の外へ出て
+        # 罫線やページ番号に掛かる．長く書けば図が小さくなるが、それは見て分かる．
+        cap_h = self._caption_height(img.caption, width)
         avail_w = float(width)
         avail_h = float(max(1, seg_h - cap_h))
 
@@ -1062,6 +1713,28 @@ class Renderer:
             return box_w, box_w / aspect
         return box_h * aspect, box_h    # 高さが制約：高さいっぱい
 
+    def _caption_size(self) -> float:
+        """キャプションの文字サイズ（本文標準より 1 段小さめ）．"""
+        levels = self._body_font_levels()
+        return levels[1] if len(levels) > 1 else levels[0]
+
+    def _caption_height(self, text: str | None, width: int) -> int:
+        """キャプションに要る高さ（EMU）．無ければ 0．
+
+        ``_draw_caption`` は ``word_wrap = True`` で描くので、**折り返す行数で
+        数える**（Issue #169）．テキストボックスの左右マージンは既定のまま
+        （`_draw_caption` が触らない）なので、ここでも既定値を引く．
+        """
+        if not text:
+            return 0
+        size = self._caption_size()
+        avail_pt = max(1.0,
+                       (width - 2 * Pt(self._CAPTION_MARGIN_PT)) / 12700.0)
+        # **許容幅は効かせない**（slack=1.0）．キャプションは 1 行多く取っても
+        # 図が少し小さくなるだけだが、足りないと罫線の下へ出る（Issue #169）．
+        n = self._wrapped_lines(text, size, avail_pt, slack=1.0)
+        return int(n * Pt(size) * 1.4)
+
     def _draw_caption(self, slide: PptxSlide, text: str, left: int, top: int,
                       width: int, height: int) -> None:
         """図下キャプションを中央寄せの小さめ本文サイズで描く．"""
@@ -1069,6 +1742,9 @@ class Renderer:
             Emu(left), Emu(top), Emu(width), Emu(max(height, Pt(12))))
         tf = tb.text_frame
         tf.word_wrap = True
+        # 左右マージンは**明示する**．``_caption_height`` が同じ値で幅を数えるので、
+        # 既定に任せると python-pptx の既定が変わったときに見積もりだけずれる．
+        tf.margin_left = tf.margin_right = Pt(self._CAPTION_MARGIN_PT)
         # キャプションは短文前提（1 行分の高さを確保）．枠を内容で伸ばさない
         # （長文で下方向へはみ出さないよう auto_size を無効化）．必要なら折り返す．
         tf.auto_size = MSO_AUTO_SIZE.NONE
@@ -1076,10 +1752,8 @@ class Renderer:
         p.alignment = PP_ALIGN.CENTER
         p.text = text
         # 本文標準より 1 段小さめ（テーマ既定サイズ体系の中で縮小）．
-        levels = self._body_font_levels()
-        size = levels[1] if len(levels) > 1 else levels[0]
         for r in p.runs:
-            r.font.size = Pt(size)
+            r.font.size = Pt(self._caption_size())
 
     # ------------------------------------------------------- content slide
     def render_slide(self, slide: Slide, slide_number: bool = True,
@@ -1117,6 +1791,7 @@ class Renderer:
         # 前に済ませる（以降の _effective_geom / _content_rect が上書き後を参照）．
         self._apply_placeholder_widths(s, directives,
                                        is_columns=bool(slide.columns))
+        self._apply_title_width(s, directives)
 
         # スライド既定の採番色（@autonum-color）．Line.num_color が優先．
         raw_num_color = directives.get("autonum_color")
@@ -1130,14 +1805,20 @@ class Renderer:
         slide_overflow = bool(directives.get("overflow", False))
         blocks = slide.blocks or []
 
+        # 表の総幅（@table-width）も列幅比と同じくスライド単位で全ての表に効く．
+        table_width = self._table_width(directives)
+
         if slide.columns:
             self._render_columns(s, slide.columns, default_num_color, scale,
                                  default_autofit, default_size_delta,
-                                 self._col_ratios(directives), slide_overflow)
-        elif any(isinstance(b, (Table, Flow, Image)) for b in blocks):
+                                 self._col_ratios(directives), slide_overflow,
+                                 table_width)
+            if directives.get("col_arrow"):
+                self.draw_column_arrow(s, len(slide.columns))
+        elif any(is_object_block(b) for b in blocks):
             self._render_stacked(s, blocks, default_num_color, scale, default_autofit,
                                  self._col_ratios(directives), default_size_delta,
-                                 slide_overflow)
+                                 slide_overflow, table_width)
         else:
             line_blocks = [b for b in blocks if isinstance(b, Line)]
             body = self._body_placeholder(s)
@@ -1147,7 +1828,10 @@ class Renderer:
                 tf = body.text_frame
                 self._fill_lines(tf, line_blocks, default_num_color,
                                  default_size_delta)
-                self._apply_autofit(tf, scale, default_autofit)
+                eff = self._autofit_for(body, line_blocks, scale,
+                                        default_autofit, default_size_delta)
+                self.draw_line_boxes(s, body, line_blocks, default_size_delta,
+                                     shrink=eff)
 
         # 表紙レイアウト（テーマの「タイトル スライド」）には番号を付けない．
         # そのレイアウトを選ぶこと自体が「これは表紙」の宣言なので，
@@ -1195,7 +1879,8 @@ class Renderer:
                         default_autofit: bool,
                         default_size_delta: int | None = None,
                         col_ratios: list[float] | None = None,
-                        slide_overflow: bool = False) -> None:
+                        slide_overflow: bool = False,
+                        table_width: str | float | None = None) -> None:
         """多カラム（「2つのコンテンツ」）：各カラムを idx 1, 2 … へ流す．
 
         columns[i] を プレースホルダ idx=i+1 へ描画する（idx 0 はタイトル）．
@@ -1207,7 +1892,7 @@ class Renderer:
             ph = self._find_placeholder(slide, ci + 1)
             if ph is None:
                 continue  # レイアウトに該当プレースホルダが無ければスキップ
-            if any(isinstance(b, (Table, Flow, Image)) for b in col_blocks):
+            if any(is_object_block(b) for b in col_blocks):
                 # カラム矩形へ表・図をスタック配置．継承ジオメトリはレイアウトで補う．
                 # 通常 layout 3 は idx1/idx2 のジオメトリを持つため，解決失敗はテーマ
                 # 異常時のみ．その場合は本文領域へフォールバックする（表が消えるより，
@@ -1228,7 +1913,8 @@ class Renderer:
                 self._render_stacked_into(slide, col_blocks, ph, left, top,
                                           width, height, default_num_color, scale,
                                           default_autofit, col_ratios,
-                                          default_size_delta, slide_overflow)
+                                          default_size_delta, slide_overflow,
+                                          table_width)
                 continue
             # Line のみのカラムはプレースホルダへ直接流し込む．_render_stacked_into は
             # objects（表・図）が空だと何も描画せず return する設計なので，ここを通すと
@@ -1237,12 +1923,16 @@ class Renderer:
             if lines:
                 tf = ph.text_frame
                 self._fill_lines(tf, lines, default_num_color, default_size_delta)
-                self._apply_autofit(tf, scale, default_autofit)
+                eff = self._autofit_for(ph, lines, scale, default_autofit,
+                                        default_size_delta)
+                self.draw_line_boxes(slide, ph, lines, default_size_delta,
+                                     shrink=eff)
 
     # ----------------------------------------------------- 描画ユーティリティ
     def _append_lines(self, tf: TextFrame, line_blocks: list[Line], first: bool,
                       default_num_color: str | None,
-                      default_size_delta: int | None = None) -> bool:
+                      default_size_delta: int | None = None,
+                      counters: dict[tuple[int, str], int] | None = None) -> bool:
         """Line 列を text_frame に段落として追記する（採番／no_bullet を適用）．
 
         first=True なら最初の 1 行は既存の paragraphs[0] を使う．残りの行を
@@ -1251,19 +1941,42 @@ class Renderer:
         相対サイズは行の size_delta を優先し，None の行はスライド既定
         （default_size_delta，@body-size 由来）を継承する．基点は tf の枠が
         実際に持つ既定サイズで，枠ごとに 1 度だけ解決する（Issue #83）．
+
+        counters は (level, 形式) ごとの次の番号（Issue #107）．**全ての採番段落に
+        番号を明示して書く**——PowerPoint は startAt の付いた段落の**次から数え直す**
+        ので，先頭にだけ書くと 8. の次が 1. に戻る．番号はここで数えて渡す．
+        原稿の番号は**リストの先頭の行だけ**を種にし，以降は 1 ずつ増やす
+        （CommonMark と同じ規則．"1. 1. 1." と書けば 1・2・3 になる）．
+        **同じ枠へ 2 回以上追記する呼び出し側は，この辞書を自分で作って渡す**．
+        図表スライドでは地の文が帯の上下に分かれて同じ枠へ 2 回追記されるので，
+        渡さないと結論文側の番号が 1 に戻る．1 回で流し込む経路（``_fill_lines``）は
+        渡さなくてよく，そのとき既定の ``None`` が枠ごとに新しい辞書になる．
         """
+        if counters is None:
+            counters = {}
         levels = self._frame_font_levels(tf)
         for blk in line_blocks:
             p = tf.paragraphs[0] if first else tf.add_paragraph()
             first = False
             p.level = blk.level
-            p.text = blk.text
+            self._write_spans(p, blk)
             if blk.kind == "autonum":
                 fmt = blk.num_style or "arabicPeriod"
                 color = blk.num_color or default_num_color
-                self.set_autonum(p, fmt, color=color)
+                key = (blk.level, fmt)
+                num = counters.get(key)
+                if num is None:                     # そのリストの先頭の行
+                    num = blk.num_start if blk.num_start is not None else 1
+                counters[key] = num + 1
+                self.set_autonum(p, fmt, color=color, start=num)
             elif blk.kind == "plain":
                 self.no_bullet(p)
+            elif blk.kind == "code":
+                # 行頭記号を消して等幅にする（§5.12）．書いた桁が揃わないと
+                # コードとして読めないので，ここだけはテーマ既定に任せない．
+                self.no_bullet(p)
+                for run in p.runs:
+                    run.font.name = self._mono_font
             # kind == "bullet" はテーマ既定のまま
             delta = blk.size_delta if blk.size_delta is not None else default_size_delta
             # 行トークン {0} は「スライド既定を無効化してテーマ既定へ戻す」意味だが，
@@ -1275,9 +1988,127 @@ class Renderer:
             # セグメントの段数は行の段数と**同じ基点**（その level のテーマ既定）から
             # 数える．行が {+1} でもセグメントの {-2} は同じ大きさになる——
             # 「テーマ既定からの相対段数」という記法の意味を段で変えないため．
-            self._apply_segment_deltas(p, blk.seg_deltas,
-                                       levels[min(blk.level, len(levels) - 1)])
+            self._apply_segment_deltas(
+                p, blk.seg_deltas, levels[min(blk.level, len(levels) - 1)],
+                [s.segment for s in blk.spans] if blk.spans else None)
         return first
+
+    def draw_line_boxes(self, slide: PptxSlide, ph: SlidePlaceholder,
+                        line_blocks: list[Line],
+                        default_size_delta: int | None = None,
+                        preceding: list[Line] | None = None,
+                        blank_paras: int = 0,
+                        shrink: float | None = None) -> None:
+        """``{box}`` の付いた段落を枠で囲む（Issue #133）．
+
+        枠は**段落に重ねて描く**——PowerPoint が実際にどこへ行を置いたかは
+        pptx を書く側からは分からないので、``_render_stacked_into`` の帯計算と
+        **同じ見積もり**（枠の上端から「その行のサイズ × 1.32」を積む）で位置を出す．
+        折り返しの行数も ``_text_width_pt`` で見積もり、2 行になる項目を 1 つの枠で囲む．
+
+        ``preceding`` は同じ枠へ先に書かれた行（表・図スライドの導入文）、
+        ``blank_paras`` はその後ろに挟まる空段落の数（帯を空ける行）．
+        **先行ぶんも行ごとのサイズで積む**——一律に本文標準サイズで数えると、
+        導入文に ``{+1}`` が付いているだけで結論文側の枠がずれる．
+        空段落だけは標準サイズで数える（帯の計算がそう作っているため）．
+
+        ``shrink`` は枠に効いている縮小率（％．無ければ None）．**これを渡さないと
+        縮んだ枠で位置がずれる**——字だけが小さくなり、枠は元の大きさのまま
+        取り残される（Issue #154）．
+
+        **見積もりなので完全ではない**．テーマがレベルごとに行間を変えている枠では
+        ずれうる（SYNTAX.md に明記）．ずれても文字は動かない——枠だけが少し外れる．
+        """
+        k = (shrink / 100.0) if shrink is not None else 1.0
+        if not any(ln.boxed for ln in line_blocks):
+            return
+        tf = ph.text_frame
+        levels = self._frame_font_levels(tf)
+        indents = self._body_indents()
+
+        def size_of(level: int) -> float:
+            return levels[min(level, len(levels) - 1)] if levels else 18.0
+
+        def indent_of(level: int) -> int:
+            return indents[min(level, len(indents) - 1)] if indents else 0
+
+        # python-pptx の margin_* は未設定でも既定値（EMU）を返すので、
+        # そのまま使える（None にはならない）．
+        pad_l = tf.margin_left
+        pad_r = tf.margin_right
+        avail_full = max(1, ph.width - pad_l - pad_r)
+
+        def measure(ln: Line) -> tuple[float, int, int]:
+            """(実効サイズ pt, 折り返し行数, 左インデント EMU) を返す．"""
+            d = ln.size_delta if ln.size_delta is not None else default_size_delta
+            sz = self._size_from_delta(size_of(ln.level), d) * k
+            ind = indent_of(ln.level)
+            avail_pt = max(1.0, (avail_full - ind) / 12700.0)
+            text = (ln.text or "").replace("\v", " ")
+            return sz, self._wrapped_lines(text, sz, avail_pt), ind
+
+        y = ph.top + tf.margin_top
+        # preceding は**位置を数えるためだけ**に使う．そこに枠が付いていても
+        # ここでは描かない——呼び出し元が同じ行列で 1 度描いている．
+        for ln in preceding or []:
+            sz, n, _ = measure(ln)
+            y += self._para_height(ln.level, sz, n)
+        # 空段落は標準サイズ（帯の計算がそう作っている）．
+        y += blank_paras * self._para_height(0, self._body_font_size() * k)
+
+        for ln in line_blocks:
+            sz, wrapped, ind = measure(ln)
+            para_h = self._para_height(ln.level, sz, wrapped)
+            if ln.boxed:
+                avail = max(1, avail_full - ind)
+                text = (ln.text or "").replace("\v", " ")
+                # 枠は文字幅に合わせる（1 行に収まる短い項目まで枠が伸びると、
+                # 「ここだけ囲んでいる」ことが伝わらない）．左右に少し余白を取る．
+                gap = int(Pt(sz) * 0.35)
+                # 左へ食み出しても**スライドの外へは出さない**．
+                bl = max(0, ph.left + pad_l + ind - gap)
+                w = min(int(self._text_width_pt(text, sz) * 12700) + 2 * gap,
+                        ph.left + ph.width - bl)
+                # 枠は**アキを含めない**——アキは段落の上に空く隙間で、字の入る
+                # ところではない．囲むのは字のほうだけ（Issue #150）．
+                # そこから ``_BOX_LIFT`` だけ持ち上げる（Issue #160）．
+                line_h = self._line_height(sz)
+                box_top = (y + self._space_before(ln.level, sz)
+                           - int(line_h * self._BOX_LIFT))
+                self.line_box(slide, bl, max(0, box_top),
+                              max(w, int(avail * 0.2)),
+                              wrapped * line_h, ln.box_color)
+            y += para_h
+
+    def line_box(self, slide: PptxSlide, left: int, top: int, w: int, h: int,
+                 color: str | None = None) -> Shape:
+        """段落を囲む枠（塗りつぶし無しの角丸四角）を描く．
+
+        塗りつぶさないのは、下に文字があるため．色の既定はテーマのアクセント色で、
+        ``{box:blue}`` のように指定があればそちらを使う（語彙は行内装飾と共通）．
+
+        ``color`` はパーサが正規化済みだが、``_set_run_color`` と同じくここでも
+        ``parse_color`` を通す．冪等（テーマ色名も "#RRGGBB" もそのまま返る）なうえ、
+        **色名の語彙を知る場所を 1 つに保てる**．
+        """
+        shp = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Emu(left), Emu(top), Emu(w), Emu(h))
+        shp.fill.background()
+        if color:
+            kind, value = parse_color(color)
+            if kind == "theme":
+                shp.line.color.theme_color = self._theme_map[value]
+            else:
+                shp.line.color.rgb = RGBColor.from_string(value)
+        else:
+            shp.line.color.theme_color = self.A2
+        # 元の講義スライドは 6pt．そこまで太らせると枠が主役になるので、
+        # 「離れて見ても囲みと分かる」ところで 3pt にしている．
+        shp.line.width = Pt(3)
+        shp.shadow.inherit = False
+        # 図形に文字は入れない（文字はプレースホルダ側にある）．
+        shp.text_frame.word_wrap = False
+        return shp
 
     def _fill_lines(self, tf: TextFrame, line_blocks: list[Line],
                     default_num_color: str | None,
@@ -1287,18 +2118,86 @@ class Renderer:
                            default_size_delta)
 
     def _autofit_scale(self, directives: dict[str, Any]) -> float | None:
-        """@autofit ディレクティブを縮小率へ解釈する（非数値は警告して None）．"""
+        """@autofit ディレクティブを縮小率へ解釈する（不正値は警告して None）．
+
+        返すのは**％の数値そのもの**（``@autofit: 90`` → ``90.0``）で、比ではない．
+        ``fit_body`` の ``scale`` がそのまま％を取るため——比へ直すのは使う側．
+
+        0 以下は受けない——文字が消えるか裏返るかで、どちらも書き手の意図では
+        ありえない．ここで弾いておかないと帯の計算（``shrink``）まで巻き込む．
+        """
         autofit = directives.get("autofit")
         if autofit is None:
             return None
         try:
-            return float(autofit)
+            scale = float(autofit)
         except (TypeError, ValueError):
             sys.stderr.write(
                 f"md2pptx: warning: ignoring non-numeric @autofit value "
                 f"{autofit!r}\n"
             )
             return None
+        if scale <= 0:
+            sys.stderr.write(
+                f"md2pptx: warning: ignoring non-positive @autofit value "
+                f"{autofit!r}\n"
+            )
+            return None
+        return scale
+
+    def _text_height(self, lines: list[Line], levels: list[float],
+                     default_size_delta: int | None, avail_w: int,
+                     shrink: float = 1.0) -> int:
+        """``lines`` を ``avail_w`` の幅へ流したときの総高（EMU）．
+
+        折り返しは ``_text_width_pt`` の概算で数える（`draw_line_boxes` と同じ）．
+        """
+        total = 0
+        for ln in lines:
+            d = ln.size_delta if ln.size_delta is not None else default_size_delta
+            base = levels[min(ln.level, len(levels) - 1)] if levels else 18.0
+            sz = self._size_from_delta(base, d) * shrink
+            ind = self._indent_for(ln.level)
+            avail_pt = max(1.0, (avail_w - ind) / 12700.0)
+            text = (ln.text or "").replace("\v", " ")
+            total += self._para_height(
+                ln.level, sz, self._wrapped_lines(text, sz, avail_pt))
+        return total
+
+    def _fit_scale(self, ph: SlidePlaceholder, lines: list[Line],
+                   default_size_delta: int | None) -> float | None:
+        """枠に収めるための縮小率（％）．収まるなら None．
+
+        **``normAutofit`` を置くだけでは何も起きない**（Issue #154）．PowerPoint は
+        自動調整を開いたときに計算し直さず、保存されている ``fontScale`` で描く。
+        だから md2pptx 側で率を出して焼き込む．
+
+        縮めると折り返しが減ってさらに縮むので、数回まわして落ち着かせる．
+        """
+        tf = ph.text_frame
+        # 継承したままのプレースホルダは width / height が None を返す．
+        # そこはレイアウト側で補えるが（``_effective_geom``）、スライドを持って
+        # いないここでは補えないので、測れなければ縮めない．
+        if ph.width is None or ph.height is None or not lines:
+            return None
+        avail_h = ph.height - tf.margin_top - tf.margin_bottom
+        avail_w = ph.width - tf.margin_left - tf.margin_right
+        if avail_h <= 0 or avail_w <= 0:
+            return None
+        levels = self._frame_font_levels(tf)
+        need = self._text_height(lines, levels, default_size_delta, avail_w)
+        if need <= avail_h:
+            return None
+        scale = avail_h / need
+        for _ in range(3):
+            need = self._text_height(lines, levels, default_size_delta,
+                                     avail_w, scale)
+            if need <= avail_h:
+                break
+            scale *= avail_h / need
+        # 下限は 25%．それ以下まで縮むのは原稿の量がおかしいので、縮めきらずに
+        # 止めて（はみ出しは残る）書き手に気づかせる．
+        return max(25.0, min(100.0, scale * 100.0))
 
     def _apply_autofit(self, tf: TextFrame, scale: float | None,
                        default_autofit: bool) -> None:
@@ -1307,6 +2206,29 @@ class Renderer:
             self.fit_body(tf, scale=scale)
         elif default_autofit:
             self.fit_body(tf)
+
+    def _autofit_for(self, ph: SlidePlaceholder, lines: list[Line],
+                     scale: float | None, default_autofit: bool,
+                     default_size_delta: int | None) -> float | None:
+        """枠に自動調整を設定し、**実際に効く縮小率**を返す．
+
+        戻り値は ``draw_line_boxes`` へ渡す——縮小率を知らないと ``{box}`` の枠が
+        字とずれる（枠だけが元の大きさの位置に取り残される）．
+        """
+        eff = scale
+        if eff is None and default_autofit:
+            eff = self._fit_scale(ph, lines, default_size_delta)
+        self._apply_autofit(ph.text_frame, eff, default_autofit)
+        return eff
+
+    def _table_width(self, directives: dict[str, Any]) -> str | float | None:
+        """@table-width（``"auto"`` か百分率）を返す．値の検証は parser で済み．"""
+        v = directives.get("table_width")
+        if isinstance(v, str):
+            return v
+        if isinstance(v, (int, float)):
+            return float(v)
+        return None
 
     def _col_ratios(self, directives: dict[str, Any]) -> list[float] | None:
         """@table-widths ディレクティブ（"45,55" 等）を表の列幅比リストへ解釈する．"""
@@ -1370,6 +2292,64 @@ class Renderer:
             self._apply_ph_widths(slide, val)
         else:
             self._apply_body_width(slide, val)
+
+    def _apply_title_width(self, slide: PptxSlide,
+                           directives: dict[str, Any]) -> None:
+        """@title-width: "120" — タイトルプレースホルダ幅を再指定する．
+
+        ``@widths`` が本文（とカラム）だけを見るのは、値の個数が**カラム数**を
+        意味するため——タイトルはカラムではないので、同じディレクティブに混ぜると
+        「値 1 個」が本文幅なのかタイトル幅なのか決められなくなる．そこで
+        ``@table-width`` と同じく**対象を名前に持つ別のディレクティブ**にする．
+
+        解釈と語彙は ``@widths`` と共通：継承したタイトル枠幅に対する百分率、
+        既定は左端固定（右余白のみ使用）、末尾の ``!`` で左余白の使用を許可．
+        長いタイトルは ``<br>`` で折るのが基本だが、枠を広げれば収まる場合に
+        原稿を折らずに済ませるための逃げ道（Issue #62 の折り方の規則は本文の話で、
+        枠の広さとは別）．
+        """
+        val = directives.get("title_width")
+        if val is None:
+            return
+        val, allow_left = self._split_allow_left(val)
+        pcts = self._parse_pct_list(val)
+        if pcts is None or len(pcts) != 1 or pcts[0] <= 0:
+            sys.stderr.write(
+                "md2pptx: warning: @title-width expects one positive "
+                f"percentage, got {val!r}; ignoring\n")
+            return
+        ph = self._find_placeholder(slide, 0)
+        if ph is None:
+            # タイトル枠の無いレイアウト（「白紙」等）．本文と同じく黙って何もしない
+            # ——ここで警告を出すと、タイトルの無いスライドを含むデッキで
+            # スライドごとに 1 行ずつ出てしまう．
+            return
+        left, top, width, height = self._effective_geom(ph, slide)
+        if left is None or top is None or width is None or height is None:
+            return
+        new_w = width * pcts[0] / 100.0
+        max_w = ((self.SW - self._PH_MARGIN - left) if not allow_left
+                 else (self.SW - 2 * self._PH_MARGIN))
+        if max_w <= 0:
+            # 枠の左端が既に余白の外にあるテーマ（右端に寄せたタイトル等）．
+            # クランプすると幅 0 の枠になり、**タイトルが消える**．触らずに知らせる．
+            sys.stderr.write(
+                "md2pptx: warning: no room to widen the title "
+                f"(it starts at {left} EMU); ignoring @title-width\n")
+            return
+        if new_w > max_w:
+            sys.stderr.write(
+                "md2pptx: warning: @title-width exceeds the "
+                f"{'slide' if allow_left else 'right margin'}; clamping"
+                f"{'' if allow_left else ' (append ! to use the left margin)'}\n")
+            new_w = max_w
+        new_l = left
+        if allow_left:
+            overflow = (new_l + new_w) - (self.SW - self._PH_MARGIN)
+            if overflow > 0:
+                new_l -= overflow
+            new_l = max(new_l, self._PH_MARGIN)
+        self._override_geom(ph, new_l, top, new_w, height)
 
     def _apply_ph_widths(self, slide: PptxSlide, val: object) -> None:
         """@widths: "55,45" — 多カラムのプレースホルダ幅を再指定する．
@@ -1501,35 +2481,228 @@ class Renderer:
                     return (lph.left, lph.top, lph.width, lph.height)
         except Exception:
             pass
-        # 既定：タイトル下の本文相当領域．
-        return (Inches(0.6), Inches(1.7), self.SW - Inches(1.2),
-                self.SH - Inches(2.3))
+        # 本文プレースホルダの無いレイアウト（「白紙」「タイトルのみ」）．
+        # **タイトルが無ければ、タイトルぶんを空けない**（Issue #138）．
+        # 1.7in はタイトルを避けるための値で、タイトルの無いレイアウトでは
+        # 根拠が無い——図だけのスライドがそのぶん小さくなる．
+        top = Inches(1.7) if self._layout_has_title(slide) else Inches(0.4)
+        return (Inches(0.6), top, self.SW - Inches(1.2),
+                self.SH - top - Inches(0.6))
 
-    def _note_to_line(self, text: str) -> Line:
-        """Flow の note 文字列を本文プレースホルダ用の Line へ変換する．
+    @staticmethod
+    def _layout_has_title(slide: PptxSlide) -> bool:
+        """このスライドのレイアウトがタイトルの枠を持つか．
 
-        行頭マーカー（→ は no_bullet）の最小限の解釈だけ行う．
+        スライド側ではなく**レイアウト**を見る．`###` の見出しはタイトル枠が
+        無ければ描かれないので、「書いたかどうか」ではなく「置ける場所があるか」で
+        決める．
         """
-        t = (text or "").strip()
-        if t.startswith("→"):
-            return Line(text=t, kind="plain")
-        return Line(text=t, kind="bullet")
+        try:
+            for lph in slide.slide_layout.placeholders:  # type: ignore[misc]
+                if lph.placeholder_format.idx == 0:
+                    return True
+        except Exception:
+            return True          # 分からなければ従来どおり空ける（安全側）
+        return False
+
+    def _note_to_line(self, text: str) -> Line | None:
+        """図（Flow / Seq）の note 文字列を本文プレースホルダ用の Line へ変換する．
+
+        note(top) / note(bottom) は図の一部ではなく**地の文**なので、解釈は
+        本文行と同じでなければならない（Issue #129）．行頭マーカーだけを
+        自前で見ていた頃は ``[語]{red}`` が生の文字で出ていた——行内装飾は
+        本文行が通る ``parse_content_line`` の中で解決される．
+
+        **段落にならない行では None を返す**（``1.`` のように行頭マーカーだけの
+        note）．本文では行を作らない書き方なので、ここで空段落を作ると地の文が
+        1 行ぶん増え、帯が詰まって図と結論文が近づく．
+        """
+        return parse_content_line((text or "").strip())
 
     def _obj_weight(self, obj: ObjectBlock) -> int:
-        """オブジェクト（Table / Flow / Image）の縦方向の重み（高さ配分用）．"""
+        """オブジェクト（Table / Flow / Seq / Image）の縦方向の重み（高さ配分用）．"""
         if isinstance(obj, Flow):
             return max(4, len(obj.nodes) + 2)
+        if isinstance(obj, Seq):
+            # ラダー図は**やりとりの本数**で背が決まる（横幅は人数で決まる）．
+            return max(4, len(obj.messages) + 2)
+        if isinstance(obj, Arrow):
+            # 矢印は「流れの向き」を示すだけなので、帯は狭くてよい．
+            return 3
         if isinstance(obj, Image):
             # 画像は帯を広めに確保（キャプションぶんを少し足す）．細かな大きさは
             # width/height でセグメント内に調整する．
             return 8 + (1 if obj.caption else 0)
         return max(2, len(obj.rows) + (1 if obj.header else 0))
 
+    # ``` ```arrow ``` の向き → OOXML の図形．型注釈（ir.ArrowDirection）と
+    # 別に並べているので、**向きを増やしたらここも足す**（テストが先に落ちる）．
+    # 矢じりと軸の比率（OOXML の ``a:avLst``）．**書かないと PowerPoint の既定に
+    # 落ち、両端に矢じりのある形（updown / leftright）は箱いっぱいの菱形になる**．
+    # 値は元の講義スライドと同じ——軸 50%、矢じりは片側 25%・両側なら 20%．
+    _ARROW_ADJ = {"adj1": 50000, "adj2": 25000}
+    _ARROW_ADJ_BOTH = {"adj1": 50000, "adj2": 20000}
+
+    _ARROW_SHAPES = {
+        "down": MSO_SHAPE.DOWN_ARROW,
+        "up": MSO_SHAPE.UP_ARROW,
+        "right": MSO_SHAPE.RIGHT_ARROW,
+        "left": MSO_SHAPE.LEFT_ARROW,
+        "updown": MSO_SHAPE.UP_DOWN_ARROW,
+        "leftright": MSO_SHAPE.LEFT_RIGHT_ARROW,
+    }
+
+    def render_arrow(self, slide: PptxSlide, arrow: Arrow,
+                     left: int, top: int, width: int, height: int) -> Shape:
+        """大きな下向き矢印を、与えられた帯の中央に描く（Issue #134）．
+
+        大きさは**上限を持たせる**．帯の高さに素直に比例させると、地の文が
+        少ないスライドで矢印がページの主役になってしまう．
+
+        横向きは長手が横になるので、**長さの基準も帯の幅**に取る．高さから
+        測ると、帯が薄いスライドで横向き矢印だけが縮む．
+        """
+        shape = self._ARROW_SHAPES[arrow.direction]
+        horizontal = arrow.direction in ("right", "left", "leftright")
+        along = width if horizontal else height     # 矢印が伸びる向きの余地
+        across = height if horizontal else width    # それと直交する向きの余地
+        # 長手は自分の帯の 8 割．**ここを削ると矢印が向きを失う**——2 つ置いて
+        # 帯を分け合うと 1 つあたり 1.8cm ほどしか無く、半分では菱形に見える
+        # （Issue #141）．上限は元の講義スライドの大きさに合わせた．
+        long_ = min(Inches(1.0), max(Inches(0.3), int(along * 0.8)))
+        # 短手には下限（0.35in）を置くが、**長手の 0.8 倍を超えさせない**——
+        # 帯が薄いと下限のほうが勝って正方形に近づき、向きが読めなくなる
+        # （Issue #141 と同じ症状が、下限の側から出る）．
+        floor = min(max(Inches(0.35), int(long_ * 0.75)), int(long_ * 0.8))
+        short = min(int(across * 0.9), floor)
+        w, h = (long_, short) if horizontal else (short, long_)
+        # 明示した大きさは**上限を超えてよい**——書いた人がそう決めたということ
+        # （層をまたぐ 1.5×7.6cm の矢印は自動では書けない．Issue #143）．
+        ew = self._resolve_len(arrow.width, width)
+        eh = self._resolve_len(arrow.height, height)
+        if ew is not None:
+            w = int(ew)
+        if eh is not None:
+            h = int(eh)
+        # 水平寄せは ```image と同じ語彙（既定は中央）．2 カラムの片側に置いた
+        # ときに、左寄せの項目に対して矢印だけ中央で右へずれて見えるのを直す．
+        # ``left`` を書いてあればそれが優先する——元スライドの矢印は左端でも
+        # 中央でも右端でもない位置にあることが多い（Issue #180）．
+        el = self._resolve_len(arrow.left, width)
+        if el is not None:
+            x = left + int(el)
+        elif arrow.align == "left":
+            x = left
+        elif arrow.align == "right":
+            x = left + (width - w)
+        else:
+            x = left + (width - w) // 2
+        y = top + (height - h) // 2
+        if h > height or w > width:
+            # 帯に収まらない大きさを書かれたとき．**上端（左端）に寄せる**——
+            # 中央のままだと上へも食い込み、導入文に重なる．はみ出す向きを
+            # 下（結論文・罫線側）だけにするのは @overflow と同じ規約
+            # （Issue #146）．黙って重ねずに知らせる．
+            if h > height:
+                y = top
+            if w > width:
+                x = left
+            sys.stderr.write(
+                "md2pptx: warning: the arrow is larger than the band it sits "
+                "in and will overlap the text below (shorten the prose or "
+                "reduce width/height)\n")
+        elif el is not None and not (left <= x and x + w <= left + width):
+            # ``left`` で帯の外を指されたとき．大きさの警告と同じで、
+            # **黙って外へ描かない**（Issue #180）．位置は書いたとおりにする
+            # ——実測して置いている以上、勝手に寄せると意図が消える．
+            sys.stderr.write(
+                "md2pptx: warning: 'left' puts the arrow outside its band; "
+                "it will be drawn there anyway (band is "
+                f"{Emu(width).inches:.2f}in wide)\n")
+        shp = slide.shapes.add_shape(
+            shape, Emu(x), Emu(y), Emu(w), Emu(h))
+        both = arrow.direction in ("updown", "leftright")
+        self._set_shape_adj(shp, self._ARROW_ADJ_BOTH if both
+                            else self._ARROW_ADJ)
+        shp.fill.solid()
+        if arrow.color:
+            kind, value = parse_color(arrow.color)
+            if kind == "theme":
+                shp.fill.fore_color.theme_color = self._theme_map[value]
+            else:
+                shp.fill.fore_color.rgb = RGBColor.from_string(value)
+        else:
+            shp.fill.fore_color.theme_color = self.GOLD
+        shp.line.fill.background()
+        shp.shadow.inherit = False
+        shp.text_frame.word_wrap = False
+        return shp
+
+    @staticmethod
+    def _set_shape_adj(shp: Shape, adj: dict[str, int]) -> None:
+        """図形の調整値（``a:avLst/a:gd``）を書き込む．
+
+        python-pptx は ``add_shape`` で空の ``avLst`` しか作らず、PowerPoint は
+        そこを既定値で埋める．両端に矢じりのある形はその既定だと**箱いっぱいの
+        菱形**になり、矢印に見えない（Issue #143）．
+        """
+        geom = shp._element.spPr.find(qn("a:prstGeom"))
+        av = geom.find(qn("a:avLst")) if geom is not None else None
+        if av is None:
+            return          # プリセット図形でなければ調整値そのものが無い
+        # **既にある調整値は捨ててから書く**．2 回呼んでも同じ結果になるように
+        # ——同名の ``a:gd`` が並ぶと、どちらが効くかは実装依存になる．
+        for old in list(av.findall(qn("a:gd"))):
+            av.remove(old)
+        for name, val in adj.items():
+            gd = av.makeelement(qn("a:gd"), {"name": name,
+                                             "fmla": f"val {val}"})
+            av.append(gd)
+
+    def draw_column_arrow(self, slide: PptxSlide, ncols: int) -> Shape | None:
+        """カラムとカラムのすき間に、右向きの大きな矢印を描く（``@col: arrow``）．
+
+        置き場は**左カラムの右端の内側**．テーマのカラム間のすき間は 0.5cm ほどしか
+        無く、そこへ収めると矢印が糸のように細くなる（元の講義スライドも、すき間では
+        なく左カラムの右寄りに置いてある）．
+
+        箇条書きが長くて右端まで届くスライドでは**文字に重なる**．元のスライドも
+        同じ作りで、そこは書く側が見て決める（SYNTAX.md に明記）．
+        カラムが 2 つ無ければ何もしない．``@col: arrow`` はカラム区切りそのものなので、
+        パーサを通る限りカラムは必ず 2 つ以上ある——ここは直接呼ばれたときの防御で、
+        起きないことに警告は出さない．
+        """
+        if ncols < 2:
+            return None
+        a = self._find_placeholder(slide, 1)
+        b = self._find_placeholder(slide, 2)
+        if a is None or b is None:
+            return None
+        h = min(Inches(1.1), max(Inches(0.5), int(a.height * 0.18)))
+        w = h
+        inset = Inches(0.1)
+        # 右端の内側．右カラムの本文には決して掛からない．
+        x = min(a.left + a.width - w - inset, b.left - w - inset)
+        # 縦は**上寄り**．矢印は「左の並びから右の並びへ」を指すもので、
+        # 指す先は列の先頭にある．中央に置くと、項目数が少ないスライドで
+        # 矢印だけが下に取り残される（元の講義スライドも上寄り）．
+        y = a.top + int(a.height * 0.12)
+        shp = slide.shapes.add_shape(
+            MSO_SHAPE.RIGHT_ARROW, Emu(x), Emu(y), Emu(w), Emu(h))
+        self._set_shape_adj(shp, self._ARROW_ADJ)
+        shp.fill.solid()
+        shp.fill.fore_color.theme_color = self.GOLD
+        shp.line.fill.background()
+        shp.shadow.inherit = False
+        shp.text_frame.word_wrap = False
+        return shp
+
     def _stack_objects(self, slide: PptxSlide, objects: list[ObjectBlock],
                        left: int, top: int, width: int, height: int,
                        col_ratios: list[float] | None,
                        slide_overflow: bool = False,
-                       has_prose_after: bool = False) -> None:
+                       has_prose_after: bool = False,
+                       table_width: str | float | None = None) -> None:
         """Table / Flow / Image を矩形領域内に重みづけで縦に積んで座標配置する．
 
         slide_overflow（@overflow）は表・画像に共通で効く．画像はブロックの
@@ -1543,8 +2716,12 @@ class Renderer:
         y = top
         for obj, w in zip(objects, weights):
             seg_h = int(avail * w / total)
-            if isinstance(obj, Flow):
+            if isinstance(obj, Arrow):
+                self.render_arrow(slide, obj, left, y, width, seg_h)
+            elif isinstance(obj, Flow):
                 self.render_flow(slide, obj, left, y, width, seg_h)
+            elif isinstance(obj, Seq):
+                self.render_seq(slide, obj, left, y, width, seg_h)
             elif isinstance(obj, Image):
                 eff = obj.overflow if obj.overflow is not None else slide_overflow
                 self.render_image(slide, obj, left, y, width, seg_h,
@@ -1552,7 +2729,8 @@ class Renderer:
             else:
                 self.render_table(slide, obj, left, y, width, seg_h, col_ratios,
                                   overflow=slide_overflow,
-                                  has_prose_after=has_prose_after)
+                                  has_prose_after=has_prose_after,
+                                  total_width=table_width)
             y += seg_h + gap
 
     def _render_stacked(self, slide: PptxSlide, blocks: list[Block],
@@ -1560,7 +2738,8 @@ class Renderer:
                         default_autofit: bool,
                         col_ratios: list[float] | None,
                         default_size_delta: int | None = None,
-                        slide_overflow: bool = False) -> None:
+                        slide_overflow: bool = False,
+                        table_width: str | float | None = None) -> None:
         """表／図を含むスライドを描画する．
 
         地の文（Line）は **標準の本文プレースホルダ**へ流し込み，表・図だけを
@@ -1572,7 +2751,8 @@ class Renderer:
         body = self._body_placeholder(slide)
         self._render_stacked_into(slide, blocks, body, left, top, width, height,
                                   default_num_color, scale, default_autofit,
-                                  col_ratios, default_size_delta, slide_overflow)
+                                  col_ratios, default_size_delta, slide_overflow,
+                                  table_width)
 
     def _render_stacked_into(self, slide: PptxSlide, blocks: list[Block],
                              body: SlidePlaceholder | None, left: int, top: int,
@@ -1581,7 +2761,8 @@ class Renderer:
                              scale: float | None, default_autofit: bool,
                              col_ratios: list[float] | None,
                              default_size_delta: int | None = None,
-                             slide_overflow: bool = False) -> None:
+                             slide_overflow: bool = False,
+                             table_width: str | float | None = None) -> None:
         """``blocks`` を矩形 (left, top, width, height) 内へスタック描画する．
 
         地の文（Line）は ``body`` プレースホルダへ流し込み，表・図は矩形内に
@@ -1590,81 +2771,141 @@ class Renderer:
         場合は地の文を捨て，矩形全体にオブジェクトを積む．
         """
         # 地の文（前後）とオブジェクト（表・図）に分ける．
-        # Flow の note(top)/note(bottom) も地の文としてプレースホルダへ回す．
+        # 図（Flow / Seq）の note(top)/note(bottom) も地の文としてプレースホルダ
+        # へ回す．**Seq も同じ扱い**——分岐が Flow 限定だった頃、SYNTAX.md に
+        # 載っている seq の note は丸ごと落ちていた（Issue #129）．
         prose_before: list[Line] = []
         objects: list[ObjectBlock] = []
         prose_after: list[Line] = []
         seen_obj = False
         for b in blocks:
-            if isinstance(b, (Table, Flow, Image)):
-                if isinstance(b, Flow) and b.note_top:
+            if is_object_block(b):
+                if isinstance(b, (Flow, Seq)) and b.note_top:
                     bucket = prose_after if seen_obj else prose_before
-                    bucket.append(self._note_to_line(b.note_top))
+                    ln = self._note_to_line(b.note_top)
+                    if ln is not None:
+                        bucket.append(ln)
                 objects.append(b)
                 seen_obj = True
-                if isinstance(b, Flow) and b.note_bottom:
-                    prose_after.append(self._note_to_line(b.note_bottom))
+                if isinstance(b, (Flow, Seq)) and b.note_bottom:
+                    ln = self._note_to_line(b.note_bottom)
+                    if ln is not None:
+                        prose_after.append(ln)
             elif isinstance(b, Line):
                 (prose_after if seen_obj else prose_before).append(b)
         if not objects:
             return
 
-        # 表・図スライドの地の文に相対サイズが効くと，帯高計算（_body_font_size
-        # 固定）と食い違い，帯が詰まって結論文が重なりうる（既知の制約．TODO(v2)）．
-        # 判定は _append_lines と同じ実効デルタ（行トークン優先，無ければスライド既定
-        # @body-size）で行う．行 size_delta=None でも @body-size 由来で拡縮する場合を
-        # 取りこぼさないため．0／None（変化なし）は対象外．
-        def _eff_delta(ln: Line) -> int | None:
-            return ln.size_delta if ln.size_delta is not None else default_size_delta
-        # 0／None は「サイズ変化なし」＝帯高（本文標準サイズ前提）と食い違わないので
-        # 対象外．{0} はテーマ既定＝標準サイズそのものなので警告不要．
-        if any(_eff_delta(ln) not in (None, 0) for ln in prose_before + prose_after):
-            sys.stderr.write(
-                "md2pptx: warning: relative font size on body text of a "
-                "table/figure slide may cause layout crowding "
-                "(band height is estimated at the standard body size)\n"
-            )
+        # 相対サイズ（{+1} / @body-size）の警告はここにあったが、**要らなくなった**．
+        # 帯の高さを本文標準サイズ固定で見積もっていたから食い違っていたのであって、
+        # いまは para_h が行ごとの実サイズ（デルタ込み）で数える（Issue #145）．
 
         # 地の文が無ければプレースホルダは使わず，領域全体にオブジェクトを置く．
         if not prose_before and not prose_after:
             if body is not None:
                 body._element.getparent().remove(body._element)
             self._stack_objects(slide, objects, left, top, width, height, col_ratios,
-                                slide_overflow, has_prose_after=False)
+                                slide_overflow, has_prose_after=False,
+                                table_width=table_width)
             return
 
         # 地の文あり：プレースホルダに導入文＋空行＋結論文を流して中央帯を確保．
         # 帯と空行数はプレースホルダ矩形から逆算し，地の文＋空行＋結論文が
         # プレースホルダ高を超えないようにする（結論文がスライド外へ出ない）．
-        # TODO(v2): prose の size_delta を行高に反映する（現在は本文標準サイズ固定）．
-        # 導入文を {+2} 等で大きく拡大すると帯が詰まり結論文と重なりうる（既知の制約）．
         bsz = self._body_font_size()
-        line_h = int(Pt(bsz) * 1.32)        # 行間込みの保守的な行高
-        nb, na = len(prose_before), len(prose_after)
+        # 段落の高さは**その段落のレベルのサイズ＋そのレベルの段落前アキ**で数える
+        # （Issue #145）．どの行も lvl1 で数え、``spcBef`` を落としていた頃は
+        # 帯が上へずれ、図が地の文に食い込んでいた．
+        levels = (self._frame_font_levels(body.text_frame) if body is not None
+                  else self._body_font_levels())
+
+        # @autofit は**実際に描かれる字を縮める**ので、帯の計算もそれに合わせる．
+        # 見ていなかった頃は、縮めたぶん空いた場所を帯が使えず、図が結論文へ
+        # 食い込んでいた（Issue #145）．
+        shrink = (scale / 100.0) if scale is not None else 1.0
+
+        # 折り返しは**プレースホルダの幅**で数える（Issue #158）．1 行ずつと
+        # 決めつけていた頃は、導入文が折り返すとそのぶん帯が上へずれ、
+        # 結論文が下の罫線を越えていた（cn2026-02 p.34）．
+        if body is not None:
+            tf = body.text_frame
+            tf_w = body.width - tf.margin_left - tf.margin_right
+        else:
+            # 枠が無ければ地の文も描かれない（``_warn_no_body``）ので、ここは
+            # 帯の見積もりが 0 除算しないための置きにすぎない．
+            tf_w = width
+
+        def para_h(ln: Line) -> int:
+            d = ln.size_delta if ln.size_delta is not None else default_size_delta
+            base = levels[min(ln.level, len(levels) - 1)] if levels else bsz
+            sz = self._size_from_delta(base, d) * shrink
+            avail_pt = max(1.0, (tf_w - self._indent_for(ln.level)) / 12700.0)
+            text = (ln.text or "").replace("\v", " ")
+            return self._para_height(ln.level, sz,
+                                     self._wrapped_lines(text, sz, avail_pt))
+
+        before_h = sum(para_h(ln) for ln in prose_before)
+        after_h = sum(para_h(ln) for ln in prose_after)
+        # 帯を埋める空段落は lvl1 の書式（アキ込み）．
+        blank_h = max(1, self._para_height(0, bsz * shrink))
         inset = Pt(4)
-        band_h = height - (nb + na) * line_h - 2 * inset
+        band_h = height - before_h - after_h - 2 * inset
         if band_h < Inches(0.8):
             band_h = Inches(0.8)
-        band_top = top + nb * line_h + inset
-        blanks = max(1, int(band_h / line_h))   # 帯を埋める空行数（超過しない）
+        band_top = top + before_h + inset
+        blanks = max(1, int(band_h / blank_h))   # 帯を埋める空行数（超過しない）
 
         if body is None:
             self._warn_no_body(prose_before + prose_after)
         else:
             tf = body.text_frame
+            # 採番の状態は 2 回の追記で共有する——同じ枠なので，結論文で
+            # 数え直すと番号が 1 に戻る（Issue #107）．
+            counters: dict[tuple[int, str], int] = {}
             first = self._append_lines(tf, prose_before, True, default_num_color,
-                                       default_size_delta)
+                                       default_size_delta, counters)
             for _ in range(blanks):
                 p = tf.paragraphs[0] if first else tf.add_paragraph()
                 first = False
             self._append_lines(tf, prose_after, first, default_num_color,
-                               default_size_delta)
+                               default_size_delta, counters)
+            # 帯を持つスライドでは**自分で率を出さない**——空段落が枠を埋めて
+            # いるので「収まっていない」ようには見えず、縮める必要が無い．
+            # 明示の ``@autofit`` はそのまま効き、枠にも同じ率を渡す．
             self._apply_autofit(tf, scale, default_autofit)
+            # 枠は導入文と結論文の両方に付けられる．結論文は空段落のぶんだけ
+            # 下から始まるので、その数をそのまま渡す（Issue #133）．
+            self.draw_line_boxes(slide, body, prose_before, default_size_delta,
+                                 shrink=scale)
+            self.draw_line_boxes(slide, body, prose_after, default_size_delta,
+                                 preceding=prose_before, blank_paras=blanks,
+                                 shrink=scale)
 
-        # 結論文との重なりを避けるため帯を少しだけ詰めてオブジェクトを置く．
-        obj_h = max(Inches(0.8), band_h - Pt(8))
+        # 帯の高さは **band_h ではなく空行数から** 求める（Issue #131）．
+        # 結論文が描き始められる位置を決めるのは流し込んだ空行の数であって、
+        # band_h ではない——blanks は int() で切り捨てるので、band_h をそのまま
+        # 使うと最大 1 行ぶん帯のほうが下まで伸び、表が結論文に重なる。
+        # しかも黙って重なる（表は帯高で描かれるので警告の条件に掛からない）。
+        #   結論文の上端 = top + (nb + blanks) * line_h
+        #   帯の上端     = band_top = top + nb * line_h + inset
+        # なので帯に使えるのは blanks * line_h - inset まで．そこから
+        # 従来どおり Pt(8) を余白として引く．
+        _MIN_BAND = Inches(0.8)
+        fits = blanks * blank_h - inset - Pt(8)
+        obj_h = max(_MIN_BAND, fits)
+        # 警告するのは**結論文があるときだけ**——下端に何も無ければ、帯が
+        # 最小高まで広がっても重なる相手がいない．
+        if prose_after and fits < _MIN_BAND:
+            # 最小高（0.8in）に張り付くのは、地の文が枠をほぼ埋めて空行が
+            # 1 行しか取れないとき．図を読める大きさに保つため下限は残すが、
+            # その結果として結論文へ食い込む——**黙って重ねない**（Issue #131）．
+            sys.stderr.write(
+                "md2pptx: warning: too much body text for a table/figure "
+                "slide; the band hit its minimum height and may overlap the "
+                "concluding text (shorten the prose or split the slide)\n")
         self._stack_objects(slide, objects, left, band_top, width, obj_h, col_ratios,
-                            slide_overflow, has_prose_after=bool(prose_after))
+                            slide_overflow, has_prose_after=bool(prose_after),
+                            table_width=table_width)
 
     # ------------------------------------------------------------- deck
     def render(self, deck: Deck) -> PptxPresentation:
@@ -1674,6 +2915,11 @@ class Renderer:
         # ここで bool にする（if での評価と同じ結果になる）．
         slide_number = bool(meta.get("slide_number", True))
         default_autofit = bool(meta.get("default_autofit", True))
+        # 等幅フォントだけはテーマに委ねきれない（§5.12）．テーマの本文フォントは
+        # プロポーショナルで，桁が揃わないとコードとして読めない——見た目の好みでは
+        # なく機能なので，既定を持ち，変えたい人は front matter で変える．
+        mono = meta.get("mono_font")
+        self._mono_font = str(mono) if mono else DEFAULT_MONO_FONT
 
         if deck.title_slide is not None:
             self.render_title_slide(deck.title_slide)

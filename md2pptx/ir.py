@@ -13,7 +13,7 @@ DESIGN.md §4 に対応．外部依存を持たない（python-pptx 等は impor
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, TypeGuard, get_args
 
 # 水平寄せ．表の列・画像の配置で共通に使う．
 Align = Literal["left", "center", "right"]
@@ -25,6 +25,35 @@ Align = Literal["left", "center", "right"]
 TITLE_LAYOUT = 0
 CONTENT_LAYOUT = 1
 SECTION_LAYOUT = 2
+
+
+@dataclass
+class Span:
+    """段落の中の 1 続きの文字（run に 1 対 1 で対応する．DESIGN.md §5.13）．
+
+    行内の装飾（``**強調**`` / ``[色]{red}`` / `` `等幅` `` / ``2^32^`` /
+    ``[表示](url)``）を解釈した結果．装飾の無い行では ``Line.spans`` は空で，
+    render は ``Line.text`` を 1 つの run として書く（従来どおり）．
+
+    Attributes:
+        text: この run の文字（装飾の記号は除去済み）．
+        segment: この run が属する ``\\v`` 区切りセグメントの添字．
+            **1 セグメントが複数 run に割れる**ので，相対サイズ（``Line.seg_deltas``）を
+            付ける相手を位置ではなくこの値で決める．
+        bold: 太字（``**…**``）．
+        mono: 等幅（`` `…` ``）．フォント名は render が持つ（``mono_font``）．
+        color: 文字色．テーマ色名／CSS の色名／16進のいずれか（``colors.parse_color``）．
+        link: ハイパーリンクの URL（``[表示](url)`` 由来）．
+        script: 上付き ``"sup"`` / 下付き ``"sub"``（``2^32^`` / ``H~2~O``）．
+    """
+
+    text: str
+    segment: int = 0
+    bold: bool = False
+    mono: bool = False
+    color: str | None = None
+    link: str | None = None
+    script: Literal["sup", "sub"] | None = None
 
 
 @dataclass
@@ -40,6 +69,9 @@ class Line:
             - "bullet"  : テーマ既定の箇条書き記号（記号は指定せず任せる）．
             - "autonum" : 自動採番（set_autonum 相当）．num_style で形式を指定．
             - "plain"   : 行頭記号なし（no_bullet 相当．結論・補足行など）．
+            - "code"    : コードブロックの 1 行（フェンス由来．DESIGN.md §5.12）．
+                行頭記号を消し等幅フォントで描く．text は原稿のまま
+                （行頭マーカーもサイズトークンも <br> も解釈しない）．
             取りうる値は注釈（Literal）が正．
         num_style: kind=="autonum" のときの採番形式．python-pptx の
             buAutoNum type 値をそのまま使う．
@@ -47,11 +79,25 @@ class Line:
             "arabicParenBoth"（丸括弧 (1) (2)）など．kind!="autonum" のときは None．
         num_color: 採番記号の色をテーマ色名で指定（例 "tx1"）．
             None ならテーマ任せ．kind=="autonum" のときのみ意味を持つ．
+        num_start: 原稿に書かれていた番号（"8." なら 8，"⑤" なら 5）．
+            **効くのはリストの先頭の行だけ**で，以降の行の値は使わない
+            （CommonMark と同じ規則．"1. 1. 1." と書けば 1・2・3 になる）．
+            番号を数えるのは render で，**全ての採番段落に buAutoNum の startAt を
+            明示的に書く**——PowerPoint は startAt の付いた段落の次から数え直すため，
+            先頭にだけ書くと "8. 1. 2. 3. …" になる（DESIGN.md §5.3）．
+            kind!="autonum" では None．
         size_delta: 相対フォントサイズの段数（行頭 "{+1}"/"{-2}" 由来）．
             その行が level から得るテーマ既定サイズを基点に，1 段ごとに
             ×1.125（拡大）/ ÷1.125（縮小）する（render が実サイズへ換算）．
             None ならスライド既定（@body-size）に従う＝未指定．0 で「テーマ既定
             に固定（スライド既定を無効化）」を表す．絶対 pt は持たない（テーマ委譲）．
+        boxed: その段落を枠で囲む（行頭の ``{box}`` 由来．DESIGN.md §5.15）．
+            囲むのは **run ではなく段落**で，折り返しても枠は 1 つ．
+        box_color: 枠線の色（``{box:blue}`` 由来）．None ならテーマのアクセント色．
+            色名の語彙は行内装飾と同じ（テーマ色名／CSS の色名／16進）．
+        spans: 行内装飾を解釈した run の列（DESIGN.md §5.13）．**空なら装飾なし**で，
+            render は text を 1 つの run として書く（従来の経路）．非空なら
+            連結した文字列が text と一致する（text は装飾記号を除いた素のテキスト）．
         seg_deltas: text を "\\v"（行内改行）で割った各セグメントの相対段数
             （2 番目以降のセグメント先頭 "{+1}"/"{-2}" 由来）．セグメントと同じ長さで，
             要素は int｜None（None＝未指定）．**[0] は常に None**——先頭セグメントの
@@ -63,11 +109,15 @@ class Line:
 
     text: str
     level: int = 0
-    kind: Literal["bullet", "autonum", "plain"] = "bullet"
+    kind: Literal["bullet", "autonum", "plain", "code"] = "bullet"
     num_style: str | None = None
     num_color: str | None = None
+    num_start: int | None = None
     size_delta: int | None = None
     seg_deltas: list[int | None] = field(default_factory=list)
+    spans: list[Span] = field(default_factory=list)
+    boxed: bool = False
+    box_color: str | None = None
 
     def __post_init__(self) -> None:
         # 不変条件：seg_deltas は text のセグメント数と同じ長さで，[0] は None．
@@ -97,11 +147,17 @@ class Table:
         aligns: 各列の水平寄せ（区切り行のコロン由来）．空リストは
             「指定なし＝すべて左」を意味する既定．列数に満たない場合，
             未指定の列は左寄せとして扱う（render 側で添字が範囲外なら "left"）．
+        fills: 本体行のセル背景色（``rows`` と同じ形．要素は色名か None）．
+            **空なら色指定なし**で，従来どおりテーマ任せに描く（DESIGN.md §5.4）．
+        header_fills: ヘッダ行のセル背景色（``header`` と同じ長さ）．
+            既定のアクセント色を上書きする．空なら従来どおり．
     """
 
     header: list[str] = field(default_factory=list)
     rows: list[list[str]] = field(default_factory=list)
     aligns: list[Align] = field(default_factory=list)
+    fills: list[list[str | None]] = field(default_factory=list)
+    header_fills: list[str | None] = field(default_factory=list)
 
 
 @dataclass
@@ -114,12 +170,16 @@ class FlowNode:
         kind: "box"（角丸四角）または "ellipsis"（"…" 単独の省略記号．
             入力記法 `[…]` に対応する活字の省略記号のこと）．
         color: テーマ色名の個別指定（例 "accent6"）．None なら自動割当．
+        node_id: エッジから指すための名前（``[#pc PC]`` 由来）．無ければ None．
+            **``#`` で書くのはラベル中のコロンと区別するため**——``[id: ラベル]``
+            だと ``[HTTP: ハイパーテキスト転送プロトコル]`` を名前付きと読んでしまう．
     """
 
     label: str = ""
     sublabel: str | None = None
     kind: Literal["box", "ellipsis"] = "box"
     color: str | None = None
+    node_id: str | None = None
 
 
 @dataclass
@@ -150,14 +210,134 @@ class Flow:
         caption: 図下キャプション．無ければ None．
         note_top: 図の上に置く注記．無ければ None．
         note_bottom: 図の下に置く注記．無ければ None．
+        steps: 図の中の ``@step`` で切った時点の**ノード数**（DESIGN.md §5.14）．
+            空なら図の中に段階は無い．parser がスライドの段へ展開するときに使う．
+        rows: 段ごとのノード index（``--`` 区切り由来．DESIGN.md §5.5）．
+            **空なら段の指定なし＝一列**で，従来の原稿はこちらを通る．
+            非空なら ``rows[i]`` が i 段目に並ぶノードの index 列．
     """
 
     direction: Literal["lr", "tb"] = "lr"
     nodes: list[FlowNode] = field(default_factory=list)
     edges: list[FlowEdge] = field(default_factory=list)
+    rows: list[list[int]] = field(default_factory=list)
     caption: str | None = None
     note_top: str | None = None
     note_bottom: str | None = None
+    steps: list[int] = field(default_factory=list)
+
+    def upto(self, n: int) -> "Flow":
+        """先頭 n 個のノードまでの姿を返す（Issue #125）．
+
+        **矢印は、その先のノードが出た段で一緒に出す**——片端しか無い線を
+        描くと「どこへ向かうのか」が読めず、図が壊れて見える．
+        """
+        keep = set(range(n))
+        return Flow(
+            direction=self.direction,
+            nodes=self.nodes[:n],
+            edges=[e for e in self.edges if e.src in keep and e.dst in keep],
+            rows=[r for r in ([i for i in row if i < n] for row in self.rows)
+                  if r],
+            caption=self.caption,
+            note_top=self.note_top,
+            note_bottom=self.note_bottom,
+        )
+
+
+@dataclass
+class SeqMessage:
+    """シーケンス図の1本の矢印（``A -> B: ラベル`` 由来．DESIGN.md §5.5.1）．
+
+    Attributes:
+        src: 始点ライフラインの index（``Seq.lifelines`` 内）．
+        dst: 終点ライフラインの index．
+        label: 矢印に添える文字．無ければ None．
+    """
+
+    src: int = 0
+    dst: int = 0
+    label: str | None = None
+
+
+@dataclass
+class SeqNote:
+    """シーケンス図の中の注記（``note: …`` 由来）．
+
+    Attributes:
+        text: 注記の文字．
+        after: **何本目の矢印の後ろか**（0 なら最初の矢印より前）．
+            時間軸上の位置を「本数」で持つ——座標は plan_seq が決めるので、
+            IR が高さを知る必要はない．
+        since: **何本目の矢印が出た段から見せるか**（Issue #125）．
+            既定では ``after`` と同じだが、``@step`` の**後ろ**に書いた注記は
+            次の矢印の本数になる——その注記は次に起きることの説明なので、
+            先に出ると答えが見えてしまう．``after`` と分けてあるのは、
+            **置く高さ**と**出す段**が別の話だから．
+    """
+
+    text: str = ""
+    after: int = 0
+    since: int = 0
+
+
+@dataclass
+class Seq:
+    """シーケンス図ブロック（```seq フェンス由来．DESIGN.md §5.5.1）．
+
+    時間軸を持つので flow の格子（Issue #109）では表現できない．
+    プロトコルの往復（TCP handshake・HTTP・SMTP など）がこれに当たる．
+
+    Attributes:
+        lifelines: 登場人物の名前（左から右の並び順）．
+        messages: やりとり（書いた順＝上から下の時間順）．
+        notes: 図の中の注記．
+        caption: 図下キャプション．無ければ None．
+        note_top: 図の上に置く注記（地の文）．無ければ None．
+        note_bottom: 図の下に置く注記（地の文）．無ければ None．
+        steps: 図の中の ``@step`` で切った時点の**メッセージ数**（DESIGN.md §5.14）．
+            空なら図の中に段階は無い．
+    """
+
+    lifelines: list[str] = field(default_factory=list)
+    messages: list[SeqMessage] = field(default_factory=list)
+    notes: list[SeqNote] = field(default_factory=list)
+    caption: str | None = None
+    note_top: str | None = None
+    note_bottom: str | None = None
+    steps: list[int] = field(default_factory=list)
+    # 段階表示のとき、**最終段で何本になるか**．``upto`` が埋める．
+    # ``plan_seq`` は送り幅をこの本数で決めるので、段が進んでも矢印の間隔と
+    # 1 本目の位置が変わらない（Issue #182）．``None`` は段を持たない図．
+    layout_rows: int | None = None
+
+    def upto(self, n: int) -> "Seq":
+        """先頭 n 本のメッセージまでの姿を返す（Issue #125）．
+
+        **登場人物は最初から全員残す**——途中で増えると図が横に動いて、
+        段が変わるたびに目で追い直すことになる．
+
+        **縦も同じ**（Issue #182）．``layout_rows`` に最終段の本数を持たせ、
+        送り幅をそれで決める．持たせないと矢印の少ない段ほど間延びして、
+        段が進むたびに図全体が上下に動いた．
+        """
+        return Seq(
+            lifelines=list(self.lifelines),
+            messages=self.messages[:n],
+            # **既に段を切ってあれば、その値を引き継ぐ**——``upto`` を重ねて
+            # 呼んでも基準は最終段のまま．``or`` にすると 0 が置き換わるので
+            # ``is None`` で見る（Issue #182）．
+            layout_rows=(self.layout_rows if self.layout_rows is not None
+                         else len(self.messages)),
+            # ``after`` は「何本目の矢印の後ろか」．n 本目までを見せる段では
+            # **n 本目の直後までの注記を出す**——その位置の矢印が出たなら、
+            # それを説明する注記も一緒に出るのが自然（起きたことの説明）．
+            # 次の矢印より後ろに書いた注記は、その矢印が出るまで伏せられる．
+            notes=[nt for nt in self.notes if nt.since <= n],
+            caption=self.caption,
+            note_top=self.note_top,
+            note_bottom=self.note_bottom,
+        )
 
 
 @dataclass
@@ -225,14 +405,67 @@ class Image:
     overflow: bool | None = None
 
 
+ArrowDirection = Literal["down", "up", "right", "left", "updown", "leftright"]
+
+# 実行時の検証用（parser がタイポを止めるのに使う）．型注釈と別に並べると必ずずれる．
+ARROW_DIRECTIONS: tuple[str, ...] = get_args(ArrowDirection)
+
+
+@dataclass
+class Arrow:
+    """本文の流れを示す大きな矢印（``` ```arrow ``` フェンス．DESIGN.md §5.16）．
+
+    **オブジェクトブロックにしてある**——地の文として段落位置を見積もるより，
+    帯（``_stack_objects``）に座標を決めさせるほうが確実で，
+    導入文と結論文の間に置くという使い方がそのまま表せる．
+
+    Attributes:
+        direction: 向き．``down`` / ``up`` / ``right`` / ``left`` /
+            ``updown`` / ``leftright``．
+        width / height: 明示した大きさ．``None`` なら帯から自動で決める．
+            ``%`` は帯に対する割合（``Image`` と同じ ``Length``）．
+            **明示した値は自動のときの上限を超えてよい**——書いた人がそう決めた．
+        color: 色（テーマ色名／CSS の色名／16進）．``None`` ならテーマのアクセント色．
+        align: 帯の中での水平寄せ（既定は中央）．``Image`` と同じ語彙で、
+            2 カラムの片側に置いた矢印を項目の行頭に合わせるのに使う
+            （中央のままだと、左寄せの項目に対して矢印だけ右へずれて見える）．
+        left: 帯の左端からの距離．書けば ``align`` より**優先する**．
+            元スライドの矢印は左端でも中央でも右端でもない位置にあることが多く、
+            3 択では再現できない（Issue #180）．大きさを実測して書くのと
+            同じ要領で、位置も実測して書ける．
+    """
+
+    direction: ArrowDirection = "down"
+    width: Length | None = None
+    height: Length | None = None
+    color: str | None = None
+    align: Align = "center"
+    left: Length | None = None
+
+
 # 帯（中央領域）へ座標配置するブロック．地の文（Line）と違い，本文プレースホルダ
-# ではなく矩形に直接置かれる．render の _stack_objects / _obj_weight はこの 3 種
-# だけを扱う（Line を渡すと属性が無く落ちる）．
-ObjectBlock = Table | Flow | Image
+# ではなく矩形に直接置かれる．render の _stack_objects / _obj_weight はこれらを
+# 扱う（Line を渡すと属性が無く落ちる）．
+ObjectBlock = Table | Flow | Image | Seq | Arrow
+
+# 実行時の判定用（``isinstance`` に渡せる形）．**ObjectBlock を増やしたら
+# ここだけ直せばよい**——render は 5 か所でこの判定をするので，型注釈と別に
+# タプルを書き並べると必ずどこかが漏れる（Issue #108）．
+OBJECT_BLOCKS: tuple[type, ...] = get_args(ObjectBlock)
 
 # スライド本文を構成するブロック．parser が出現順に並べ，render が型で分岐する．
 # Union は平坦化されるので Line | Table | Flow | Image と同一．
 Block = Line | ObjectBlock
+
+
+def is_object_block(b: "Block") -> TypeGuard[ObjectBlock]:
+    """帯へ座標配置するブロックか（``Line`` ではないか）を判定する．
+
+    ``isinstance`` を直に書くと ``(Table, Flow, Image)`` が render の 5 か所へ
+    散らばり，``ObjectBlock`` を増やしたときに必ずどこかが漏れる（Issue #108）．
+    ``TypeGuard`` にしてあるので型の絞り込みも効く．
+    """
+    return isinstance(b, OBJECT_BLOCKS)
 
 
 @dataclass

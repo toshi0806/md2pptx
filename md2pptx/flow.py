@@ -24,18 +24,15 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .ir import Flow, FlowNode, FlowEdge
+from .layout import (
+    EMU, PlacedArrow, PlacedLine, PlacedText, Rect, emu as _emu,
+)
 
-
-EMU = 914400  # 1 インチ = 914400 EMU
 
 # 受理する値の集合．型付きなので "not in で弾いた残り" が Literal に絞られる
 # （検証と型の単一の情報源にもなる）．
 _DIRECTIONS: tuple[Literal["lr", "tb"], ...] = ("lr", "tb")
 _NODE_KINDS: tuple[Literal["box", "ellipsis"], ...] = ("box", "ellipsis")
-
-
-def _emu(inch: float) -> int:
-    return int(inch * EMU)
 
 
 # 省略記号として扱うラベル．
@@ -47,6 +44,13 @@ _RE_SETTING = re.compile(r"^(direction|caption|note\(top\)|note\(bottom\))\s*:\s
 _RE_NODE = re.compile(r"\[([^\]]*)\](?:\{([\w-]+)\})?")
 # エッジ "->" / "-PR->"．先頭の '-' から '->' まで．
 _RE_EDGE = re.compile(r"-(?:([^>]+?)-)?>")
+# ノード名 "[#pc PC | …]"．**"#" で書く**——"[id: ラベル]" だと
+# "[HTTP: ハイパーテキスト転送プロトコル]" を名前付きと読んでしまう（Issue #109）．
+_RE_NODE_ID = re.compile(r"^#([A-Za-z_][\w-]*)\s+(.*)$", re.S)
+# エッジ行でノードを指す名前（トークン列では _RefTok）．
+_RE_REF = re.compile(r"[A-Za-z_][\w-]*")
+# 段区切り．この行だけで次の段へ移る．
+_RE_ROW_BREAK = re.compile(r"^-{2,}$")
 
 
 # ---------------------------------------------------------------- トークン
@@ -71,8 +75,18 @@ class _EdgeTok:
     label: str | None = None
 
 
+@dataclass(frozen=True)
+class _RefTok:
+    """既に置いたノードを名前で指す（``pc -> srv`` の ``pc``）．
+
+    ``_NodeTok`` と別にしてあるのは**置くのか指すのかが違う**から．同じ型に
+    詰めると ``_build`` が「今つくるのか探すのか」を憶えていないと間違える．
+    """
+    name: str
+
+
 # requires-python が 3.11 なので実行時に評価される ``|`` を使える．
-_Token = _NodeTok | _EdgeTok
+_Token = _NodeTok | _EdgeTok | _RefTok
 
 
 # ---------------------------------------------------------------- パース
@@ -104,8 +118,26 @@ def parse_flow(text: str) -> Flow:
             continue
         body_parts.append(line)
 
-    tokens = _tokenize(" ".join(body_parts))
-    _build(flow, tokens)
+    # **段ごとにトークン化する**（従来は全行を空白で連結していた）．
+    # 段区切りは行の構造そのものなので、連結してしまうと復元できない．
+    rows_of_tokens: list[list[_Token]] = [[]]
+    # 図の中の段階（Issue #125）．``@step`` までに置いたノードの**数**を覚える．
+    # 行の位置ではなく数で持つのは、parser が Flow.upto(n) で切るため．
+    step_at: list[int] = []
+    seen_nodes = 0
+    for line in body_parts:
+        if line == "@step":
+            step_at.append(seen_nodes)
+            continue
+        if _RE_ROW_BREAK.match(line):
+            rows_of_tokens.append([])
+            continue
+        toks = _tokenize(line)
+        seen_nodes += sum(1 for t in toks if isinstance(t, _NodeTok))
+        rows_of_tokens[-1].extend(toks)
+    has_break = len(rows_of_tokens) > 1
+    _build(flow, rows_of_tokens, has_break)
+    flow.steps = step_at
     return flow
 
 
@@ -146,38 +178,77 @@ def _tokenize(s: str) -> list[_Token]:
                 tokens.append(_EdgeTok((m.group(1) or "").strip() or None))
                 i = m.end()
                 continue
+        mr = _RE_REF.match(s, i)
+        if mr:
+            tokens.append(_RefTok(mr.group(0)))
+            i = mr.end()
+            continue
         raise ValueError(
             f"invalid flow syntax near {s[i:i + 30]!r} "
             "(expected '[label | sublabel]' or '->' / '-label->')")
     return tokens
 
 
-def _build(flow: Flow, tokens: list[_Token]) -> None:
-    """トークン列（node / edge の交互）から nodes / edges を構築する．
+def _build(flow: Flow, rows: list[list[_Token]], has_break: bool) -> None:
+    """段ごとのトークン列から nodes / edges / rows を構築する．
 
     エッジは 2 つのノードに挟まれて初めて線になるので，``->`` を読んだ時点では
-    まだ引けない——次のノードが来るまで「保留中の矢印」として持ち越す．
+    まだ引けない——次のノード（か名前）が来るまで「保留中の矢印」として持ち越す．
     相手が現れないまま終われば（``-> [A]`` の先頭や ``[A] ->`` の末尾），
     その矢印は捨てる．
-    """
-    pending: _EdgeTok | None = None
-    prev_idx: int | None = None
 
-    for tok in tokens:
-        if isinstance(tok, _NodeTok):
-            flow.nodes.append(_make_node(tok.label, tok.color))
-            idx = len(flow.nodes) - 1
+    **保留は段をまたがない．** 段の終わりで持ち越すと、書いていない縦の線が
+    生えることになる（段をまたぐ線は名前で明示的に書く）．
+
+    ``has_break`` は原稿に ``--`` があったか．無ければ ``flow.rows`` は空のまま
+    にする——「段の指定なし＝一列」を保ち、従来の原稿の配置を変えないため．
+    """
+    names: dict[str, int] = {}
+
+    def resolve(tok: _NodeTok | _RefTok) -> int:
+        """トークンをノード index にする（``_NodeTok`` は置き、``_RefTok`` は探す）．"""
+        if isinstance(tok, _RefTok):
+            if tok.name not in names:
+                known = ", ".join(sorted(names)) or "(none)"
+                raise ValueError(
+                    f"unknown flow node name: {tok.name!r} (known: {known})")
+            return names[tok.name]
+        node = _make_node(tok.label, tok.color)
+        if node.node_id is not None:
+            if node.node_id in names:
+                raise ValueError(
+                    f"duplicate flow node name: {node.node_id!r}")
+            names[node.node_id] = len(flow.nodes)
+        flow.nodes.append(node)
+        return len(flow.nodes) - 1
+
+    for row in rows:
+        placed: list[int] = []          # この段に**新しく置いた**ノード
+        pending: _EdgeTok | None = None
+        prev_idx: int | None = None
+        for tok in row:
+            if isinstance(tok, _EdgeTok):
+                # ``->`` が続いた場合は上書き（覚えておけるのは直前の 1 本だけ）．
+                pending = tok
+                continue
+            new_node = isinstance(tok, _NodeTok)
+            idx = resolve(tok)
+            if new_node:
+                placed.append(idx)
             if pending is not None and prev_idx is not None:
                 flow.edges.append(
                     FlowEdge(src=prev_idx, dst=idx, label=pending.label))
             prev_idx = idx
             pending = None
-        else:
-            # ``->`` が続いた場合は上書き（覚えておけるのは直前の 1 本だけ）．
-            pending = tok
+        if has_break and placed:
+            flow.rows.append(placed)
 
 
 def _make_node(inner: str, color: str | None) -> FlowNode:
+    node_id: str | None = None
+    mid = _RE_NODE_ID.match(inner.strip())
+    if mid:
+        node_id, inner = mid.group(1), mid.group(2)
     parts = inner.split("|", 1)
     label = parts[0].strip()
     sublabel = parts[1].strip() if len(parts) > 1 else None
@@ -185,7 +256,8 @@ def _make_node(inner: str, color: str | None) -> FlowNode:
         sublabel = None
     kind: Literal["box", "ellipsis"] = (
         "ellipsis" if label in _ELLIPSIS else "box")
-    return FlowNode(label=label, sublabel=sublabel, kind=kind, color=color)
+    return FlowNode(label=label, sublabel=sublabel, kind=kind, color=color,
+                    node_id=node_id)
 
 
 # ---------------------------------------------------------------- 配置プラン
@@ -193,56 +265,15 @@ def _make_node(inner: str, color: str | None) -> FlowNode:
 # 描画指示（座標はすべて EMU 整数）．render はこれを読んで図形を置くだけで，
 # 位置の計算はここで終わっている．
 #
-# 名前で持つのは，位置で持つと**取り違えても誰も気づかない**から．幅と高さを
-# 入れ替えても，右端と下端を取り違えても，型としては同じ整数で通ってしまい，
-# 図が歪んで出てくるまで分からない（Issue #71）．
-
-@dataclass(frozen=True)
-class Rect:
-    """矩形．端や中心は毎回足し算で出さず，ここから読む．"""
-    left: int
-    top: int
-    width: int
-    height: int
-
-    @property
-    def right(self) -> int:
-        return self.left + self.width
-
-    @property
-    def bottom(self) -> int:
-        return self.top + self.height
-
-    @property
-    def center_x(self) -> int:
-        return self.left + self.width // 2
-
-    @property
-    def center_y(self) -> int:
-        return self.top + self.height // 2
-
-
 @dataclass(frozen=True)
 class PlacedNode:
-    """角丸四角ノード．色・サブラベルを持つので ``node`` ごと渡す．"""
+    """角丸四角ノード．色・サブラベルを持つので ``node`` ごと渡す．
+
+    **``layout.py`` ではなくここに置く**——``FlowNode`` を抱えており flow 固有だから．
+    共通の入れ物に 1 つの DSL の型を持ち込むと、次の DSL が再利用できずに詰む．
+    """
     node: FlowNode
     rect: Rect
-
-
-@dataclass(frozen=True)
-class PlacedText:
-    """文字だけの要素（省略記号・矢印ラベル・キャプション）．"""
-    text: str
-    rect: Rect
-
-
-@dataclass(frozen=True)
-class PlacedArrow:
-    """ノード間の矢印．始点から終点への線分で，太さは render が決める．"""
-    x1: int
-    y1: int
-    x2: int
-    y2: int
 
 
 @dataclass
@@ -259,15 +290,68 @@ class FlowPlan:
     boxes: list[PlacedNode] = field(default_factory=list)
     ellipses: list[PlacedText] = field(default_factory=list)
     arrows: list[PlacedArrow] = field(default_factory=list)
+    # 隣り合わないノードを結ぶ細い矢印（Issue #109）．``arrows`` の塗り矢印は
+    # **すき間を埋める**ための形なので、離れた 2 点を結ぶと box に食い込む．
+    lines: list[PlacedLine] = field(default_factory=list)
     labels: list[PlacedText] = field(default_factory=list)
     captions: list[PlacedText] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------- レイアウト
 
+# 矢印ラベルの枠を見積もるときの既定の文字サイズ．
+#
+# **呼び出し側が実寸を渡す**（``plan_flow(label_pt=…)``）．render は自分が
+# どのサイズで描くかを知っているので、渡してもらえば枠は実寸で決まる．
+#
+# 以前はここを 16pt 固定にして「実寸と合っている必要はない、折り返さないから
+# 字は割れない」と説明していた．**横はそのとおりだが縦は成り立たない**——
+# 枠は ``anchor=MIDDLE`` なので、大きい字は枠の上下へ等しくはみ出し、
+# 下側が box に乗る（Issue #178．cn2026-12 p.42 で「暗号化」が 9pt 食い込んでいた）．
+_LABEL_PT = 16.0
+
+# 行送り．枠の高さは「文字サイズ × これ」に上下のアキを足したもの．
+_LABEL_LINE = 1.2
+_LABEL_PAD = _emu(0.08)
+
+# 1pt = 1/72in．pt をそのまま EMU にする係数（``emu`` はインチを取るので別に持つ）．
+_PT = EMU // 72
+
+
+def _label_height(label_pt: float = _LABEL_PT) -> int:
+    """矢印ラベルの枠の高さ（EMU）．**描くサイズで決まる**（Issue #178）．"""
+    return int(label_pt * _LABEL_LINE * _PT) + _LABEL_PAD
+
+
+def _label_width(text: str, label_pt: float = _LABEL_PT) -> int:
+    """矢印ラベルの想定幅（EMU）．全角は半角の2倍で数える．
+
+    固定幅だと**中心がずれる**（長いラベルほど左に寄って矢印から離れる）．
+    Issue #111 では折り返しと重なって "NAMEPREP" が "NAM / EPRE / P" と
+    3 行に割れていた．折り返しは render 側で止め，ここでは中心を合わせる．
+    """
+    # 0x2E80 より上を全角とみなす．CJK の記号・かな・漢字（U+3000〜）だけでなく、
+    # 全角英数と全角記号（U+FF01〜）も上側に入るので、実用上これで足りる
+    # （"（" U+FF08 も "Ａ" U+FF21 も 2 文字ぶんとして数えられることを確認済み）．
+    units = sum(2 if ord(c) > 0x2E80 else 1 for c in text)
+    return int(units * label_pt * _PT * 0.55) + _emu(0.12)
+
+
+def _label_rect(text: str, center_x: int, bottom_y: int,
+                label_pt: float = _LABEL_PT) -> Rect:
+    """矢印ラベルを box の上へ、文字が入る幅と高さで置く．"""
+    w = max(_emu(0.5), _label_width(text, label_pt))
+    h = _label_height(label_pt)
+    return Rect(center_x - w // 2, bottom_y - h - _emu(0.04), w, h)
+
+
 def plan_flow(flow: Flow, left: int, top: int, width: int,
-              height: int) -> FlowPlan:
-    """Flow を矩形領域 (left, top, width, height) に配置する．"""
+              height: int, label_pt: float = _LABEL_PT) -> FlowPlan:
+    """Flow を矩形領域 (left, top, width, height) に配置する．
+
+    ``label_pt`` は矢印ラベルを**実際に描く**文字サイズ．枠の幅と高さをこれで
+    決めるので、render は自分が使うサイズをそのまま渡す（Issue #178）．
+    """
     plan = FlowPlan()
     nodes = flow.nodes
     if not nodes:
@@ -280,12 +364,15 @@ def plan_flow(flow: Flow, left: int, top: int, width: int,
     cap_h = _emu(0.5) if flow.caption else 0
     cap_gap = _emu(0.12) if flow.caption else 0
 
-    if flow.direction == "tb":
+    if flow.rows:
+        bottom = _plan_grid(plan, flow, left, top, width, height,
+                            cap_h + cap_gap, label_pt)
+    elif flow.direction == "tb":
         bottom = _plan_vertical(plan, flow, left, top, width, height,
-                                cap_h + cap_gap)
+                                cap_h + cap_gap, label_pt)
     else:
         bottom = _plan_horizontal(plan, flow, left, top, width, height,
-                                  cap_h + cap_gap)
+                                  cap_h + cap_gap, label_pt)
 
     if flow.caption:
         cy = bottom + cap_gap
@@ -294,8 +381,104 @@ def plan_flow(flow: Flow, left: int, top: int, width: int,
     return plan
 
 
+def _plan_grid(plan: FlowPlan, flow: Flow, left: int, top: int,
+               width: int, height: int, reserve: int,
+               label_pt: float = _LABEL_PT) -> int:
+    """段（``--`` 区切り）を持つ図を格子に置く（Issue #109）．
+
+    段は上から下へ、段の中は左から右。**列は全段で揃える**——段ごとに幅を
+    変えると、同じ列にあるはずのノードがずれて「格子」に見えない。
+    列数はいちばん要素の多い段に合わせる。
+
+    エッジは 2 通りに描き分ける:
+
+    - **同じ段で隣り合う** → ``arrows``（塗り矢印）．すき間にちょうど収まる形で、
+      一列のフローと同じ見た目になる
+    - **それ以外**（段をまたぐ・飛び越す） → ``lines``（細い矢印）．
+      塗り矢印は「すき間を埋める」ための形なので、離れた 2 点を結ぶと box に食い込む
+
+    戻り値は図の下端（キャプションを置く位置）．
+    """
+    rows = flow.rows
+    ncol = max(len(r) for r in rows)
+    nrow = len(rows)
+    gap_x, gap_y = _emu(0.5), _emu(0.45)
+    avail_w = width - gap_x * (ncol - 1)
+    avail_h = height - reserve - gap_y * (nrow - 1)
+    bw = max(_emu(0.9), min(_emu(2.4), avail_w // ncol))
+    bh = max(_emu(0.5), min(_emu(1.2), avail_h // nrow))
+
+    grid_w = bw * ncol + gap_x * (ncol - 1)
+    grid_h = bh * nrow + gap_y * (nrow - 1)
+    x0 = left + max(0, (width - grid_w) // 2)
+    y0 = top + max(0, (height - reserve - grid_h) // 2)
+
+    rects: dict[int, Rect] = {}
+    for r, row in enumerate(rows):
+        y = y0 + r * (bh + gap_y)
+        for c, idx in enumerate(row):
+            rect = Rect(x0 + c * (bw + gap_x), y, bw, bh)
+            rects[idx] = rect
+            node = flow.nodes[idx]
+            if node.kind == "ellipsis":
+                plan.ellipses.append(PlacedText(node.label, rect))
+            else:
+                plan.boxes.append(PlacedNode(node, rect))
+
+    # 同じ段で隣り合うか（塗り矢印にしてよいか）を引けるようにしておく．
+    pos = {idx: (r, c) for r, row in enumerate(rows) for c, idx in enumerate(row)}
+    for e in flow.edges:
+        a, b = rects.get(e.src), rects.get(e.dst)
+        if a is None or b is None:
+            continue
+        pa, pb = pos.get(e.src), pos.get(e.dst)
+        if pa is None or pb is None:
+            # **構造上ここへは来ない**——``_build`` はノードを置いたら必ず
+            # その段に入れ，段は必ず ``flow.rows`` へ入るので，どのノードも
+            # ちょうど 1 つの段に属する．黙って線を落とすのは避けたい挙動なので，
+            # 万一この不変条件が崩れたときに落ちないための保険として残す．
+            continue
+        adjacent = pa[0] == pb[0] and abs(pa[1] - pb[1]) == 1
+        if adjacent:
+            x1 = a.right if pb[1] > pa[1] else a.left
+            x2 = b.left if pb[1] > pa[1] else b.right
+            plan.arrows.append(PlacedArrow(x1, a.center_y, x2, b.center_y))
+            if e.label:
+                plan.labels.append(PlacedText(
+                    e.label, _label_rect(e.label, (x1 + x2) // 2, a.top,
+                                         label_pt)))
+        else:
+            x1, y1, x2, y2 = _edge_points(a, b)
+            plan.lines.append(PlacedLine(x1, y1, x2, y2))
+            if e.label:
+                plan.labels.append(PlacedText(
+                    e.label, _label_rect(e.label, (x1 + x2) // 2,
+                                         (y1 + y2) // 2
+                                         + _label_height(label_pt) // 2,
+                                         label_pt)))
+    return y0 + grid_h
+
+
+def _edge_points(a: Rect, b: Rect) -> tuple[int, int, int, int]:
+    """2 つの矩形を結ぶ線分の端点（互いに向いた辺の中点）を返す．
+
+    中心どうしを結ぶと線が box の中を通ってしまうので、**縦横どちらに離れて
+    いるかで辺を選ぶ**．斜めに離れている場合は離れ方の大きいほうを採る．
+    """
+    dx = b.center_x - a.center_x
+    dy = b.center_y - a.center_y
+    if abs(dy) >= abs(dx):                      # 主に上下に離れている
+        if dy >= 0:
+            return a.center_x, a.bottom, b.center_x, b.top
+        return a.center_x, a.top, b.center_x, b.bottom
+    if dx >= 0:                                 # 主に左右に離れている
+        return a.right, a.center_y, b.left, b.center_y
+    return a.left, a.center_y, b.right, b.center_y
+
+
 def _plan_horizontal(plan: FlowPlan, flow: Flow, left: int, top: int,
-                     width: int, height: int, cap_reserve: int) -> int:
+                     width: int, height: int, cap_reserve: int,
+                     label_pt: float = _LABEL_PT) -> int:
     """横並び（lr）に配置し，box 帯の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
@@ -340,17 +523,23 @@ def _plan_horizontal(plan: FlowPlan, flow: Flow, left: int, top: int,
         plan.arrows.append(PlacedArrow(a.right, ay, b.left, ay))
         if e.label:
             mx = (a.right + b.left) // 2
-            plan.labels.append(PlacedText(e.label, Rect(
-                mx - _emu(0.5), by - _emu(0.5), _emu(1.0), _emu(0.45))))
+            plan.labels.append(PlacedText(
+                e.label, _label_rect(e.label, mx, by, label_pt)))
     return by + bh
 
 
 def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
-                   width: int, height: int, cap_reserve: int) -> int:
+                   width: int, height: int, cap_reserve: int,
+                   label_pt: float = _LABEL_PT) -> int:
     """縦並び（tb）に配置し，box 列の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
+    # box の間隔．**ラベルが入るなら、その高さを空ける**（Issue #184）．
+    # 0.35in 固定だと、矢印ラベルが上下の box に掛かる——ラベルは
+    # すき間の中央に置かれるので、すき間がラベルより低いとはみ出す．
     gy = _emu(0.35)
+    if any(e.label for e in flow.edges):
+        gy = max(gy, _label_height(label_pt) + _emu(0.10))
     avail = height - cap_reserve
     # 横並びと同じく，省略記号は 1 行分の固定高で確保して残りを box に配分する．
     ne = sum(1 for node in nodes if node.kind == "ellipsis")
@@ -361,7 +550,19 @@ def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
         bh = max(_emu(0.6), min(_emu(1.2), bh))
     else:
         bh = eh
-    bw = min(_emu(3.2), int(width * 0.5))
+    # box の幅は**いちばん長いラベルが 1 行に収まる**幅にする（Issue #184）．
+    # 3.2in 固定だと長い名前が折り返し、行数が増えて box が縦に伸び、図が
+    # 窮屈になる（cn2026-07 p.34「日本語ﾄﾞﾒｲﾝ名ＥＸＡＭＰＬＥ。ｊｐ」）．
+    # 下限は従来の 3.2in——短い名前ばかりのときに box が痩せて見えないように．
+    # 幅は**全 box 共通**．1 つだけ広いと縦に並んだ列に見えない．
+    # ``default=0`` は**省略記号だけの列**のとき．幅を要求するノードが
+    # 1 つも無いので、下の ``max`` が既定幅——``min(3.2in, 帯の半分)``——を選ぶ．
+    # **帯が 6.4in より狭ければ 3.2in ではなく帯の半分**になる（狭い帯で
+    # 3.2in を押し通すと帯からはみ出すため）．
+    need = max((_label_width(nd.label, label_pt) + _emu(0.4)
+                for nd in nodes if nd.kind != "ellipsis" and nd.label),
+               default=0)
+    bw = min(width, max(min(_emu(3.2), int(width * 0.5)), need))
     bx = left + (width - bw) // 2
     total = nb * bh + ne * eh + (n - 1) * gy
     starty = top + max(0, (avail - total) // 2)
@@ -385,7 +586,14 @@ def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
         cx = a.center_x
         plan.arrows.append(PlacedArrow(cx, a.bottom, cx, b.top))
         if e.label:
+            # 縦並びではラベルを矢印の**右横**に置く（上下は box で埋まっている）．
+            # **左寄せ**にするのは、枠幅が ``_label_width`` の見積もりだから
+            # （Issue #176）——中央揃えだと見積もりを超えたぶんが左右へ等しく
+            # はみ出し、左側が矢印に掛かって先頭の字が読めなくなる。
             my = (a.bottom + b.top) // 2
-            plan.labels.append(PlacedText(e.label, Rect(
-                cx + _emu(0.2), my - _emu(0.22), _emu(1.2), _emu(0.45))))
+            r = _label_rect(e.label, cx, my + _label_height(label_pt) // 2,
+                            label_pt)
+            plan.labels.append(PlacedText(
+                e.label, Rect(cx + _emu(0.18), r.top, r.width, r.height),
+                align="left"))
     return starty + total
