@@ -324,7 +324,11 @@ class Seq:
         return Seq(
             lifelines=list(self.lifelines),
             messages=self.messages[:n],
-            layout_rows=self.layout_rows or len(self.messages),
+            # **既に段を切ってあれば、その値を引き継ぐ**——``upto`` を重ねて
+            # 呼んでも基準は最終段のまま．``or`` にすると 0 が置き換わるので
+            # ``is None`` で見る（Issue #182）．
+            layout_rows=(self.layout_rows if self.layout_rows is not None
+                         else len(self.messages)),
             # ``after`` は「何本目の矢印の後ろか」．n 本目までを見せる段では
             # **n 本目の直後までの注記を出す**——その位置の矢印が出たなら、
             # それを説明する注記も一緒に出るのが自然（起きたことの説明）．

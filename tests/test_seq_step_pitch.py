@@ -66,8 +66,25 @@ def test_each_step_draws_only_its_own_arrows():
         assert len(_plan(full.upto(n)).arrows) == n
 
 
-def test_a_seq_without_steps_is_unchanged():
-    """段を持たない図の見た目は変えない．"""
-    one = parse_seq("lifelines: A, B\nA -> B: 1\nB -> A: 2")
-    assert _pitch(_plan(one)) == _pitch(_plan(parse_seq(
-        "lifelines: A, B\nA -> B: 1\nB -> A: 2")))
+def test_a_seq_without_steps_keeps_the_old_pitch_rule():
+    """段を持たない図は従来どおり**本数で間隔が決まる**．
+
+    全部を最終段ぶんに揃えてしまうと、矢印の少ない図まで詰まって間延びの逆に
+    なる。段を持たない図は ``layout_rows`` が ``None`` のままで、
+    2 本の図と 6 本の図では間隔が違う——そこは変えていない。
+    """
+    two = parse_seq("lifelines: A, B\nA -> B: 1\nB -> A: 2")
+    six = parse_seq("lifelines: A, B\n" +
+                    "\n".join(f"A -> B: {i}" for i in range(6)))
+    assert two.layout_rows is None and six.layout_rows is None
+    assert _pitch(_plan(two)) != _pitch(_plan(six))
+
+
+def test_upto_twice_keeps_the_first_basis():
+    """``upto`` を重ねて呼んでも基準は最終段のまま．"""
+    full = parse_seq(SRC.strip())
+    once = full.upto(4)
+    twice = once.upto(2)
+    assert once.layout_rows == len(full.messages)
+    assert twice.layout_rows == len(full.messages)
+    assert _pitch(_plan(twice)) == _pitch(_plan(full))
