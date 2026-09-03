@@ -306,16 +306,25 @@ class Seq:
     note_top: str | None = None
     note_bottom: str | None = None
     steps: list[int] = field(default_factory=list)
+    # 段階表示のとき、**最終段で何本になるか**．``upto`` が埋める．
+    # ``plan_seq`` は送り幅をこの本数で決めるので、段が進んでも矢印の間隔と
+    # 1 本目の位置が変わらない（Issue #182）．``None`` は段を持たない図．
+    layout_rows: int | None = None
 
     def upto(self, n: int) -> "Seq":
         """先頭 n 本のメッセージまでの姿を返す（Issue #125）．
 
         **登場人物は最初から全員残す**——途中で増えると図が横に動いて、
         段が変わるたびに目で追い直すことになる．
+
+        **縦も同じ**（Issue #182）．``layout_rows`` に最終段の本数を持たせ、
+        送り幅をそれで決める．持たせないと矢印の少ない段ほど間延びして、
+        段が進むたびに図全体が上下に動いた．
         """
         return Seq(
             lifelines=list(self.lifelines),
             messages=self.messages[:n],
+            layout_rows=self.layout_rows or len(self.messages),
             # ``after`` は「何本目の矢印の後ろか」．n 本目までを見せる段では
             # **n 本目の直後までの注記を出す**——その位置の矢印が出たなら、
             # それを説明する注記も一緒に出るのが自然（起きたことの説明）．
