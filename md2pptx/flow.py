@@ -534,7 +534,12 @@ def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
     """縦並び（tb）に配置し，box 列の下端 y（キャプション基準）を返す．"""
     nodes = flow.nodes
     n = len(nodes)
+    # box の間隔．**ラベルが入るなら、その高さを空ける**（Issue #184）．
+    # 0.35in 固定だと、矢印ラベルが上下の box に掛かる——ラベルは
+    # すき間の中央に置かれるので、すき間がラベルより低いとはみ出す．
     gy = _emu(0.35)
+    if any(e.label for e in flow.edges):
+        gy = max(gy, _label_height(label_pt) + _emu(0.10))
     avail = height - cap_reserve
     # 横並びと同じく，省略記号は 1 行分の固定高で確保して残りを box に配分する．
     ne = sum(1 for node in nodes if node.kind == "ellipsis")
@@ -545,7 +550,15 @@ def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
         bh = max(_emu(0.6), min(_emu(1.2), bh))
     else:
         bh = eh
-    bw = min(_emu(3.2), int(width * 0.5))
+    # box の幅は**いちばん長いラベルが 1 行に収まる**幅にする（Issue #184）．
+    # 3.2in 固定だと長い名前が折り返し、行数が増えて box が縦に伸び、図が
+    # 窮屈になる（cn2026-07 p.34「日本語ﾄﾞﾒｲﾝ名ＥＸＡＭＰＬＥ。ｊｐ」）．
+    # 下限は従来の 3.2in——短い名前ばかりのときに box が痩せて見えないように．
+    # 幅は**全 box 共通**．1 つだけ広いと縦に並んだ列に見えない．
+    need = max((_label_width(nd.label, label_pt) + _emu(0.4)
+                for nd in nodes if nd.kind != "ellipsis" and nd.label),
+               default=0)
+    bw = min(width, max(min(_emu(3.2), int(width * 0.5)), need))
     bx = left + (width - bw) // 2
     total = nb * bh + ne * eh + (n - 1) * gy
     starty = top + max(0, (avail - total) // 2)
