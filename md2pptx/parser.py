@@ -883,7 +883,7 @@ def _parse_arrow_block(text: str) -> Arrow:
     width = height = None
     color: str | None = None
     align: Align = "center"
-    left = None
+    left: Length | None = None
     for raw in text.splitlines():
         line = raw.strip()
         if not line:

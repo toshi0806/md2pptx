@@ -12,9 +12,13 @@
 from __future__ import annotations
 
 import pytest
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.util import Emu
 
-from md2pptx.parser import parse
+from md2pptx import render
 from md2pptx.ir import Arrow
+from md2pptx.parser import parse
 
 _FM = "---\ntheme: t.pptx\n---\n\n"
 
@@ -49,9 +53,12 @@ def test_a_bad_key_still_names_left_in_the_message():
 
 
 def _build(tmp_path, body):
-    """既存の arrow テストと同じ組み立て（本文と結論文で帯を作る）．"""
-    from pptx import Presentation
-    from md2pptx import render
+    """既存の arrow テストと同じ組み立て（本文と結論文で帯を作る）．
+
+    ``mkdir`` は要る——``test_left_beats_align`` が ``tmp_path / "a"`` のような
+    **下位ディレクトリ**を渡して 2 つのデッキを作り分けるので、pytest が
+    用意するのは親だけ．
+    """
     tmp_path.mkdir(parents=True, exist_ok=True)
     theme = tmp_path / "theme.pptx"
     Presentation().save(str(theme))
@@ -61,7 +68,6 @@ def _build(tmp_path, body):
 
 
 def _down_arrow(prs):
-    from pptx.enum.shapes import MSO_SHAPE
     got = [sh for sh in prs.slides[0].shapes
            if not sh.is_placeholder
            and getattr(sh, "auto_shape_type", None) == MSO_SHAPE.DOWN_ARROW]
@@ -77,7 +83,6 @@ def _band_left(prs):
 
 def test_left_places_the_arrow_there(tmp_path):
     """描かれた矢印の左端が、帯の左端から指定ぶんの位置に来る．"""
-    from pptx.util import Emu
     prs = _build(tmp_path, "```arrow\ndirection: down\nwidth: 1in\nleft: 2in\n```")
     got = Emu(_down_arrow(prs).left - _band_left(prs)).inches
     assert got == pytest.approx(2.0, abs=0.02)
@@ -91,3 +96,20 @@ def test_left_beats_align(tmp_path):
         tmp_path / "b",
         "```arrow\ndirection: down\nwidth: 1in\nalign: right\nleft: 0in\n```")).left
     assert both < only_align
+
+
+def test_out_of_band_left_warns_but_still_places_it(tmp_path, capsys):
+    """帯の外を指されたら知らせる——ただし書いたとおりに置く．
+
+    大きさの警告と同じ規約（黙って外へ描かない）。位置を勝手に寄せないのは、
+    実測して置いている以上、寄せると意図が消えるため。
+    """
+    prs = _build(tmp_path,
+                 "```arrow\ndirection: down\nwidth: 1in\nleft: 30in\n```")
+    assert "outside its band" in capsys.readouterr().err
+    assert Emu(_down_arrow(prs).left - _band_left(prs)).inches == pytest.approx(30.0, abs=0.02)
+
+
+def test_a_left_inside_the_band_is_quiet(tmp_path, capsys):
+    _build(tmp_path, "```arrow\ndirection: down\nwidth: 1in\nleft: 2in\n```")
+    assert "outside its band" not in capsys.readouterr().err
