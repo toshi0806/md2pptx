@@ -2567,7 +2567,12 @@ class Renderer:
             h = int(eh)
         # 水平寄せは ```image と同じ語彙（既定は中央）．2 カラムの片側に置いた
         # ときに、左寄せの項目に対して矢印だけ中央で右へずれて見えるのを直す．
-        if arrow.align == "left":
+        # ``left`` を書いてあればそれが優先する——元スライドの矢印は左端でも
+        # 中央でも右端でもない位置にあることが多い（Issue #180）．
+        el = self._resolve_len(arrow.left, width)
+        if el is not None:
+            x = left + int(el)
+        elif arrow.align == "left":
             x = left
         elif arrow.align == "right":
             x = left + (width - w)
