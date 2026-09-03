@@ -314,10 +314,13 @@ _LABEL_PT = 16.0
 _LABEL_LINE = 1.2
 _LABEL_PAD = _emu(0.08)
 
+# 1pt = 1/72in．pt をそのまま EMU にする係数（``emu`` はインチを取るので別に持つ）．
+_PT = EMU // 72
+
 
 def _label_height(label_pt: float = _LABEL_PT) -> int:
     """矢印ラベルの枠の高さ（EMU）．**描くサイズで決まる**（Issue #178）．"""
-    return int(label_pt * _LABEL_LINE * 12700) + _LABEL_PAD
+    return int(label_pt * _LABEL_LINE * _PT) + _LABEL_PAD
 
 
 def _label_width(text: str, label_pt: float = _LABEL_PT) -> int:
@@ -331,7 +334,7 @@ def _label_width(text: str, label_pt: float = _LABEL_PT) -> int:
     # 全角英数と全角記号（U+FF01〜）も上側に入るので、実用上これで足りる
     # （"（" U+FF08 も "Ａ" U+FF21 も 2 文字ぶんとして数えられることを確認済み）．
     units = sum(2 if ord(c) > 0x2E80 else 1 for c in text)
-    return int(units * label_pt * 12700 * 0.55) + _emu(0.12)
+    return int(units * label_pt * _PT * 0.55) + _emu(0.12)
 
 
 def _label_rect(text: str, center_x: int, bottom_y: int,

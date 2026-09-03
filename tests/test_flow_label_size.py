@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from md2pptx.flow import parse_flow, plan_flow
+from md2pptx.flow import _label_height, parse_flow, plan_flow
 from md2pptx.layout import emu
 
 
@@ -41,8 +41,9 @@ def test_the_label_clears_the_boxes_it_sits_above():
     lab = plan.labels[0]
     top_of_boxes = min(b.rect.top for b in plan.boxes)
     assert lab.rect.top + lab.rect.height <= top_of_boxes, "ラベルの枠が box に掛かっている"
-    # 30pt の行が枠に収まる高さがあるか（行送り 1.2 ぶん）
-    assert lab.rect.height >= int(emu(30.0 * 1.2 / 72.0))
+    # 枠が 30pt ぶんの高さで作られているか——手で計算し直すと
+    # ``_label_height`` の式と二重管理になるので、実装をそのまま突き合わせる．
+    assert lab.rect.height == _label_height(30.0)
 
 
 def test_the_default_is_unchanged():
