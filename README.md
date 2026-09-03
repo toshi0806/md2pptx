@@ -58,7 +58,9 @@ pip install -e .
 > `python3 -m md2pptx …` でも実行できます。
 
 > 依存のひとつ [pptx2pdf](https://github.com/toshi0806/pptx2pdf)（`--pdf` の変換を担当）は
-> GitHub から取得します。インストール時に `git` とネットワークが要ります。
+> **PyPI に無く GitHub から取得します**。インストール時に `git` と GitHub への到達性が要ります。
+> プロキシやファイアウォールで出られない環境では解決に失敗するので、
+> その場合は `pptx2pdf` を先に手元へ用意してから `md2pptx` を入れてください。
 
 ## クイックスタート
 

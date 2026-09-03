@@ -6,14 +6,26 @@
 
 各項目の末尾の番号は Pull Request です。詳しい経緯はそちらを参照してください。
 
-## 未リリース
+## 2.0.0 — 2026-09-03
+
+### 変更
+
+- **PDF 変換を独立パッケージ [pptx2pdf](https://github.com/toshi0806/pptx2pdf) へ移しました。**
+  `--pdf` の使い方は変わりませんが、**依存が1つ増えたので入れ直しが要ります**
+  （`pip install -e .` などを流し直してください）。
+  `pptx2pdf` は **PyPI に出していないので `pyproject.toml` は git の URL で指しています**。
+  そのため入れ直しには **git と GitHub への到達性が要ります**——git が無い環境や、
+  プロキシ・ファイアウォールで GitHub に出られない環境では解決に失敗します。
+  その場合は `pptx2pdf` を先に手元へ用意してから入れてください [#174]
+- **`md2pptx.pdf` モジュールが無くなりました。** ライブラリとして使っていた場合は
+  `from md2pptx import pdf` を `from pptx2pdf import convert` に読み替えてください。
+  `md2pptx.workdir` も同じく `pptx2pdf.workdir` へ移りました [#174]
 
 ### 追加
 
 - ` ```arrow ` に `left:` を書けるようになりました。帯の左端からの距離で矢印を
   置きます（`3.33in` / `2cm` / `25%`）。`align` の 3 択では既存スライドの矢印の
   位置を写せませんでした [#181]
-
 - `<!-- @step -->` で段階表示ができるようになりました。1枚分の原稿から複数枚を作り、
   内容を積み上げて見せます。アニメーションの代わりに使えます。
   タイトル・レイアウト・ディレクティブは全段で共通で、発表者ノートは最終段だけに付きます [#114]
@@ -339,6 +351,7 @@
 [#168]: https://github.com/toshi0806/md2pptx/pull/168
 [#170]: https://github.com/toshi0806/md2pptx/pull/170
 [#173]: https://github.com/toshi0806/md2pptx/pull/173
+[#174]: https://github.com/toshi0806/md2pptx/pull/174
 [#177]: https://github.com/toshi0806/md2pptx/pull/177
 [#179]: https://github.com/toshi0806/md2pptx/pull/179
 [#181]: https://github.com/toshi0806/md2pptx/pull/181
