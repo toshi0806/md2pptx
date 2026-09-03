@@ -12,8 +12,11 @@
 
 - **PDF 変換を独立パッケージ [pptx2pdf](https://github.com/toshi0806/pptx2pdf) へ移しました。**
   `--pdf` の使い方は変わりませんが、**依存が1つ増えたので入れ直しが要ります**
-  （`pip install -e .` などを流し直してください）。`pptx2pdf` は PyPI に出していないため
-  `pyproject.toml` は git の URL で指しています [#174]
+  （`pip install -e .` などを流し直してください）。
+  `pptx2pdf` は **PyPI に出していないので `pyproject.toml` は git の URL で指しています**。
+  そのため入れ直しには **git と GitHub への到達性が要ります**——git が無い環境や、
+  プロキシ・ファイアウォールで GitHub に出られない環境では解決に失敗します。
+  その場合は `pptx2pdf` を先に手元へ用意してから入れてください [#174]
 - **`md2pptx.pdf` モジュールが無くなりました。** ライブラリとして使っていた場合は
   `from md2pptx import pdf` を `from pptx2pdf import convert` に読み替えてください。
   `md2pptx.workdir` も同じく `pptx2pdf.workdir` へ移りました [#174]
@@ -348,9 +351,9 @@
 [#168]: https://github.com/toshi0806/md2pptx/pull/168
 [#170]: https://github.com/toshi0806/md2pptx/pull/170
 [#173]: https://github.com/toshi0806/md2pptx/pull/173
+[#174]: https://github.com/toshi0806/md2pptx/pull/174
 [#177]: https://github.com/toshi0806/md2pptx/pull/177
 [#179]: https://github.com/toshi0806/md2pptx/pull/179
 [#181]: https://github.com/toshi0806/md2pptx/pull/181
 [#183]: https://github.com/toshi0806/md2pptx/pull/183
 [#185]: https://github.com/toshi0806/md2pptx/pull/185
-[#174]: https://github.com/toshi0806/md2pptx/pull/174
