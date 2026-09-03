@@ -196,7 +196,10 @@ def plan_seq(seq: Seq, left: int, top: int, width: int, height: int) -> SeqPlan:
     # 間延びさせない**（Fast Retransmission は矢印25本超、handshake は3本）．
     line_top = top + _HEAD_H + _HEAD_GAP
     avail = max(_emu(0.5), body_h - _HEAD_H - _HEAD_GAP)
-    rows = len(seq.messages)
+    # 送り幅は**最終段の本数**で決める（Issue #182）．段階表示で本数が減った
+    # 姿を渡されても間隔と 1 本目の位置が動かないようにするため．描く矢印は
+    # あくまで ``seq.messages`` のぶんだけ．
+    rows = max(len(seq.messages), seq.layout_rows or 0)
     if rows:
         # 帯を rows+1 で割った高さが基準．少ないときに間延びしないよう上限で
         # 抑え、多いときは下限で広げる．
