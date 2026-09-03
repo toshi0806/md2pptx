@@ -416,6 +416,10 @@ class Arrow:
         align: 帯の中での水平寄せ（既定は中央）．``Image`` と同じ語彙で、
             2 カラムの片側に置いた矢印を項目の行頭に合わせるのに使う
             （中央のままだと、左寄せの項目に対して矢印だけ右へずれて見える）．
+        left: 帯の左端からの距離．書けば ``align`` より**優先する**．
+            元スライドの矢印は左端でも中央でも右端でもない位置にあることが多く、
+            3 択では再現できない（Issue #180）．大きさを実測して書くのと
+            同じ要領で、位置も実測して書ける．
     """
 
     direction: ArrowDirection = "down"
@@ -423,6 +427,7 @@ class Arrow:
     height: Length | None = None
     color: str | None = None
     align: Align = "center"
+    left: Length | None = None
 
 
 # 帯（中央領域）へ座標配置するブロック．地の文（Line）と違い，本文プレースホルダ

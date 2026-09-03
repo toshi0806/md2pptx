@@ -883,6 +883,7 @@ def _parse_arrow_block(text: str) -> Arrow:
     width = height = None
     color: str | None = None
     align: Align = "center"
+    left: Length | None = None
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -902,6 +903,9 @@ def _parse_arrow_block(text: str) -> Arrow:
             width = _parse_length(v)
         elif k == "height":
             height = _parse_length(v)
+        elif k == "left":
+            # 帯の左端からの距離．語彙は width / height と同じ（Issue #180）．
+            left = _parse_length(v)
         elif k == "color":
             # 色は行内装飾と同じ語彙．**検証して正規化してから** IR へ入れる．
             kind, value = parse_color(v)
@@ -917,7 +921,7 @@ def _parse_arrow_block(text: str) -> Arrow:
         else:
             raise ValueError(
                 f"arrow block: unknown key {k!r} "
-                f"(direction | width | height | color | align)")
+                f"(direction | width | height | left | color | align)")
     if direction is None:
         raise ValueError(
             "arrow block requires 'direction:' "
@@ -925,7 +929,8 @@ def _parse_arrow_block(text: str) -> Arrow:
     # direction は上で ARROW_DIRECTIONS に含まれることを確かめてあるが、
     # mypy は str から Literal への絞り込みを追えない．
     return Arrow(direction=cast(ArrowDirection, direction),
-                 width=width, height=height, color=color, align=align)
+                 width=width, height=height, color=color, align=align,
+                 left=left)
 
 
 def _table_width_value(value: str, lineno: int) -> str | float:

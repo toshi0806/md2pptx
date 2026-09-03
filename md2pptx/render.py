@@ -2579,7 +2579,12 @@ class Renderer:
             h = int(eh)
         # 水平寄せは ```image と同じ語彙（既定は中央）．2 カラムの片側に置いた
         # ときに、左寄せの項目に対して矢印だけ中央で右へずれて見えるのを直す．
-        if arrow.align == "left":
+        # ``left`` を書いてあればそれが優先する——元スライドの矢印は左端でも
+        # 中央でも右端でもない位置にあることが多い（Issue #180）．
+        el = self._resolve_len(arrow.left, width)
+        if el is not None:
+            x = left + int(el)
+        elif arrow.align == "left":
             x = left
         elif arrow.align == "right":
             x = left + (width - w)
@@ -2599,6 +2604,14 @@ class Renderer:
                 "md2pptx: warning: the arrow is larger than the band it sits "
                 "in and will overlap the text below (shorten the prose or "
                 "reduce width/height)\n")
+        elif el is not None and not (left <= x and x + w <= left + width):
+            # ``left`` で帯の外を指されたとき．大きさの警告と同じで、
+            # **黙って外へ描かない**（Issue #180）．位置は書いたとおりにする
+            # ——実測して置いている以上、勝手に寄せると意図が消える．
+            sys.stderr.write(
+                "md2pptx: warning: 'left' puts the arrow outside its band; "
+                "it will be drawn there anyway (band is "
+                f"{Emu(width).inches:.2f}in wide)\n")
         shp = slide.shapes.add_shape(
             shape, Emu(x), Emu(y), Emu(w), Emu(h))
         both = arrow.direction in ("updown", "leftright")
