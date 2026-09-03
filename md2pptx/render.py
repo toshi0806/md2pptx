@@ -1233,6 +1233,9 @@ class Renderer:
         # できない．box の大きさはラベルに依らないため、2 回目で変わるのは
         # ラベルの枠だけ——``boxes`` を差し替えるのは、以降で描くのも
         # ``box_h_emu`` を測るのも**このプランの矩形**に揃えるため．
+        # 引き直す条件は 2 つ．``bsz != base`` は**字が縮んだとき**——縦並びの
+        # box 幅はラベルの長さ×サイズで決まるので、縮めたなら幅も引き直す．
+        # ``plan.labels`` は矢印ラベルの枠を実サイズで取り直すため（#178）．
         if bsz != base or plan.labels:
             plan = plan_flow(flow, left, top, width, height, label_pt=bsz)
             boxes = plan.boxes

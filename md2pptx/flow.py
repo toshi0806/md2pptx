@@ -555,6 +555,8 @@ def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
     # 窮屈になる（cn2026-07 p.34「日本語ﾄﾞﾒｲﾝ名ＥＸＡＭＰＬＥ。ｊｐ」）．
     # 下限は従来の 3.2in——短い名前ばかりのときに box が痩せて見えないように．
     # 幅は**全 box 共通**．1 つだけ広いと縦に並んだ列に見えない．
+    # ``default=0`` は**省略記号だけの列**のとき．幅を要求するノードが
+    # 1 つも無いので、下の ``max`` が下限（3.2in）を選ぶ．
     need = max((_label_width(nd.label, label_pt) + _emu(0.4)
                 for nd in nodes if nd.kind != "ellipsis" and nd.label),
                default=0)

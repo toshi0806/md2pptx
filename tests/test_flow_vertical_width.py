@@ -53,6 +53,12 @@ def test_all_boxes_share_one_width():
 
 
 def test_the_column_stays_centred():
+    """左右のアキが等しい．
+
+    許容 1 EMU は**整数除算の端数そのもの**．``bx = left + (width - bw) // 2``
+    なので、``width - bw`` が奇数のとき右のアキだけ 1 EMU 大きくなる。
+    それ以上ずれたら中央ぞろえが壊れている。
+    """
     boxes = _boxes("direction: tb\n[日本語ドメイン名EXAMPLE。jp]\n-> [B]")
     r = boxes[0].rect
     assert abs((r.left - 0) - (BAND_W - (r.left + r.width))) <= 1
