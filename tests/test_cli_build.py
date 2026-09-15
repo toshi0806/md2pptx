@@ -141,6 +141,22 @@ class TestOneShotIsUnchanged:
             1, f"md2pptx: refusing to overwrite the input: {project.md}")
         assert project.written == []
 
+    def test_the_input_is_not_overwritten_through_another_name(self, project):
+        """別の名前で同じファイルを指しても止める（実体で比べる）．
+
+        パスの文字列で比べると、シンボリックリンク経由も、大文字小文字を区別しない
+        ファイルシステム（macOS の既定）での `SLIDE.md` も別物に見えてしまう．
+        """
+        link = project.md.parent / "link.md"
+        link.symlink_to(project.md.name)
+
+        code, message = _main([str(link), "--theme", str(project.theme),
+                               "-o", str(project.md)])
+
+        assert (code, message) == (
+            1, f"md2pptx: refusing to overwrite the input: {link}")
+        assert project.written == []
+
     def test_a_render_failure_is_reported(self, project, monkeypatch):
         def explode(deck, base_pptx_path, out_path, base_dir=None):
             raise ValueError("boom")

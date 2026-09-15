@@ -361,7 +361,18 @@ def _build(args: argparse.Namespace, sources: set[str],
     # **入力を出力先にしない**．`-o slide.md` や front matter の書き間違いで原稿を
     # pptx で上書きすると、書いたものが戻らない（導出した名前がここに当たることは
     # 無い——入力が .pptx なら、その手前の parse が先に失敗する）．
-    if os.path.abspath(output) == os.path.abspath(args.input):
+    #
+    # 比べるのは**パスの文字列ではなく実体**（st_dev/st_ino）．文字列だと
+    # シンボリックリンク経由（`link.md` → `slide.md`）も、大文字小文字を区別しない
+    # ファイルシステムでの `SLIDE.md` も別物に見えてしまう——後者は macOS の既定
+    # （APFS）で，この開発機でも実際にすり抜けた．``realpath`` はリンクは解くが
+    # 大文字小文字は解決しない．
+    try:
+        same = os.path.samefile(output, args.input)
+    except OSError:
+        # 出力がまだ無い（多くはこれ）．**存在しない以上、入力と同じファイルではない**．
+        same = False
+    if same:
         raise BuildError(f"refusing to overwrite the input: {args.input}")
 
     # 3) base pptx へ収束 → レンダリング → 保存．
