@@ -369,6 +369,22 @@ def _build(args: argparse.Namespace, sources: set[str],
         sys.stderr.write("md2pptx: warning: adding .pptx to the output name "
                          f"({output} → {output}.pptx)\n")
         output += ".pptx"
+    # **入力を出力先にしない**．拡張子を ``.pptx`` に揃えても、まだ一致しうる——
+    # **`.pptx` という名前で Markdown を書いた**ときだ（中身がテキストなら parse は
+    # 成功し、導出した名前は入力そのものになる．実測で 143 バイトの原稿が 31KB の
+    # pptx に置き換わった）．書いた人の付け間違いではあるが、消えるのは**原稿**で、
+    # 戻せない．
+    #
+    # 比べるのは**パスの文字列ではなく実体**（st_dev/st_ino）．文字列だと
+    # シンボリックリンク経由も、大文字小文字を区別しないファイルシステム（macOS の
+    # 既定．この開発機でも実際にすり抜けた）での `SLIDE.md` も別物に見える．
+    try:
+        same = os.path.samefile(output, args.input)
+    except OSError:
+        # 出力がまだ無い（多くはこれ）．**存在しない以上、入力と同じファイルではない**．
+        same = False
+    if same:
+        raise BuildError(f"refusing to overwrite the input: {args.input}")
 
     # 3) base pptx へ収束 → レンダリング → 保存．
     # 画像などの相対パスは Markdown ファイルの置き場を基準に解決する．

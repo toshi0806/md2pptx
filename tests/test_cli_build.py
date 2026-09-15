@@ -163,6 +163,24 @@ class TestOneShotIsUnchanged:
         assert project.written == [f"{project.md}.pptx"]
         assert project.md.read_text().startswith("---")      # 原稿は無事
 
+    def test_markdown_written_to_a_pptx_name_is_not_overwritten(self, tmp_path,
+                                                                project):
+        """``.pptx`` という名前で Markdown を書いていたら止める．
+
+        拡張子を揃えるだけでは足りない唯一の経路．中身がテキストなら parse は成功し、
+        導出した名前は入力そのものになる——実測で 143 バイトの原稿が 31KB の pptx に
+        置き換わった．付け間違えた人が悪いとしても、消えるのは原稿で戻せない．
+        """
+        trap = tmp_path / "deck.pptx"
+        trap.write_text("---\ntitle: t\n---\n\n## x\n\n- a\n")
+
+        code, message = _main([str(trap), "--theme", str(project.theme)])
+
+        assert (code, message) == (
+            1, f"md2pptx: refusing to overwrite the input: {trap}")
+        assert project.written == []
+        assert trap.read_text().startswith("---")            # 原稿は無事
+
     def test_a_render_failure_is_reported(self, project, monkeypatch):
         def explode(deck, base_pptx_path, out_path, base_dir=None):
             raise ValueError("boom")
