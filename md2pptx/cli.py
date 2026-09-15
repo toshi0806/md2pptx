@@ -358,22 +358,17 @@ def _build(args: argparse.Namespace, sources: set[str],
         # 入力を**書かれたまま**（相対なら相対のまま）使うので、``saved:`` の行も
         # 利用者が打った形で出る．
         output = os.path.splitext(args.input)[0] + ".pptx"
-    # **入力を出力先にしない**．`-o slide.md` や front matter の書き間違いで原稿を
-    # pptx で上書きすると、書いたものが戻らない（導出した名前がここに当たることは
-    # 無い——入力が .pptx なら、その手前の parse が先に失敗する）．
-    #
-    # 比べるのは**パスの文字列ではなく実体**（st_dev/st_ino）．文字列だと
-    # シンボリックリンク経由（`link.md` → `slide.md`）も、大文字小文字を区別しない
-    # ファイルシステムでの `SLIDE.md` も別物に見えてしまう——後者は macOS の既定
-    # （APFS）で，この開発機でも実際にすり抜けた．``realpath`` はリンクは解くが
-    # 大文字小文字は解決しない．
-    try:
-        same = os.path.samefile(output, args.input)
-    except OSError:
-        # 出力がまだ無い（多くはこれ）．**存在しない以上、入力と同じファイルではない**．
-        same = False
-    if same:
-        raise BuildError(f"refusing to overwrite the input: {args.input}")
+    # **出力は必ず .pptx で終わらせる**．拡張子が違えば PowerPoint が開けないものが
+    # でき、`-o slide.md` のように**原稿を潰す**指定まで通ってしまう（これで入力と
+    # 一致しえなくなるので、上書きを別途見張る必要は無い——入力が .pptx なら、その
+    # 手前の parse が先に失敗する）．
+    # **黙っては変えない**．書いたものと違う名前になる以上、何をしたかを言う．
+    if os.path.splitext(output)[1].lower() != ".pptx":
+        # 置き換えではなく**末尾に足す**．``splitext`` は `v1.2-deck` の `.2-deck` を
+        # 拡張子と見なすので、置き換えると `v1.pptx` になって名前が消える．
+        sys.stderr.write("md2pptx: warning: adding .pptx to the output name "
+                         f"({output} → {output}.pptx)\n")
+        output += ".pptx"
 
     # 3) base pptx へ収束 → レンダリング → 保存．
     # 画像などの相対パスは Markdown ファイルの置き場を基準に解決する．

@@ -132,30 +132,36 @@ class TestOneShotIsUnchanged:
 
         assert project.written == [str(project.out)]
 
-    def test_the_input_is_not_overwritten(self, project):
-        """入力を出力先にはしない（原稿を pptx で潰すと戻らない）．"""
+    def test_an_output_without_the_suffix_gets_one(self, project, capsys):
+        """``.pptx`` で終わらない出力名には足す．**黙っては変えない**．"""
         code, message = _main([str(project.md), "--theme", str(project.theme),
-                               "-o", str(project.md)])
+                               "-o", "deck"])
 
-        assert (code, message) == (
-            1, f"md2pptx: refusing to overwrite the input: {project.md}")
-        assert project.written == []
+        assert (code, message) == (0, None)
+        assert project.written == ["deck.pptx"]
+        assert ("md2pptx: warning: adding .pptx to the output name "
+                "(deck → deck.pptx)") in capsys.readouterr().err
 
-    def test_the_input_is_not_overwritten_through_another_name(self, project):
-        """別の名前で同じファイルを指しても止める（実体で比べる）．
+    def test_the_suffix_is_added_not_substituted(self, project):
+        """置き換えると名前が消える——``splitext`` は `.2-deck` を拡張子と見なす．"""
+        _main([str(project.md), "--theme", str(project.theme), "-o", "v1.2-deck"])
 
-        パスの文字列で比べると、シンボリックリンク経由も、大文字小文字を区別しない
-        ファイルシステム（macOS の既定）での `SLIDE.md` も別物に見えてしまう．
-        """
-        link = project.md.parent / "link.md"
-        link.symlink_to(project.md.name)
+        assert project.written == ["v1.2-deck.pptx"]
 
-        code, message = _main([str(link), "--theme", str(project.theme),
-                               "-o", str(project.md)])
+    def test_an_existing_suffix_is_left_alone(self, project, capsys):
+        """既に ``.pptx`` なら触らない（大文字も同じ）．"""
+        _main([str(project.md), "--theme", str(project.theme), "-o", "a.PPTX"])
 
-        assert (code, message) == (
-            1, f"md2pptx: refusing to overwrite the input: {link}")
-        assert project.written == []
+        assert project.written == ["a.PPTX"]
+        assert "adding .pptx" not in capsys.readouterr().err
+
+    def test_the_input_cannot_be_the_output(self, project):
+        """``-o slide.md`` と書いても原稿は潰れない（必ず .pptx で終わるため）．"""
+        _main([str(project.md), "--theme", str(project.theme),
+               "-o", str(project.md)])
+
+        assert project.written == [f"{project.md}.pptx"]
+        assert project.md.read_text().startswith("---")      # 原稿は無事
 
     def test_a_render_failure_is_reported(self, project, monkeypatch):
         def explode(deck, base_pptx_path, out_path, base_dir=None):

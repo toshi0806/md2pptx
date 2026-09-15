@@ -108,7 +108,7 @@ python3 -m md2pptx input.md
 |---|---|
 | 位置引数 | 入力 Markdown ファイル |
 | `--theme PATH` | テーマファイル（`.pptx` / `.thmx` 両対応）。フロントマター `theme:` を上書き |
-| `-o, --output PATH` | 出力 pptx。フロントマター `output:` を上書き。どちらも書かなければ入力 Markdown と同じ場所・同じ名前の `.pptx` |
+| `-o, --output PATH` | 出力 pptx。フロントマター `output:` を上書き。どちらも書かなければ入力 Markdown と同じ場所・同じ名前の `.pptx`。`.pptx` で終わらない名前には付け足す（警告あり） |
 | `--keep-base PATH` | `.thmx` から作る中間 base pptx を破棄せず保存（デバッグ用） |
 | `--pdf` | pptx 生成後に PDF も作る。出力先は出力 pptx と同じ場所・同じ名前の `.pdf` |
 | `--pdf-output PATH` | PDF の出力先を指定する。単独で指定しても PDF を作る（`--pdf` は不要） |
