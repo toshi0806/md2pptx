@@ -97,11 +97,89 @@ class TestOneShotIsUnchanged:
         assert (code, message) == (
             1, "md2pptx: no theme specified (use --theme or front matter 'theme')")
 
-    def test_a_missing_output_is_reported(self, project):
+    def test_the_output_defaults_to_the_markdown_name(self, project):
+        """``output`` を書かなければ**入力の隣**に同じ basename で置く（Issue #188）．
+
+        手元のデッキは 14/14 が .md と同名で、書く意味のある指定ではなかった．
+        """
         code, message = _main([str(project.md), "--theme", str(project.theme)])
 
+        assert (code, message) == (0, None)
+        assert project.written == [str(project.md.with_suffix(".pptx"))]
+
+    def test_the_default_lands_next_to_the_markdown(self, project, tmp_path,
+                                                    monkeypatch):
+        """導出先は**カレントディレクトリではなく入力の隣**．
+
+        別の場所から `md2pptx sub/deck.md` と打っても、pptx は原稿と一緒に置かれる
+        （テーマや画像の解決と同じ基準）．入力が相対なら出力も相対のままなので、
+        ``saved:`` の行は利用者が打った形で出る．
+        """
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        relative = f"../{project.md.name}"      # elsewhere から見た原稿
+
+        code, message = _main([relative, "--theme", str(project.theme)])
+
+        assert (code, message) == (0, None)
+        assert project.written == ["../slide.pptx"]
+
+    def test_an_explicit_output_still_wins(self, project):
+        """明示指定（``-o`` / front matter）の優先順位は変えない．"""
+        _main([str(project.md), "--theme", str(project.theme),
+               "-o", str(project.out)])
+
+        assert project.written == [str(project.out)]
+
+    def test_an_output_without_the_suffix_gets_one(self, project, capsys):
+        """``.pptx`` で終わらない出力名には足す．**黙っては変えない**．"""
+        code, message = _main([str(project.md), "--theme", str(project.theme),
+                               "-o", "deck"])
+
+        assert (code, message) == (0, None)
+        assert project.written == ["deck.pptx"]
+        assert ("md2pptx: warning: adding .pptx to the output name "
+                "(deck → deck.pptx)") in capsys.readouterr().err
+
+    def test_the_suffix_is_added_not_substituted(self, project):
+        """置き換えると名前が消える——``splitext`` は `.2-deck` を拡張子と見なす．"""
+        _main([str(project.md), "--theme", str(project.theme), "-o", "v1.2-deck"])
+
+        assert project.written == ["v1.2-deck.pptx"]
+
+    def test_an_existing_suffix_is_left_alone(self, project, capsys):
+        """既に ``.pptx`` なら触らない（大文字も同じ）．"""
+        _main([str(project.md), "--theme", str(project.theme), "-o", "a.PPTX"])
+
+        assert project.written == ["a.PPTX"]
+        assert "adding .pptx" not in capsys.readouterr().err
+
+    def test_the_input_cannot_be_the_output(self, project):
+        """``-o slide.md`` と書いても原稿は潰れない（必ず .pptx で終わるため）．"""
+        _main([str(project.md), "--theme", str(project.theme),
+               "-o", str(project.md)])
+
+        assert project.written == [f"{project.md}.pptx"]
+        assert project.md.read_text().startswith("---")      # 原稿は無事
+
+    def test_markdown_written_to_a_pptx_name_is_not_overwritten(self, tmp_path,
+                                                                project):
+        """``.pptx`` という名前で Markdown を書いていたら止める．
+
+        拡張子を揃えるだけでは足りない唯一の経路．中身がテキストなら parse は成功し、
+        導出した名前は入力そのものになる——実測で 143 バイトの原稿が 31KB の pptx に
+        置き換わった．付け間違えた人が悪いとしても、消えるのは原稿で戻せない．
+        """
+        trap = tmp_path / "deck.pptx"
+        trap.write_text("---\ntitle: t\n---\n\n## x\n\n- a\n")
+
+        code, message = _main([str(trap), "--theme", str(project.theme)])
+
         assert (code, message) == (
-            1, "md2pptx: no output specified (use -o or front matter 'output')")
+            1, f"md2pptx: refusing to overwrite the input: {trap}")
+        assert project.written == []
+        assert trap.read_text().startswith("---")            # 原稿は無事
 
     def test_a_render_failure_is_reported(self, project, monkeypatch):
         def explode(deck, base_pptx_path, out_path, base_dir=None):

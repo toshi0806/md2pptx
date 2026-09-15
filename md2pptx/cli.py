@@ -351,9 +351,40 @@ def _build(args: argparse.Namespace, sources: set[str],
 
     output = _as_path(args.output or meta.get("output"), "output")
     if not output:
-        raise BuildError(
-            "no output specified (use -o or front matter 'output')"
-        )
+        # 書かなければ**入力の隣**に同じ basename で置く（Issue #188）．手元のデッキは
+        # 14/14 が .md と同名で、``output:`` は写すだけの 1 行になっていた．
+        # カレントディレクトリではなく入力の隣にするのは、これが「パス」ではなく
+        # **入力から導いた名前**だから——``theme:`` や画像と同じ基準で読める．
+        # 入力を**書かれたまま**（相対なら相対のまま）使うので、``saved:`` の行も
+        # 利用者が打った形で出る．
+        output = os.path.splitext(args.input)[0] + ".pptx"
+    # **出力は必ず .pptx で終わらせる**．拡張子が違えば PowerPoint が開けないものが
+    # でき、`-o slide.md` のように**原稿を潰す**指定まで通ってしまう（これで入力と
+    # 一致しえなくなるので、上書きを別途見張る必要は無い——入力が .pptx なら、その
+    # 手前の parse が先に失敗する）．
+    # **黙っては変えない**．書いたものと違う名前になる以上、何をしたかを言う．
+    if os.path.splitext(output)[1].lower() != ".pptx":
+        # 置き換えではなく**末尾に足す**．``splitext`` は `v1.2-deck` の `.2-deck` を
+        # 拡張子と見なすので、置き換えると `v1.pptx` になって名前が消える．
+        sys.stderr.write("md2pptx: warning: adding .pptx to the output name "
+                         f"({output} → {output}.pptx)\n")
+        output += ".pptx"
+    # **入力を出力先にしない**．拡張子を ``.pptx`` に揃えても、まだ一致しうる——
+    # **`.pptx` という名前で Markdown を書いた**ときだ（中身がテキストなら parse は
+    # 成功し、導出した名前は入力そのものになる．実測で 143 バイトの原稿が 31KB の
+    # pptx に置き換わった）．書いた人の付け間違いではあるが、消えるのは**原稿**で、
+    # 戻せない．
+    #
+    # 比べるのは**パスの文字列ではなく実体**（st_dev/st_ino）．文字列だと
+    # シンボリックリンク経由も、大文字小文字を区別しないファイルシステム（macOS の
+    # 既定．この開発機でも実際にすり抜けた）での `SLIDE.md` も別物に見える．
+    try:
+        same = os.path.samefile(output, args.input)
+    except OSError:
+        # 出力がまだ無い（多くはこれ）．**存在しない以上、入力と同じファイルではない**．
+        same = False
+    if same:
+        raise BuildError(f"refusing to overwrite the input: {args.input}")
 
     # 3) base pptx へ収束 → レンダリング → 保存．
     # 画像などの相対パスは Markdown ファイルの置き場を基準に解決する．
