@@ -351,9 +351,18 @@ def _build(args: argparse.Namespace, sources: set[str],
 
     output = _as_path(args.output or meta.get("output"), "output")
     if not output:
-        raise BuildError(
-            "no output specified (use -o or front matter 'output')"
-        )
+        # 書かなければ**入力の隣**に同じ basename で置く（Issue #188）．手元のデッキは
+        # 14/14 が .md と同名で、``output:`` は写すだけの 1 行になっていた．
+        # カレントディレクトリではなく入力の隣にするのは、これが「パス」ではなく
+        # **入力から導いた名前**だから——``theme:`` や画像と同じ基準で読める．
+        # 入力を**書かれたまま**（相対なら相対のまま）使うので、``saved:`` の行も
+        # 利用者が打った形で出る．
+        output = os.path.splitext(args.input)[0] + ".pptx"
+    # **入力を出力先にしない**．`-o slide.md` や front matter の書き間違いで原稿を
+    # pptx で上書きすると、書いたものが戻らない（導出した名前がここに当たることは
+    # 無い——入力が .pptx なら、その手前の parse が先に失敗する）．
+    if os.path.abspath(output) == os.path.abspath(args.input):
+        raise BuildError(f"refusing to overwrite the input: {args.input}")
 
     # 3) base pptx へ収束 → レンダリング → 保存．
     # 画像などの相対パスは Markdown ファイルの置き場を基準に解決する．

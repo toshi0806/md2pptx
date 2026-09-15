@@ -97,11 +97,49 @@ class TestOneShotIsUnchanged:
         assert (code, message) == (
             1, "md2pptx: no theme specified (use --theme or front matter 'theme')")
 
-    def test_a_missing_output_is_reported(self, project):
+    def test_the_output_defaults_to_the_markdown_name(self, project):
+        """``output`` を書かなければ**入力の隣**に同じ basename で置く（Issue #188）．
+
+        手元のデッキは 14/14 が .md と同名で、書く意味のある指定ではなかった．
+        """
         code, message = _main([str(project.md), "--theme", str(project.theme)])
 
+        assert (code, message) == (0, None)
+        assert project.written == [str(project.md.with_suffix(".pptx"))]
+
+    def test_the_default_lands_next_to_the_markdown(self, project, tmp_path,
+                                                    monkeypatch):
+        """導出先は**カレントディレクトリではなく入力の隣**．
+
+        別の場所から `md2pptx sub/deck.md` と打っても、pptx は原稿と一緒に置かれる
+        （テーマや画像の解決と同じ基準）．入力が相対なら出力も相対のままなので、
+        ``saved:`` の行は利用者が打った形で出る．
+        """
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        relative = f"../{project.md.name}"      # elsewhere から見た原稿
+
+        code, message = _main([relative, "--theme", str(project.theme)])
+
+        assert (code, message) == (0, None)
+        assert project.written == ["../slide.pptx"]
+
+    def test_an_explicit_output_still_wins(self, project):
+        """明示指定（``-o`` / front matter）の優先順位は変えない．"""
+        _main([str(project.md), "--theme", str(project.theme),
+               "-o", str(project.out)])
+
+        assert project.written == [str(project.out)]
+
+    def test_the_input_is_not_overwritten(self, project):
+        """入力を出力先にはしない（原稿を pptx で潰すと戻らない）．"""
+        code, message = _main([str(project.md), "--theme", str(project.theme),
+                               "-o", str(project.md)])
+
         assert (code, message) == (
-            1, "md2pptx: no output specified (use -o or front matter 'output')")
+            1, f"md2pptx: refusing to overwrite the input: {project.md}")
+        assert project.written == []
 
     def test_a_render_failure_is_reported(self, project, monkeypatch):
         def explode(deck, base_pptx_path, out_path, base_dir=None):
