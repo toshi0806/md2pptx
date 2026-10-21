@@ -419,6 +419,10 @@ def _build(args: argparse.Namespace, sources: set[str],
     # **0 でも出す．** 段を持たないデッキに --hide-steps を付けると隠すものが無く，
     # 黙ると「フラグが効いたのか」が分からない．`hidden: 0` は「このデッキには段が
     # 無い＝講義版と同じものができた」と読める情報になる．
+    #
+    # 数える対象が `n` と違って `deck.slides` だけなのは、**表紙が段になりえない**
+    # ため．front matter 由来の表紙は `ir.TitleSlide` という別の型で、
+    # `intermediate_step` を持たない（`@step` を通るのは本文のスライドだけ）．
     extra = ""
     if args.hide_steps:
         hidden = sum(1 for sl in deck.slides if sl.intermediate_step)
