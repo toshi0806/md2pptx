@@ -62,6 +62,8 @@ _RE_COL = re.compile(r"^<!--\s*@col(?:\s*:\s*(\S+?))?\s*-->$")
 _RE_STEP = re.compile(r"^<!--\s*@step\s*-->$")
 # 表紙（テーマの「タイトル スライド」レイアウト）．同じく値を取らない．
 _RE_TITLE_SLIDE = re.compile(r"^<!--\s*@title-slide\s*-->$")
+# 配布版では出さないスライドの印（§5.11）．同じく値を取らない．
+_RE_HANDOUT_SKIP = re.compile(r"^<!--\s*@handout-skip\s*-->$")
 # "@" で始まる1行コメント（名前だけ取り出す）．指示のつもりで書かれた行を
 # **_RE_COMMENT に拾わせる前に**止めるために使う（Issue #198）．
 _RE_AT_COMMENT = re.compile(r"^<!--\s*@([\w-]*).*-->$")
@@ -97,6 +99,7 @@ _KNOWN_DIRECTIVES = {
 _DEDICATED_FORMS = {
     "step": "'<!-- @step -->'",
     "title_slide": "'<!-- @title-slide -->'",
+    "handout_skip": "'<!-- @handout-skip -->'",
     "col": "'<!-- @col -->' or '<!-- @col: arrow -->'",
 }
 
@@ -501,6 +504,14 @@ def _parse_body(body: str, body_offset: int = 0,
             i += 1
             continue
 
+        # --- 配布版では出さない印（§5.11）----------------------------
+        # **スライドのどこに書いてもよい**（@step と同じ扱い）．隠すかどうかは
+        # render が決めるので，ここで立てるのは原稿の意思だけ．
+        if _RE_HANDOUT_SKIP.match(stripped):
+            ensure_slide().handout_skip = True
+            i += 1
+            continue
+
         # --- 段階の区切り（アニメーションの代替）→ 段を1つ刻む（§5.11）----
         if _RE_STEP.match(stripped):
             s = ensure_slide()
@@ -670,8 +681,12 @@ def _expand_steps(
     marks が短い（＝その時点で存在しなかった）カラムは空として補う．
 
     最終段より前の段には ``intermediate_step`` を立てる（Issue #194）．
-    ``--hide-steps`` が ``show="0"`` を立てる先を render が選べるようにするためで，
+    ``--handout`` が ``show="0"`` を立てる先を render が選べるようにするためで，
     **パーサはそのフラグを知らない**——原稿の構造（後に続く段がある）だけを書く．
+
+    ``handout_skip`` は**全段へ複写する**（Issue #197）．「配布版では出さない」は
+    スライド 1 枚に対する指定で，段ごとに違う意味を持たない——複写しないと
+    最終段だけが隠れ，途中の段（解答が出きる前の姿）が配布版に残る．
 
     タイトル・レイアウト・ディレクティブ・**発表者ノートは全段で同じ**
     （Issue #191）．ノートは最終段だけに残していたが、**プレゼンテーションモードで
@@ -712,7 +727,8 @@ def _expand_steps(
                      layout=slide.layout,
                      directives=dict(slide.directives),
                      notes=slide.notes,
-                     intermediate_step=True)
+                     intermediate_step=True,
+                     handout_skip=slide.handout_skip)
         if slide.columns:
             step.columns = sliced
         else:
@@ -1050,15 +1066,14 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
         raise ValueError(
             f"invalid @col value at line {lineno} "
             f"(write '<!-- @col -->' or '<!-- @col: arrow -->')")
-    if norm == "title_slide":
+    if norm in _DEDICATED_FORMS:
+        # 値を取らない指示に値を付けた誤り（"<!-- @step: 1 -->" 等）．
+        # 専用形式（_RE_STEP / _RE_TITLE_SLIDE / _RE_HANDOUT_SKIP）が先に拾うので，
+        # ここへ来るのは値付きだけ．**@col は上で受ける**——値（arrow）を取るので
+        # 「値を取らない」は嘘になる．
         raise ValueError(
-            f"@title-slide takes no value at line {lineno} "
-            f"(write '<!-- @title-slide -->')")
-    if norm == "step":
-        # "<!-- @step -->" は _RE_STEP が先に拾う．ここへ来るのは値付きだけ．
-        raise ValueError(
-            f"@step takes no value at line {lineno} "
-            f"(write '<!-- @step -->')")
+            f"@{key} takes no value at line {lineno} "
+            f"(write {_DEDICATED_FORMS[norm]})")
     if norm not in _KNOWN_DIRECTIVES:
         # 旧名称の案内もここ（_RENAMED_DIRECTIVES は _KNOWN_DIRECTIVES に無い）．
         raise _directive_name_error(key, lineno)
