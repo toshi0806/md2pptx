@@ -85,20 +85,58 @@ def test_directives_are_shared_even_when_written_after_a_step():
     assert [s.layout for s in parse(src).slides] == [5, 5]
 
 
-def test_notes_go_to_the_last_step_only():
-    """発表者ノートは最終段だけに付く．
+def test_notes_go_to_every_step():
+    """発表者ノートは全段に付く（Issue #191）．
 
-    全段に複製すると発表者ビューで同じ原稿が何度も出て読みにくい。
-    段の集まりで 1 つの話なので、ノートも 1 つでよい。
+    最終段だけに残していたが、**プレゼンテーションモードではそれより前の段が
+    すべてノート無しになる**。原稿がいちばん必要なのは最初の段を出した瞬間で、
+    最終段まで待っても遅い。重複は避けなくてよい——発表者ビューに見えるのは
+    常に 1 枚分だけなので、同じ原稿が並ぶことはない。
     """
     src = _FM + ("### DNS 反復問い合わせ\n\n"
                  "- root に聞く\n"
                  "<!-- @step -->\n"
                  "- jp に聞く\n"
+                 "<!-- @step -->\n"
+                 "- example.jp に聞く\n"
                  "\n```note\nここで反復問い合わせの説明をする。\n```\n")
-    first, last = parse(src).slides
-    assert first.notes is None
-    assert last.notes == "ここで反復問い合わせの説明をする。"
+    slides = parse(src).slides
+    assert len(slides) == 3
+    assert [s.notes for s in slides] == ["ここで反復問い合わせの説明をする。"] * 3
+
+
+def test_notes_are_shared_even_when_written_before_a_step():
+    """ノートも書いた場所で結果が変わらない——``@step`` より前に書いても全段に付く．
+
+    ディレクティブと同じ理由（切り出しをスライドの終わりまで遅らせている）。
+    フェンスを閉じた位置がノートの行き先を決める、という規則は要らない。
+    """
+    src = _FM + ("### DNS 反復問い合わせ\n\n"
+                 "- root に聞く\n"
+                 "\n```note\n反復問い合わせの説明。\n```\n\n"
+                 "<!-- @step -->\n"
+                 "- jp に聞く\n")
+    assert [s.notes for s in parse(src).slides] == ["反復問い合わせの説明。"] * 2
+
+
+def test_a_slide_without_steps_keeps_one_note():
+    """``@step`` の無いスライドは従来どおり——1 枚にノートが 1 つ．"""
+    src = _FM + ("### DNS 反復問い合わせ\n\n"
+                 "- root に聞く\n"
+                 "- jp に聞く\n"
+                 "\n```note\n反復問い合わせの説明。\n```\n")
+    slides = parse(src).slides
+    assert len(slides) == 1
+    assert slides[0].notes == "反復問い合わせの説明。"
+
+
+def test_a_step_slide_without_notes_has_none_on_every_step():
+    """ノートを書かなければ、どの段も ``None`` のまま（空文字を置かない）．"""
+    src = _FM + ("### まとめ\n\n"
+                 "- 要点\n"
+                 "<!-- @step -->\n"
+                 "- もう1つ\n")
+    assert [s.notes for s in parse(src).slides] == [None, None]
 
 
 def test_tables_and_other_blocks_accumulate_too():
