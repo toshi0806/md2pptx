@@ -496,7 +496,12 @@ class Slide:
         intermediate_step: **この段より後に，同じ原稿から出た段がある**
             （Issue #194）．``@step`` の最終段と，段を持たないスライドは False．
             ここに書くのは原稿の構造だけで，どう使うかは render が決める
-            （``--hide-steps`` のとき ``show="0"`` を立てる）．
+            （``--handout`` のとき ``show="0"`` を立てる）．
+        handout_skip: **配布版では出さない**と原稿が書いている
+            （``<!-- @handout-skip -->``．Issue #197）．演習の解答など，
+            講義では見せて配布版では隠すスライドに立つ．
+            ``intermediate_step`` と同じく**原稿の構造だけ**で，
+            隠すかどうかは render が決める——講義版のビルドでは何も起きない．
     """
 
     title: str | None = None
@@ -507,6 +512,7 @@ class Slide:
     columns: list[list[Block]] = field(default_factory=list)
     notes: str | None = None
     intermediate_step: bool = False
+    handout_skip: bool = False
 
     def __post_init__(self) -> None:
         # 不変条件：title_deltas は title のセグメント数と同じ長さ（Line と同じ理由．

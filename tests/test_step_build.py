@@ -142,7 +142,7 @@ def test_a_step_slide_without_notes_has_none_on_every_step():
 def test_the_stages_before_the_last_are_marked():
     """最終段より前の段に ``intermediate_step`` が立つ（Issue #194）．
 
-    ``--hide-steps`` が ``show="0"`` を立てる先を render が選ぶための印。
+    ``--handout`` が ``show="0"`` を立てる先を render が選ぶための印。
     **パーサはそのフラグを知らない**——書くのは原稿の構造（後に続く段がある）だけ。
     最終段は ``slide`` 本体なので False で、段を持たないスライドと同じ扱いになる。
     """

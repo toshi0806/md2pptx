@@ -1758,7 +1758,7 @@ class Renderer:
     # ------------------------------------------------------- content slide
     def render_slide(self, slide: Slide, slide_number: bool = True,
                      default_autofit: bool = True,
-                     hide_steps: bool = False) -> PptxSlide:
+                     handout: bool = False) -> PptxSlide:
         """コンテンツスライドを 1 枚追加して返す．
 
         ``slide.blocks`` を出現順に処理する．表を含まないスライドは Phase 1 と
@@ -1842,7 +1842,10 @@ class Renderer:
         if slide_number and layout_idx != TITLE_LAYOUT:
             self.add_slide_number(s)
         self._set_notes(s, slide.notes)
-        if hide_steps and slide.intermediate_step:
+        # 配布版で隠す理由は 2 つあり、**どちらも同じ扱い**（Issue #197）．
+        # 段の途中は板書の代わりで読み返す資料には邪魔，@handout-skip は
+        # 原稿が「配布版では出さない」と書いたもの（演習の解答など）．
+        if handout and (slide.intermediate_step or slide.handout_skip):
             self._hide(s)
         return s
 
@@ -1860,10 +1863,34 @@ class Renderer:
         （``show="1"`` を書いても同じだが、差分を増やさない）．
 
         表示されるスライドが 1 枚も無い pptx は**どの変換器でも PDF にならない**．
-        段の最終段は必ず残るのでここでは起きないが、呼び出し側が
-        ``intermediate_step`` の意味を変えると踏む．
+        ``@step`` は最終段が必ず残るので起きないが、``@handout-skip`` は
+        **書いた枚数だけ隠す**ので起きうる（Issue #197）．止めはしないが
+        黙らない——``render`` が最後に数えて警告する（``_warn_all_hidden``）．
         """
         slide.element.set("show", "0")
+
+    def _warn_all_hidden(self) -> None:
+        """配布版で表示されるスライドが 1 枚も無いことを知らせる（Issue #197）．
+
+        表示が 0 枚の pptx は**どの変換器でも PDF にならず，エラーが理由を言わない**
+        （macOS PowerPoint は "did not produce a (non-empty) PDF"，ppt2pdf は
+        「ファイルの保存中にエラー」，LibreOffice は "impl_store failed"）．
+        どれを読んでも ``@handout-skip`` の書きすぎだとは思い当たらない．
+
+        止めはしない（pptx の保存自体は成功する．「PDF が作れなくても pptx は成功」
+        と同じ扱い）が，**黙らない**——``_warn_no_body`` と同じ理由．
+
+        スライドが 0 枚のデッキでは何も言わない．隠した結果ではないので，
+        ``--handout`` のせいだと言うのは嘘になる．
+        """
+        slides = list(self.prs.slides)
+        if not slides or any(sl.element.get("show") != "0" for sl in slides):
+            return
+        sys.stderr.write(
+            "md2pptx: warning: --handout hid every slide; the pptx is saved "
+            "but will not convert to PDF (a deck needs at least one visible "
+            "slide)\n"
+        )
 
     def _body_size_delta(self, directives: dict[str, Any]) -> int | None:
         """@body-size ディレクティブをスライド既定の相対サイズ段数へ解釈する．
@@ -2930,13 +2957,14 @@ class Renderer:
                             table_width=table_width)
 
     # ------------------------------------------------------------- deck
-    def render(self, deck: Deck, hide_steps: bool = False) -> PptxPresentation:
+    def render(self, deck: Deck, handout: bool = False) -> PptxPresentation:
         """Deck 全体を描画し，Presentation を返す．
 
         Args:
-            hide_steps: ``@step`` の最終段より前の段を非表示にする
-                （``--hide-steps``．Issue #194）．**消さずに隠す**ので
-                スライド番号は隠さなかった版と同じ数字になる（``_hide``）．
+            handout: 配布版として描く（``--handout``．Issue #197）．
+                ``@step`` の最終段より前の段と ``@handout-skip`` のスライドを
+                非表示にする．**消さずに隠す**のでスライド番号は隠さなかった版と
+                同じ数字になる（``_hide``）．
         """
         meta = deck.meta or {}
         # meta の値は object．どちらも描画側では真偽値としてしか使わないので、
@@ -2957,8 +2985,10 @@ class Renderer:
                 sl,
                 slide_number=slide_number,
                 default_autofit=default_autofit,
-                hide_steps=hide_steps,
+                handout=handout,
             )
+        if handout:
+            self._warn_all_hidden()
         # 言語の付与は描画の最後に一度だけ通す（run を作る経路は本文・タイトル・表・
         # フロー図・ノートと多く，作る側それぞれに足すと必ずどこかが漏れる）．
         self._apply_text_language()
@@ -3044,18 +3074,19 @@ class Renderer:
 
 
 def build(deck: Deck, base_pptx_path: str, out_path: str,
-          base_dir: str | None = None, hide_steps: bool = False) -> str:
+          base_dir: str | None = None, handout: bool = False) -> str:
     """Deck を base pptx 上に描画して out_path に保存する（CLI 用エントリ）．
 
     Args:
         base_dir: 画像などの相対パスを解決する基準ディレクトリ（既定は Markdown の
             置き場）．None なら実行時のカレントを基準にする．
-        hide_steps: ``@step`` の最終段より前の段を非表示にする（``--hide-steps``）．
+        handout: 配布版として描く（``--handout``）．段の途中と
+            ``@handout-skip`` のスライドを非表示にする．
 
     Returns:
         out_path（保存先パス）．
     """
     r = Renderer(base_pptx_path, base_dir=base_dir)
-    r.render(deck, hide_steps=hide_steps)
+    r.render(deck, handout=handout)
     r.save(out_path)
     return out_path
