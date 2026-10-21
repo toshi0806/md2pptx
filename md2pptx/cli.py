@@ -166,6 +166,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--keep-base", metavar="PATH",
         help="keep the intermediate base pptx (from .thmx) at PATH",
     )
+    # 否定形（--no-steps）にしない．argparse の BooleanOptionalAction が --foo から
+    # --no-foo を作るので，--no- で始まる名前は「対になる --steps がある」と読まれる
+    # （足す予定は無い）．実際にやるのも「隠す」で，消す・畳むではない（Issue #194）．
+    # **--pdf には紐づけない**——PDF は保存した pptx から作るので，--pdf が含意すると
+    # 手元に残る pptx 自身から段が消え，授業で映す講義版が壊れる．
+    ap.add_argument(
+        "--hide-steps", action="store_true",
+        help="mark every '@step' stage but the last as hidden, so a handout "
+             "keeps only the final state of each slide; the slides stay in the "
+             "deck, so the printed slide numbers match the full version",
+    )
     # --pdf は値を取らない．値を省略できるオプション（nargs="?"）にすると
     # `md2pptx --pdf deck.md` で入力ファイルが --pdf の値として食われ，「input が無い」
     # という原因の分からないエラーになる（Issue #42）．出力先は --pdf-output で取る．
@@ -392,7 +403,8 @@ def _build(args: argparse.Namespace, sources: set[str],
     sources.update(_image_sources(deck, base_dir))
     base_path, is_temp = load_base(theme, keep_base=args.keep_base)
     try:
-        render.build(deck, base_path, output, base_dir=base_dir)
+        render.build(deck, base_path, output, base_dir=base_dir,
+                     hide_steps=args.hide_steps)
     except Exception as e:  # 描画エラーも原因を表示して失敗させる（§7）．
         raise BuildError(f"failed to render {args.input}: {e}")
     finally:
@@ -400,8 +412,23 @@ def _build(args: argparse.Namespace, sources: set[str],
             os.remove(base_path)
 
     n = len(deck.slides) + (1 if deck.title_slide is not None else 0)
+    # 隠した枚数も言う（Issue #194）．--hide-steps は pptx の中身を変えるので，
+    # 黙ると「段が出ない」ことに pptx を開くまで気づけない．枚数そのものは
+    # 隠しても変わらない（消さずに隠すため）．
+    #
+    # **0 でも出す．** 段を持たないデッキに --hide-steps を付けると隠すものが無く，
+    # 黙ると「フラグが効いたのか」が分からない．`hidden: 0` は「このデッキには段が
+    # 無い＝講義版と同じものができた」と読める情報になる．
+    #
+    # 数える対象が `n` と違って `deck.slides` だけなのは、**表紙が段になりえない**
+    # ため．front matter 由来の表紙は `ir.TitleSlide` という別の型で、
+    # `intermediate_step` を持たない（`@step` を通るのは本文のスライドだけ）．
+    extra = ""
+    if args.hide_steps:
+        hidden = sum(1 for sl in deck.slides if sl.intermediate_step)
+        extra = f" hidden: {hidden}"
     # watch では出力をパイプへ流されることがある（ブロックバッファで無音に見える）．
-    print(f"saved: {output} slides: {n}", flush=True)
+    print(f"saved: {output} slides: {n}{extra}", flush=True)
 
     # 4) 任意: PDF も生成（プレビュー用）．失敗しても pptx は成功なので終了コードは
     # 変えない——編集しながらのプレビュー運用を変換失敗で止めないため（Issue #39）．

@@ -493,6 +493,10 @@ class Slide:
         notes: 発表者ノート（```note フェンス由来．DESIGN.md §5.10）．
             スライド面には描画せず，notes slide のテキストになる．
             "\\n" は段落区切り．無ければ None．
+        intermediate_step: **この段より後に，同じ原稿から出た段がある**
+            （Issue #194）．``@step`` の最終段と，段を持たないスライドは False．
+            ここに書くのは原稿の構造だけで，どう使うかは render が決める
+            （``--hide-steps`` のとき ``show="0"`` を立てる）．
     """
 
     title: str | None = None
@@ -502,6 +506,7 @@ class Slide:
     directives: dict[str, object] = field(default_factory=dict)
     columns: list[list[Block]] = field(default_factory=list)
     notes: str | None = None
+    intermediate_step: bool = False
 
     def __post_init__(self) -> None:
         # 不変条件：title_deltas は title のセグメント数と同じ長さ（Line と同じ理由．

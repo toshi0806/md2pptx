@@ -648,6 +648,10 @@ def _expand_steps(
     すると、レイアウトが段ごとに変わって行頭の位置が動いてしまう．そのため
     marks が短い（＝その時点で存在しなかった）カラムは空として補う．
 
+    最終段より前の段には ``intermediate_step`` を立てる（Issue #194）．
+    ``--hide-steps`` が ``show="0"`` を立てる先を render が選べるようにするためで，
+    **パーサはそのフラグを知らない**——原稿の構造（後に続く段がある）だけを書く．
+
     タイトル・レイアウト・ディレクティブ・**発表者ノートは全段で同じ**
     （Issue #191）．ノートは最終段だけに残していたが、**プレゼンテーションモードで
     それより前の段がすべてノート無しになる**——原稿がいちばん必要なのは最初の段を
@@ -678,11 +682,16 @@ def _expand_steps(
         # ``directives`` の値は ``int | str | bool``，``notes`` は ``str | None``
         # で、どれも不変（``ir.Slide`` の注釈が正）．``blocks`` は下でスライスした
         # 新しいリスト．
+        #
+        # ``intermediate_step`` は**ここだけで立つ**（Issue #194）．最終段は
+        # ``slide`` 本体なので False のまま——「後に続く段がある」が False の意味で，
+        # 段を持たないスライドと同じ扱いになる．
         step = Slide(title=slide.title,
                      title_deltas=list(slide.title_deltas),
                      layout=slide.layout,
                      directives=dict(slide.directives),
-                     notes=slide.notes)
+                     notes=slide.notes,
+                     intermediate_step=True)
         if slide.columns:
             step.columns = sliced
         else:

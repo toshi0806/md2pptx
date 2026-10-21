@@ -139,6 +139,25 @@ def test_a_step_slide_without_notes_has_none_on_every_step():
     assert [s.notes for s in parse(src).slides] == [None, None]
 
 
+def test_the_stages_before_the_last_are_marked():
+    """最終段より前の段に ``intermediate_step`` が立つ（Issue #194）．
+
+    ``--hide-steps`` が ``show="0"`` を立てる先を render が選ぶための印。
+    **パーサはそのフラグを知らない**——書くのは原稿の構造（後に続く段がある）だけ。
+    最終段は ``slide`` 本体なので False で、段を持たないスライドと同じ扱いになる。
+    """
+    src = _FM + ("### TCP 3-way handshake\n\n"
+                 "- SYN を送る\n"
+                 "<!-- @step -->\n"
+                 "- SYN+ACK が返る\n"
+                 "<!-- @step -->\n"
+                 "- ACK を返して確立\n\n"
+                 "### 段の無いスライド\n\n"
+                 "- 1枚で終わる\n")
+    assert [s.intermediate_step for s in parse(src).slides] == [
+        True, True, False, False]
+
+
 def test_tables_and_other_blocks_accumulate_too():
     """積み上がるのは箇条書きだけではない（表・図も同じ）．"""
     src = _FM + ("### NAT 変換表\n\n"

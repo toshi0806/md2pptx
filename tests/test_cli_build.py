@@ -36,7 +36,7 @@ def project(tmp_path, monkeypatch):
 
     written: list[str] = []
 
-    def fake_build(deck, base_pptx_path, out_path, base_dir=None):
+    def fake_build(deck, base_pptx_path, out_path, base_dir=None, hide_steps=False):
         written.append(out_path)
 
     monkeypatch.setattr(cli.render, "build", fake_build)
@@ -181,8 +181,49 @@ class TestOneShotIsUnchanged:
         assert project.written == []
         assert trap.read_text().startswith("---")            # 原稿は無事
 
+    def test_hide_steps_reports_what_it_hid(self, project, capsys):
+        """``--hide-steps`` のときは隠した枚数を言う——**0 でも言う**（Issue #194）．
+
+        フラグは pptx の中身を変えるので、黙ると「段が出ない」ことに pptx を開く
+        まで気づけない。段を持たないデッキでは隠すものが無いが、そこで黙ると
+        「フラグが効いたのか」が分からなくなる。``project`` の原稿に ``@step`` は
+        無いので、ここで出るのは ``hidden: 0``。
+        """
+        _main([str(project.md), "--theme", str(project.theme),
+               "-o", str(project.out), "--hide-steps"])
+
+        assert capsys.readouterr().out == (
+            f"saved: {project.out} slides: 3 hidden: 0\n")
+
+    def test_without_the_flag_the_saved_line_is_unchanged(self, project, capsys):
+        """フラグが無ければ ``hidden:`` を足さない（既存の出力を変えない）．"""
+        _main([str(project.md), "--theme", str(project.theme),
+               "-o", str(project.out)])
+
+        assert capsys.readouterr().out == f"saved: {project.out} slides: 3\n"
+
+    def test_hide_steps_reaches_the_renderer(self, project, monkeypatch):
+        """``--hide-steps`` が render まで届く（Issue #194）．
+
+        フラグを解釈するのは cli、非表示にするのは render なので、
+        **間が繋がっていること**を押さえる。繋がっていなければ、フラグを付けても
+        pptx は何も変わらないまま成功する。
+        """
+        seen: list[bool] = []
+
+        def spy(deck, base_pptx_path, out_path, base_dir=None, hide_steps=False):
+            seen.append(hide_steps)
+
+        monkeypatch.setattr(cli.render, "build", spy)
+
+        for extra in ([], ["--hide-steps"]):
+            _main([str(project.md), "--theme", str(project.theme),
+                   "-o", str(project.out), *extra])
+
+        assert seen == [False, True]
+
     def test_a_render_failure_is_reported(self, project, monkeypatch):
-        def explode(deck, base_pptx_path, out_path, base_dir=None):
+        def explode(deck, base_pptx_path, out_path, base_dir=None, hide_steps=False):
             raise ValueError("boom")
 
         monkeypatch.setattr(cli.render, "build", explode)
@@ -260,7 +301,7 @@ class TestWatchedSources:
 
     def test_a_failure_still_reports_what_it_learned(self, project, monkeypatch):
         """失敗しても分かった依存は返す——画像を置いたら作り直したいから．"""
-        def explode(deck, base_pptx_path, out_path, base_dir=None):
+        def explode(deck, base_pptx_path, out_path, base_dir=None, hide_steps=False):
             raise ValueError("boom")
 
         monkeypatch.setattr(cli.render, "build", explode)
@@ -290,7 +331,7 @@ class TestWatchLoop:
         """
         calls: list[int] = []
 
-        def explode(deck, base_pptx_path, out_path, base_dir=None):
+        def explode(deck, base_pptx_path, out_path, base_dir=None, hide_steps=False):
             calls.append(1)
             raise ValueError("boom")
 

@@ -1757,7 +1757,8 @@ class Renderer:
 
     # ------------------------------------------------------- content slide
     def render_slide(self, slide: Slide, slide_number: bool = True,
-                     default_autofit: bool = True) -> PptxSlide:
+                     default_autofit: bool = True,
+                     hide_steps: bool = False) -> PptxSlide:
         """コンテンツスライドを 1 枚追加して返す．
 
         ``slide.blocks`` を出現順に処理する．表を含まないスライドは Phase 1 と
@@ -1841,7 +1842,28 @@ class Renderer:
         if slide_number and layout_idx != TITLE_LAYOUT:
             self.add_slide_number(s)
         self._set_notes(s, slide.notes)
+        if hide_steps and slide.intermediate_step:
+            self._hide(s)
         return s
+
+    @staticmethod
+    def _hide(slide: PptxSlide) -> None:
+        """スライドを非表示（``<p:sld show="0">``）にする（Issue #194）．
+
+        **消すのではなく隠す**のが要点．スライドが並びに残るので、番号
+        （``a:fld`` の ``slidenum``）は隠さなかった版と同じ数字になり、
+        配布用 PDF のページ番号が講義版とずれない．実測では macOS PowerPoint /
+        LibreOffice / ppt2pdf の 3 経路とも、**番号には数え、出力には出さない**で
+        揃っていた（5 枚のうち 2 枚を隠して 3 ページ・番号は 1, 4, 5）．
+
+        ``show`` は**既定が表示**なので、隠さないスライドには属性を書かない
+        （``show="1"`` を書いても同じだが、差分を増やさない）．
+
+        表示されるスライドが 1 枚も無い pptx は**どの変換器でも PDF にならない**．
+        段の最終段は必ず残るのでここでは起きないが、呼び出し側が
+        ``intermediate_step`` の意味を変えると踏む．
+        """
+        slide.element.set("show", "0")
 
     def _body_size_delta(self, directives: dict[str, Any]) -> int | None:
         """@body-size ディレクティブをスライド既定の相対サイズ段数へ解釈する．
@@ -2908,8 +2930,14 @@ class Renderer:
                             table_width=table_width)
 
     # ------------------------------------------------------------- deck
-    def render(self, deck: Deck) -> PptxPresentation:
-        """Deck 全体を描画し，Presentation を返す．"""
+    def render(self, deck: Deck, hide_steps: bool = False) -> PptxPresentation:
+        """Deck 全体を描画し，Presentation を返す．
+
+        Args:
+            hide_steps: ``@step`` の最終段より前の段を非表示にする
+                （``--hide-steps``．Issue #194）．**消さずに隠す**ので
+                スライド番号は隠さなかった版と同じ数字になる（``_hide``）．
+        """
         meta = deck.meta or {}
         # meta の値は object．どちらも描画側では真偽値としてしか使わないので、
         # ここで bool にする（if での評価と同じ結果になる）．
@@ -2929,6 +2957,7 @@ class Renderer:
                 sl,
                 slide_number=slide_number,
                 default_autofit=default_autofit,
+                hide_steps=hide_steps,
             )
         # 言語の付与は描画の最後に一度だけ通す（run を作る経路は本文・タイトル・表・
         # フロー図・ノートと多く，作る側それぞれに足すと必ずどこかが漏れる）．
@@ -3015,17 +3044,18 @@ class Renderer:
 
 
 def build(deck: Deck, base_pptx_path: str, out_path: str,
-          base_dir: str | None = None) -> str:
+          base_dir: str | None = None, hide_steps: bool = False) -> str:
     """Deck を base pptx 上に描画して out_path に保存する（CLI 用エントリ）．
 
     Args:
         base_dir: 画像などの相対パスを解決する基準ディレクトリ（既定は Markdown の
             置き場）．None なら実行時のカレントを基準にする．
+        hide_steps: ``@step`` の最終段より前の段を非表示にする（``--hide-steps``）．
 
     Returns:
         out_path（保存先パス）．
     """
     r = Renderer(base_pptx_path, base_dir=base_dir)
-    r.render(deck)
+    r.render(deck, hide_steps=hide_steps)
     r.save(out_path)
     return out_path
