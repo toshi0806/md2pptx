@@ -415,9 +415,14 @@ def _build(args: argparse.Namespace, sources: set[str],
     # 隠した枚数も言う（Issue #194）．--hide-steps は pptx の中身を変えるので，
     # 黙ると「段が出ない」ことに pptx を開くまで気づけない．枚数そのものは
     # 隠しても変わらない（消さずに隠すため）．
-    hidden = (sum(1 for sl in deck.slides if sl.intermediate_step)
-              if args.hide_steps else 0)
-    extra = f" hidden: {hidden}" if hidden else ""
+    #
+    # **0 でも出す．** 段を持たないデッキに --hide-steps を付けると隠すものが無く，
+    # 黙ると「フラグが効いたのか」が分からない．`hidden: 0` は「このデッキには段が
+    # 無い＝講義版と同じものができた」と読める情報になる．
+    extra = ""
+    if args.hide_steps:
+        hidden = sum(1 for sl in deck.slides if sl.intermediate_step)
+        extra = f" hidden: {hidden}"
     # watch では出力をパイプへ流されることがある（ブロックバッファで無音に見える）．
     print(f"saved: {output} slides: {n}{extra}", flush=True)
 

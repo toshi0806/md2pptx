@@ -181,6 +181,27 @@ class TestOneShotIsUnchanged:
         assert project.written == []
         assert trap.read_text().startswith("---")            # 原稿は無事
 
+    def test_hide_steps_reports_what_it_hid(self, project, capsys):
+        """``--hide-steps`` のときは隠した枚数を言う——**0 でも言う**（Issue #194）．
+
+        フラグは pptx の中身を変えるので、黙ると「段が出ない」ことに pptx を開く
+        まで気づけない。段を持たないデッキでは隠すものが無いが、そこで黙ると
+        「フラグが効いたのか」が分からなくなる。``project`` の原稿に ``@step`` は
+        無いので、ここで出るのは ``hidden: 0``。
+        """
+        _main([str(project.md), "--theme", str(project.theme),
+               "-o", str(project.out), "--hide-steps"])
+
+        assert capsys.readouterr().out == (
+            f"saved: {project.out} slides: 3 hidden: 0\n")
+
+    def test_without_the_flag_the_saved_line_is_unchanged(self, project, capsys):
+        """フラグが無ければ ``hidden:`` を足さない（既存の出力を変えない）．"""
+        _main([str(project.md), "--theme", str(project.theme),
+               "-o", str(project.out)])
+
+        assert capsys.readouterr().out == f"saved: {project.out} slides: 3\n"
+
     def test_hide_steps_reaches_the_renderer(self, project, monkeypatch):
         """``--hide-steps`` が render まで届く（Issue #194）．
 
