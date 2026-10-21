@@ -648,9 +648,12 @@ def _expand_steps(
     すると、レイアウトが段ごとに変わって行頭の位置が動いてしまう．そのため
     marks が短い（＝その時点で存在しなかった）カラムは空として補う．
 
-    タイトル・レイアウト・ディレクティブは全段で同じ．発表者ノートは最終段だけに
-    残す——段の集まりで 1 つの話なので、発表者ビューに同じ原稿が何度も出ても
-    読みにくいだけ．
+    タイトル・レイアウト・ディレクティブ・**発表者ノートは全段で同じ**
+    （Issue #191）．ノートは最終段だけに残していたが、**プレゼンテーションモードで
+    それより前の段がすべてノート無しになる**——原稿がいちばん必要なのは最初の段を
+    出した瞬間なので、6 段のスライドなら 6 枚中 5 枚で原稿が見えないことになる．
+    重複を避ける意味は無い——発表者ビューに見えるのは常に 1 枚分のノートだけで、
+    同じ原稿が並ぶことはない（段を進めても同じ文が出たままになるだけ）．
     """
     if not marks:
         return [slide]
@@ -672,12 +675,14 @@ def _expand_steps(
                 if isinstance(last, (Flow, Seq)):
                     sliced[ci][-1] = last.upto(n)
         # 浅いコピーで足りる——``title_deltas`` は ``int | None``，
-        # ``directives`` の値は ``int | str | bool`` で，どれも不変
-        # （``ir.Slide`` の注釈が正）．``blocks`` は下でスライスした新しいリスト．
+        # ``directives`` の値は ``int | str | bool``，``notes`` は ``str | None``
+        # で、どれも不変（``ir.Slide`` の注釈が正）．``blocks`` は下でスライスした
+        # 新しいリスト．
         step = Slide(title=slide.title,
                      title_deltas=list(slide.title_deltas),
                      layout=slide.layout,
-                     directives=dict(slide.directives))
+                     directives=dict(slide.directives),
+                     notes=slide.notes)
         if slide.columns:
             step.columns = sliced
         else:
