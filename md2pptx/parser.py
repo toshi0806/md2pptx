@@ -62,6 +62,9 @@ _RE_COL = re.compile(r"^<!--\s*@col(?:\s*:\s*(\S+?))?\s*-->$")
 _RE_STEP = re.compile(r"^<!--\s*@step\s*-->$")
 # 表紙（テーマの「タイトル スライド」レイアウト）．同じく値を取らない．
 _RE_TITLE_SLIDE = re.compile(r"^<!--\s*@title-slide\s*-->$")
+# "@" で始まる1行コメント（名前だけ取り出す）．指示のつもりで書かれた行を
+# **_RE_COMMENT に拾わせる前に**止めるために使う（Issue #198）．
+_RE_AT_COMMENT = re.compile(r"^<!--\s*@([\w-]*).*-->$")
 # 1 行 HTML コメント（ディレクティブ以外のメモ等．無視する）．
 _RE_COMMENT = re.compile(r"^<!--.*-->$")
 # Markdown テーブルの区切り行（例 "| --- | :--: |"）．ヘッダ行の直後に現れる．
@@ -80,11 +83,21 @@ _RE_BOX = re.compile(r"^\{\s*box\s*(?::\s*([^}\s]+)\s*)?\}\s*(.*)$",
 _INT_DIRECTIVES = {"layout", "autofit", "body_size"}
 
 # 受理するディレクティブキー（正規化後の名前）．未知のキーはタイポの可能性が
-# 高いので黙殺せずエラーにする（§5.6）．@col と @title-slide は値を取らない
-# 専用形式（_RE_COL / _RE_TITLE_SLIDE）で，ここへ来るのは値付きの誤りだけ．
+# 高いので黙殺せずエラーにする（§5.6）．**値を取るものだけ**を並べる——
+# @step / @title-slide / @col は専用形式で受けるので _DEDICATED_FORMS の側．
 _KNOWN_DIRECTIVES = {
     "layout", "autofit", "body_size", "autonum_color", "widths", "table_widths",
     "table_width", "title_width", "overflow",
+}
+
+# 値を取らない（または専用形式で受ける）指示 → 正しい書き方．
+# **名前の一覧としても使う**ので，_KNOWN_DIRECTIVES と合わせたものが
+# 「既知の指示」の全体になる（Issue #198）．一覧を 1 箇所にしておかないと，
+# 打ち間違いの案内から @step だけが漏れる——実際に漏れていた．
+_DEDICATED_FORMS = {
+    "step": "'<!-- @step -->'",
+    "title_slide": "'<!-- @title-slide -->'",
+    "col": "'<!-- @col -->' or '<!-- @col: arrow -->'",
 }
 
 # v0.7 で改名した旧ディレクティブ名 → 新名称（エラーメッセージで案内する）．
@@ -503,6 +516,14 @@ def _parse_body(body: str, body_offset: int = 0,
             _apply_directive(slide, md.group(1), md.group(2), lineno)
             i += 1
             continue
+
+        # --- "@" で始まるコメントは指示のつもり → 捨てずに止める（#198）--
+        # ここまでで既知の形はすべて拾ってある．残りは打ち間違いなので，
+        # 下の _RE_COMMENT に渡すと**書いたつもりの指示が無いデッキが
+        # 成功として出てくる**．
+        ma = _RE_AT_COMMENT.match(stripped)
+        if ma:
+            _reject_at_comment(ma.group(1), lineno)
 
         # --- ディレクティブ以外の HTML コメントは無視（メモ等）-----
         if _RE_COMMENT.match(stripped):
@@ -971,6 +992,50 @@ def _table_width_value(value: str, lineno: int) -> str | float:
         f"(write 'auto' or a percentage of the band such as '70%')")
 
 
+def _directive_name_error(key: str, lineno: int) -> ValueError:
+    """ディレクティブ名そのものの誤りに対する例外を作る（Issue #198）．
+
+    値付き（``_apply_directive``）と値なし（``_reject_at_comment``）の
+    **両方から呼ぶ**——同じ打ち間違いが書き方によって別の文言になる理由は無い．
+    案内する一覧は ``_KNOWN_DIRECTIVES`` と ``_DEDICATED_FORMS`` を合わせたもの．
+    """
+    norm = key.replace("-", "_")
+    if norm in _RENAMED_DIRECTIVES:
+        return ValueError(
+            f"@{key} was renamed in v0.7; use {_RENAMED_DIRECTIVES[norm]} "
+            f"(line {lineno})")
+    known = ", ".join("@" + k.replace("_", "-")
+                      for k in sorted(_KNOWN_DIRECTIVES | _DEDICATED_FORMS.keys()))
+    return ValueError(
+        f"unknown directive @{key} at line {lineno} "
+        f"(known directives: {known})")
+
+
+def _reject_at_comment(key: str, lineno: int) -> None:
+    """既知のどの形にも当たらない ``<!-- @… -->`` を止める（Issue #198）．
+
+    ここへ来るのは，専用形式（``_RE_STEP`` / ``_RE_TITLE_SLIDE`` /
+    ``_RE_COL``）にも ``_RE_DIRECTIVE``（**コロン必須**）にも当たらなかった行．
+    つまり ``<!-- @stepp -->`` のような**値を取らない指示の打ち間違い**が
+    主な中身で，これを黙って捨てると段階表示の無いデッキが成功として出てくる．
+
+    名前は合っているのに形が違う行（``<!-- @step 2 -->`` /
+    ``<!-- @body-size 2 -->``）は綴りではなく書き方の誤りなので，
+    一覧ではなく**正しい形**を案内する．``@`` で始まらないコメントは
+    ここへ来ない（従来どおり黙って捨てる）．
+    """
+    norm = key.replace("-", "_")
+    if norm in _DEDICATED_FORMS:
+        raise ValueError(
+            f"invalid @{key} at line {lineno} "
+            f"(write {_DEDICATED_FORMS[norm]})")
+    if norm in _KNOWN_DIRECTIVES:
+        raise ValueError(
+            f"@{key} needs a value at line {lineno} "
+            f"(write '<!-- @{key}: ... -->')")
+    raise _directive_name_error(key, lineno)
+
+
 def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
     """HTML コメント由来のディレクティブを Slide へ反映する．
 
@@ -989,15 +1054,14 @@ def _apply_directive(slide: Slide, key: str, value: str, lineno: int) -> None:
         raise ValueError(
             f"@title-slide takes no value at line {lineno} "
             f"(write '<!-- @title-slide -->')")
-    if norm in _RENAMED_DIRECTIVES:
+    if norm == "step":
+        # "<!-- @step -->" は _RE_STEP が先に拾う．ここへ来るのは値付きだけ．
         raise ValueError(
-            f"@{key} was renamed in v0.7; use {_RENAMED_DIRECTIVES[norm]} "
-            f"(line {lineno})")
+            f"@step takes no value at line {lineno} "
+            f"(write '<!-- @step -->')")
     if norm not in _KNOWN_DIRECTIVES:
-        known = ", ".join("@" + k.replace("_", "-") for k in sorted(_KNOWN_DIRECTIVES))
-        raise ValueError(
-            f"unknown directive @{key} at line {lineno} "
-            f"(known directives: @col, @title-slide, {known})")
+        # 旧名称の案内もここ（_RENAMED_DIRECTIVES は _KNOWN_DIRECTIVES に無い）．
+        raise _directive_name_error(key, lineno)
     val: object = value
     if norm in _INT_DIRECTIVES:
         try:
