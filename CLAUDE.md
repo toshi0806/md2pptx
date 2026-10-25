@@ -197,7 +197,7 @@ PDF を向けるもので、これが無いと保存しても画面が変わら�
 ## このリポジトリについて
 
 - 親リポジトリ（latex-ecosystem）の `.gitignore` で `*/` 除外されるため、md2pptx は**独立した
-  git リポジトリ**。リモート `origin` は `https://github.com/toshi0806/md2pptx.git`。
+  git リポジトリ**。リモート `origin` は `git@github.com:toshi0806/md2pptx.git`。
 - 生成物（`example.pptx`/`*.pdf`/`*-slide.pptx`）と Office ロックファイル（`~$*`）は
   `.gitignore` 済み。
 - コミットメッセージは英語。PR ワークフローの規約は親リポジトリの CLAUDE.md に従う。
