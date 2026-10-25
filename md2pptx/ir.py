@@ -162,13 +162,16 @@ class Table:
 
 @dataclass
 class FlowNode:
-    """フロー図のノード（box または省略記号）．
+    """フロー図のノード（box・省略記号・空セル）．
 
     Attributes:
         label: 主ラベル（[ラベル | サブラベル] の前半）．
         sublabel: 副ラベル（後半）．無ければ None．
-        kind: "box"（角丸四角）または "ellipsis"（"…" 単独の省略記号．
-            入力記法 `[…]` に対応する活字の省略記号のこと）．
+        kind: "box"（角丸四角）／"ellipsis"（"…" 単独の省略記号．
+            入力記法 `[…]` に対応する活字の省略記号のこと）／
+            "blank"（空セル．入力記法 `[]` に対応し，**1 列ぶんの場所だけ取って
+            何も描かない**）．空セルは box ではないので，``render`` の
+            ``_box_palette`` も消費しない（Issue #202）．
         color: テーマ色名の個別指定（例 "accent6"）．None なら自動割当．
         node_id: エッジから指すための名前（``[#pc PC]`` 由来）．無ければ None．
             **``#`` で書くのはラベル中のコロンと区別するため**——``[id: ラベル]``
@@ -177,7 +180,7 @@ class FlowNode:
 
     label: str = ""
     sublabel: str | None = None
-    kind: Literal["box", "ellipsis"] = "box"
+    kind: Literal["box", "ellipsis", "blank"] = "box"
     color: str | None = None
     node_id: str | None = None
 
