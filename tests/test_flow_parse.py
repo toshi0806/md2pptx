@@ -65,13 +65,18 @@ def test_an_edge_without_a_label_has_none():
     ("[A | sub]", "A", "sub"),
     ("[A]", "A", None),
     ("[A|]", "A", None),              # 区切りだけ書いても空のサブラベルは持たない
-    ("[ | ]", "", None),
-    ("[  ]", "", None),
-    ("[|B]", "", "B"),                # ラベルが空でもサブラベルは生きる
+    ("[ | ]", "", None),              # 空ラベル＝空セル（Issue #202）
+    ("[  ]", "", None),               # 同上
     ("[A | b | c]", "A", "b | c"),    # 区切りは最初の 1 個だけ
 ])
 def test_how_a_node_label_splits(src, label, sublabel):
-    """``|`` の扱い．空白は落とし，空になったサブラベルは None にする．"""
+    """``|`` の扱い．空白は落とし，空になったサブラベルは None にする．
+
+    **``[|B]`` はここに無い．** ラベルが空でもサブラベルは生きる——という挙動
+    だったが、空ラベルは空セルになり（Issue #202）、何も描かないものに
+    サブラベルを付ける書き方はエラーで止まる．
+    固定しているのは ``tests/test_flow_blank.py``．
+    """
     node = F.parse_flow(src).nodes[0]
 
     assert (node.label, node.sublabel) == (label, sublabel)

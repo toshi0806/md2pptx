@@ -46,7 +46,11 @@ _RE_NODE = re.compile(r"\[([^\]]*)\](?:\{([\w-]+)\})?")
 _RE_EDGE = re.compile(r"-(?:([^>]+?)-)?>")
 # ノード名 "[#pc PC | …]"．**"#" で書く**——"[id: ラベル]" だと
 # "[HTTP: ハイパーテキスト転送プロトコル]" を名前付きと読んでしまう（Issue #109）．
-_RE_NODE_ID = re.compile(r"^#([A-Za-z_][\w-]*)\s+(.*)$", re.S)
+# 名前のあとは ``\s*``——**ラベルを省いた "[#pc]" も名前として読む**（Issue #202）．
+# ``\s+`` だと名前として読まれず "#pc" がラベルの box になり、**名前を付けた
+# つもりの原稿に "#pc" という箱が出る**．読めば空ラベル＝空セルになり、
+# ``_make_node`` が「空セルに名前は付けられない」と言って止まる．
+_RE_NODE_ID = re.compile(r"^#([A-Za-z_][\w-]*)\s*(.*)$", re.S)
 # エッジ行でノードを指す名前（トークン列では _RefTok）．
 _RE_REF = re.compile(r"[A-Za-z_][\w-]*")
 # 段区切り．この行だけで次の段へ移る．
@@ -236,6 +240,12 @@ def _build(flow: Flow, rows: list[list[_Token]], has_break: bool) -> None:
             if new_node:
                 placed.append(idx)
             if pending is not None and prev_idx is not None:
+                # 空セルは**矢印の端点にならない**（刺す先が無い．Issue #202）．
+                # 黙って線を引くと、何も無いところへ矢印が伸びた絵が出る．
+                for end in (prev_idx, idx):
+                    if flow.nodes[end].kind == "blank":
+                        raise ValueError(
+                            "blank flow cell cannot be an edge endpoint")
                 flow.edges.append(
                     FlowEdge(src=prev_idx, dst=idx, label=pending.label))
             prev_idx = idx
@@ -254,7 +264,23 @@ def _make_node(inner: str, color: str | None) -> FlowNode:
     sublabel = parts[1].strip() if len(parts) > 1 else None
     if sublabel == "":
         sublabel = None
-    kind: Literal["box", "ellipsis"] = (
+    if not label:
+        # 空ラベルはすべて空セル（``[]`` / ``[ ]`` / ``[　]``．全角空白が書けたのは
+        # 上の ``strip()`` が落とすから）．**これまでは枠の見える空の box** で、
+        # そのうえ box が 1 つ増えるぶん ``_box_palette`` の割り当てがずれ、
+        # 関係の無いノードの色が変わっていた（Issue #202）．
+        #
+        # **名前・色・サブラベルは受け取らない．** どれも何も描かないものに意味を
+        # 与える書き方で、黙って無視すると書いた人の意図と出力が食い違う．
+        if node_id is not None:
+            raise ValueError(f"blank flow cell takes no name: {node_id!r}")
+        if color is not None:
+            raise ValueError(f"blank flow cell takes no color: {color!r}")
+        if sublabel is not None:
+            raise ValueError(
+                f"blank flow cell takes no sublabel: {sublabel!r}")
+        return FlowNode(kind="blank")
+    kind: Literal["box", "ellipsis", "blank"] = (
         "ellipsis" if label in _ELLIPSIS else "box")
     return FlowNode(label=label, sublabel=sublabel, kind=kind, color=color,
                     node_id=node_id)
@@ -422,8 +448,10 @@ def _plan_grid(plan: FlowPlan, flow: Flow, left: int, top: int,
             node = flow.nodes[idx]
             if node.kind == "ellipsis":
                 plan.ellipses.append(PlacedText(node.label, rect))
-            else:
+            elif node.kind == "box":
                 plan.boxes.append(PlacedNode(node, rect))
+            # "blank" はここで何も積まない——**列は上の ``rect`` で消費済み**
+            # なので場所だけ取り、塗り・輪郭・影は出ない（Issue #202）．
 
     # 同じ段で隣り合うか（塗り矢印にしてよいか）を引けるようにしておく．
     pos = {idx: (r, c) for r, row in enumerate(rows) for c, idx in enumerate(row)}
@@ -506,11 +534,14 @@ def _plan_horizontal(plan: FlowPlan, flow: Flow, left: int, top: int,
     rects = []
     bl = startx
     for node in nodes:
+        # 空セルは **box と同じ ``bw``**（``nb`` に数えてあるので幅も確保済み）．
+        # 省略記号の固定幅 ``ew`` ではない——空セルは「box があるはずの場所」の
+        # 代わりなので、狭いと列が揃わない（Issue #202）．
         w = ew if node.kind == "ellipsis" else bw
         rect = Rect(bl, by, w, bh)
         if node.kind == "ellipsis":
             plan.ellipses.append(PlacedText(node.label or "…", rect))
-        else:
+        elif node.kind == "box":
             plan.boxes.append(PlacedNode(node, rect))
         rects.append(rect)
         bl += w + gx
@@ -570,11 +601,12 @@ def _plan_vertical(plan: FlowPlan, flow: Flow, left: int, top: int,
     rects = []
     bt = starty
     for node in nodes:
+        # 縦並びでも空セルは box と同じ 1 行ぶん（``bh``）．
         h = eh if node.kind == "ellipsis" else bh
         rect = Rect(bx, bt, bw, h)
         if node.kind == "ellipsis":
             plan.ellipses.append(PlacedText(node.label or "…", rect))
-        else:
+        elif node.kind == "box":
             plan.boxes.append(PlacedNode(node, rect))
         rects.append(rect)
         bt += h + gy
