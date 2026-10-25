@@ -63,6 +63,11 @@ def test_a_blank_cell_does_not_consume_a_box_colour():
     色は render が ``plan.boxes`` を数えて割り当てるので、ここに空セルが混じると
     **以降のノードの色がずれる**。並び（＝割り当ての順番）が空セルの有無で
     変わらないことを見る。``[…]`` が box ではないので色を消費しないのと同じ理屈。
+
+    **これは間接的な検証**——``flow.py`` は python-pptx 非依存で色を持たないので、
+    ここで見られるのは「割り当ての順番」まで。``render`` が
+    ``enumerate(plan.boxes)`` で ``_box_palette`` を引くという前提が成り立つ間だけ
+    色の保証になる。引き方を変えるなら、こちらも併せて見直すこと。
     """
     with_blank = plan_flow(parse_flow("[A] [] [B] [] [C]"),
                            0, 0, emu(12), emu(5))

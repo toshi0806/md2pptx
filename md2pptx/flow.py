@@ -242,6 +242,12 @@ def _build(flow: Flow, rows: list[list[_Token]], has_break: bool) -> None:
             if pending is not None and prev_idx is not None:
                 # 空セルは**矢印の端点にならない**（刺す先が無い．Issue #202）．
                 # 黙って線を引くと、何も無いところへ矢印が伸びた絵が出る．
+                #
+                # **両端を見る．** ``prev_idx`` は前の周回の ``idx`` なので
+                # 一見ニ度手間だが、``[] -> [A]`` のように**最初のノードが空セル**
+                # のときは、そのノードを ``idx`` として見た周回に ``pending`` が
+                # まだ無い（矢印は次の周回で張られる）．``idx`` だけ見ていると
+                # ここをすり抜ける．
                 for end in (prev_idx, idx):
                     if flow.nodes[end].kind == "blank":
                         raise ValueError(
